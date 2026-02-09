@@ -1,9 +1,13 @@
 name: Java - Build CI (no tests + Spotless)
 
 on:
-  push:
-    branches:
-      - '**'
+  workflow_call:
+    inputs:
+      runner:
+        description: 'The type of machine to run the job on'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
 
 jobs:
   build:
