@@ -1,4 +1,4 @@
-name: Java - Build CI (no tests + Spotless)
+name: Java - SonarQube Analysis
 
 on:
   workflow_call:
@@ -8,10 +8,15 @@ on:
         required: false
         type: string
         default: 'ubuntu-latest'
+    secrets:
+      SONAR_HOST_URL:
+        required: true
+      SONAR_TOKEN:
+        required: true
 
 jobs:
-  build:
-    name: Build
+  sonarqube:
+    name: SonarQube Analysis
     runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
@@ -19,7 +24,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-            fetch-depth: 0
+          fetch-depth: 0
 
       - name: Setup Temurin JDK 21
         uses: actions/setup-java@v4
@@ -31,8 +36,11 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Clean and build (skip tests)
-        run: ./gradlew clean build -x test --no-daemon
+      - name: SonarQube analysis (Gradle)
+        run: ./gradlew sonarqube -Dsonar.host.url="${{ secrets.SONAR_HOST_URL }}" -Dsonar.login="${{ secrets.SONAR_TOKEN }}" --no-daemon
 
-      - name: Spotless check
-        run: ./gradlew spotlessCheck --no-daemon
+      - name: Quality Gate
+        uses: SonarSource/sonarqube-quality-gate-action@v1
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

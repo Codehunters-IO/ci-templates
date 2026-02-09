@@ -1,111 +1,23 @@
-# Plantilla post-merge a develop → crea rama release y publica versión (Gradle Java) — microservices
+# Plantilla post-merge a develop → versión + CHANGELOG + artifact + Sonar (Gradle Java)
 #
 # Uso: copie este archivo a .github/workflows/ en su repositorio de microservicio
 # Requisitos: definir secrets SONAR_HOST_URL y SONAR_TOKEN
 
-name: Java - Merge a develop → Release + CHANGELOG + Sonar
+name: Java - Merge a develop → Release pipeline
 
 on:
   push:
     branches:
       - develop
 
+permissions:
+  contents: write
+
 jobs:
-  release:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Determinar versión semántica
-        id: semver
-        uses: PaulHatch/semantic-version@v5.4.0
-        with:
-          tag_prefix: "v"
-          major_pattern: "(MAJOR|BREAKING CHANGE)"
-          minor_pattern: "(feat)"
-          format: "${major}.${minor}.${patch}"
-          namespace: ""
-          change_path: ""
-          bump_each_commit: false
-
-      - name: Exportar versión
-        run: echo "VERSION=${{ steps.semver.outputs.version_tag }}" >> $GITHUB_ENV
-
-      - name: Crear/Actualizar rama release
-        run: |
-          BRANCH="release/${VERSION#v}"
-          git checkout -B "$BRANCH"
-
-      - name: Actualizar CHANGELOG.md
-        run: |
-          set -e
-          TODAY="$(date +%Y-%m-%d)"
-          VERSION_LINE="## ${VERSION} - ${TODAY}"
-          if git describe --tags --abbrev=0 >/dev/null 2>&1; then
-            PREV_TAG="$(git describe --tags --abbrev=0)"
-            RANGE="${PREV_TAG}..HEAD"
-          else
-            RANGE="$(git rev-list --max-parents=0 HEAD)^..HEAD"
-          fi
-          COMMITS="$(git log --pretty=format:'- %s (%h)' ${RANGE})"
-          echo "Preparando CHANGELOG para ${VERSION}"
-          if [ -f CHANGELOG.md ]; then
-            tail -n +1 CHANGELOG.md > /tmp/CHANGELOG_OLD.md
-          else
-            touch /tmp/CHANGELOG_OLD.md
-          fi
-          {
-            echo "${VERSION_LINE}"
-            echo ""
-            if [ -n "${COMMITS}" ]; then
-              echo "${COMMITS}"
-            else
-              echo "- No changes recorded."
-            fi
-            echo ""
-            cat /tmp/CHANGELOG_OLD.md
-          } > CHANGELOG.md
-
-      - name: Commit CHANGELOG y push rama release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add CHANGELOG.md
-          if ! git diff --cached --quiet; then
-            git commit -m "chore(release): ${VERSION} - update CHANGELOG"
-          else
-            echo "Sin cambios en CHANGELOG para commitear."
-          fi
-          git push -u origin HEAD
-
-      - name: Setup Temurin JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-          cache: gradle
-
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
-
-      - name: Build (con tests)
-        run: ./gradlew clean build --no-daemon
-
-      - name: SonarQube/SonarCloud analysis (Gradle)
-        run: ./gradlew sonarqube -Dsonar.host.url="${{ env.SONAR_HOST_URL }}" -Dsonar.login="${{ env.SONAR_TOKEN }}" --no-daemon
-
-      - name: Quality Gate
-        uses: SonarSource/sonarqube-quality-gate-action@v1
-        env:
-          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
-          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
+  pipeline:
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    uses: soldife/ci-templates/.github/workflows/main-pipeline-backend.yml@main
+    with:
+      run_artifact: true
+      update_changelog: true
+    secrets: inherit

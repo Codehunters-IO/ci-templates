@@ -1,30 +1,68 @@
 name: main-pipeline-backend
+
 on:
-    workflow_call:
-        inputs:
-            workload_type:
-                description: 'Type of workload to deploy'
-                default: 'deployment'
-                required: false
-                type: string
-            runner:
-                description: 'The type of machine to run the job on'
-                required: false
-                type: string
-                default: 'ubuntu-latest'
+  workflow_call:
+    inputs:
+      runner:
+        description: 'The type of machine to run the job on'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      run_test:
+        description: 'Run test job'
+        required: false
+        type: boolean
+        default: false
+      run_artifact:
+        description: 'Run artifact (Docker) job'
+        required: false
+        type: boolean
+        default: false
+      run_sonarqube:
+        description: 'Run SonarQube analysis job'
+        required: false
+        type: boolean
+        default: false
+      update_changelog:
+        description: 'Generate and commit CHANGELOG.md during semver'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
-    build:
-        name: Build
-        uses: ./.github/workflows/java-build.yml
-        with:
-            runner: ${{ inputs.runner }}
-        secrets: inherit
+  semver:
+    name: Semantic Version
+    uses: ./.github/workflows/java-semver.yml
+    with:
+      runner: ${{ inputs.runner }}
+      update_changelog: ${{ inputs.update_changelog }}
+    secrets: inherit
+    permissions:
+      contents: write
 
-    test-coverage:
-        name: Test + Coverage
-        needs: build
-        uses: ./.github/workflows/java-test-coverage.yml
-        with:
-            runner: ${{ inputs.runner }}
-        secrets: inherit
+  build:
+    name: Build
+    needs: semver
+    uses: ./.github/workflows/java-build.yml
+    with:
+      runner: ${{ inputs.runner }}
+    secrets: inherit
+
+  test:
+    name: Test
+    if: github.ref_name == 'develop' && inputs.run_test
+    needs: build
+    uses: ./.github/workflows/java-test.yml
+    with:
+      runner: ${{ inputs.runner }}
+    secrets: inherit
+
+  artifact:
+    name: Artifact
+    if: github.ref_name == 'develop' && inputs.run_artifact
+    needs: [semver, build]
+    uses: ./.github/workflows/java-artifact.yml
+    with:
+      runner: ${{ inputs.runner }}
+      version: ${{ needs.semver.outputs.version }}
+    secrets: inherit
