@@ -10,7 +10,7 @@ on:
         default: 'ubuntu-latest'
 
 jobs:
-  verify:
+  test:
     runs-on: ${{ inputs.runner }}
     permissions:
       contents: read
