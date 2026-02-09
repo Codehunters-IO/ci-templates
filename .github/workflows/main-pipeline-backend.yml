@@ -30,27 +30,28 @@ on:
         default: false
 
 jobs:
+  build:
+    name: Build
+    uses: ./.github/workflows/java-build.yml
+    with:
+      runner: ${{ inputs.runner }}
+    secrets: inherit
+
   semver:
     name: Semantic Version
+    if: github.ref_name == 'develop'
+    needs: build
     uses: ./.github/workflows/java-semver.yml
     with:
       runner: ${{ inputs.runner }}
       update_changelog: ${{ inputs.update_changelog }}
     secrets: inherit
     permissions:
-      contents: read
-
-  build:
-    name: Build
-    needs: semver
-    uses: ./.github/workflows/java-build.yml
-    with:
-      runner: ${{ inputs.runner }}
-    secrets: inherit
+      contents: write
 
   test:
     name: Test
-    if: github.ref_name == 'develop' && inputs.run_test
+    if: inputs.run_test
     needs: build
     uses: ./.github/workflows/java-test.yml
     with:
@@ -59,10 +60,17 @@ jobs:
 
   artifact:
     name: Artifact
-    if: github.ref_name == 'develop' && inputs.run_artifact
-    needs: [semver, build]
+    if: |
+      inputs.run_artifact && 
+      (github.ref_name == 'develop' || github.ref_name == 'main') &&
+      always() && 
+      needs.build.result == 'success' &&
+      (needs.test.result == 'success' || needs.test.result == 'skipped') &&
+      (needs.semver.result == 'success' || needs.semver.result == 'skipped')
+    needs: [build, semver, test]
     uses: ./.github/workflows/java-artifact.yml
     with:
       runner: ${{ inputs.runner }}
       version: ${{ needs.semver.outputs.version }}
+      branch: ${{ github.ref_name }}
     secrets: inherit
