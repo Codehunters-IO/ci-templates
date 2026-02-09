@@ -1,10 +1,23 @@
 name: main-pipeline-backend
 on:
     workflow_call:
+        inputs:
+            workload_type:
+                description: 'Type of workload to deploy'
+                default: 'deployment'
+                required: false
+                type: string
+            runner:
+                description: 'The type of machine to run the job on'
+                required: false
+                type: string
+                default: 'ubuntu-latest'
 
 jobs:
     build:
         name: Build
         uses: ./.github/workflows/java-build.yml
+        with:
+            runner: ${{ inputs.runner }}
         secrets: inherit
     
