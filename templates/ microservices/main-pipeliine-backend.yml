@@ -1,0 +1,10 @@
+name: main-pipeline-backend
+on:
+    workflow_call:
+
+jobs:
+    build:
+    name: Build
+    uses: ./.github/workflows/java-build.yml
+    secrets: inherit
+    
