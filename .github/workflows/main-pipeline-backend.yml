@@ -20,4 +20,11 @@ jobs:
         with:
             runner: ${{ inputs.runner }}
         secrets: inherit
-    
+
+    test-coverage:
+        name: Test + Coverage
+        needs: build
+        uses: ./.github/workflows/java-test-coverage.yml
+        with:
+            runner: ${{ inputs.runner }}
+        secrets: inherit

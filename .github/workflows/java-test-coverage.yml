@@ -1,0 +1,37 @@
+name: Java Build + Tests + Sonar
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'The type of machine to run the job on'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+
+jobs:
+  verify:
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Temurin JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build (con tests)
+        run: ./gradlew clean test --no-daemon
+
+
