@@ -38,7 +38,7 @@ jobs:
       update_changelog: ${{ inputs.update_changelog }}
     secrets: inherit
     permissions:
-      contents: write
+      contents: read
 
   build:
     name: Build
