@@ -1,0 +1,109 @@
+name: Java - Artifact to ECR
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'The type of machine to run the job on'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      version:
+        description: 'Version to tag the Docker image (e.g. 1.2.3)'
+        required: false
+        type: string
+        default: ''
+      push_to_ecr:
+        description: 'Whether to push the image to AWS ECR'
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      image_tag:
+        description: 'Docker image tag used'
+        value: ${{ jobs.artifact.outputs.image_tag }}
+
+jobs:
+  artifact:
+    name: Docker Image to ECR
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image_tag: ${{ steps.push-ecr.outputs.image_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Temurin JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build JAR
+        run: ./gradlew clean build -x test --no-daemon
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            # Try to get latest tag, fallback to 'latest'
+            if git describe --tags --abbrev=0 >/dev/null 2>&1; then
+              VERSION="$(git describe --tags --abbrev=0 | sed 's/^v//')"
+            else
+              VERSION="latest"
+            fi
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Using version: ${VERSION}"
+
+      - name: Configure AWS credentials
+        if: inputs.push_to_ecr
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        if: inputs.push_to_ecr
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push to ECR
+        if: inputs.push_to_ecr
+        id: push-ecr
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ steps.version.outputs.version }}
+        run: |
+          echo "Building Docker image..."
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "Pushing Docker image to ECR..."
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "### Docker Image Pushed to ECR" >> $GITHUB_STEP_SUMMARY
+          echo "- **Registry:** $ECR_REGISTRY" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository:** $ECR_REPOSITORY" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag:** $IMAGE_TAG" >> $GITHUB_STEP_SUMMARY
+
+      - name: Build Docker image locally
+        if: ${{ !inputs.push_to_ecr }}
+        env:
+          IMAGE_TAG: ${{ steps.version.outputs.version }}
+        run: |
+          REPO_NAME=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "Building Docker image: ${REPO_NAME}:${IMAGE_TAG}"
+          docker build -t ${REPO_NAME}:${IMAGE_TAG} .

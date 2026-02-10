@@ -1,0 +1,66 @@
+name: Java - Deploy to AWS EC2 (Develop)
+
+on:
+  push:
+    branches:
+      - develop
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build
+    uses: ./.github/workflows/java-build.yml
+    with:
+      runner: ubuntu-latest
+    secrets: inherit
+
+  test:
+    name: Test
+    needs: build
+    uses: ./.github/workflows/java-test.yml
+    with:
+      runner: ubuntu-latest
+    secrets: inherit
+
+  semver:
+    name: Semantic Version
+    needs: build
+    uses: ./.github/workflows/java-semver.yml
+    with:
+      runner: ubuntu-latest
+      update_changelog: true
+    secrets: inherit
+    permissions:
+      contents: write
+
+  artifact:
+    name: Build and Push to ECR
+    needs: [build, test, semver]
+    if: |
+      always() && 
+      needs.build.result == 'success' &&
+      needs.test.result == 'success' &&
+      needs.semver.result == 'success'
+    uses: ./.github/workflows/java-artifact-ecr.yml
+    with:
+      runner: ubuntu-latest
+      version: ${{ needs.semver.outputs.version }}
+      push_to_ecr: true
+    secrets: inherit
+    permissions:
+      contents: read
+      id-token: write
+
+  deploy:
+    name: Deploy to EC2
+    needs: [artifact, semver]
+    uses: ./.github/workflows/java-deploy-ec2.yml
+    with:
+      runner: ubuntu-latest
+      version: ${{ needs.semver.outputs.version }}
+    secrets: inherit
+    permissions:
+      contents: read
+      id-token: write

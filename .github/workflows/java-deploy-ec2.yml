@@ -1,0 +1,152 @@
+name: Java - Deploy to AWS EC2
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'The type of machine to run the job on'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      version:
+        description: 'Version/tag of the Docker image to deploy'
+        required: true
+        type: string
+
+jobs:
+  deploy:
+    name: Deploy to EC2
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Deploy to EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ inputs.version }}
+          APP_NAME: ${{ secrets.APP_NAME }}
+          APP_PORT: ${{ secrets.APP_PORT }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          # Save SSH key
+          mkdir -p ~/.ssh
+          echo "$EC2_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          
+          # Add EC2 host to known_hosts
+          ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts
+          
+          # Create deployment script
+          cat > /tmp/deploy.sh << 'DEPLOY_SCRIPT'
+          #!/bin/bash
+          set -e
+          
+          # Variables
+          ECR_REGISTRY="${ECR_REGISTRY}"
+          ECR_REPOSITORY="${ECR_REPOSITORY}"
+          IMAGE_TAG="${IMAGE_TAG}"
+          APP_NAME="${APP_NAME}"
+          APP_PORT="${APP_PORT}"
+          AWS_REGION="${AWS_REGION}"
+          DEPLOY_DIR="/opt/docker/${APP_NAME}"
+          
+          echo "Deploying ${APP_NAME} version ${IMAGE_TAG}..."
+          
+          # Create deployment directory and set ownership
+          sudo mkdir -p ${DEPLOY_DIR}
+          sudo chown ${USER}:${USER} ${DEPLOY_DIR}
+          cd ${DEPLOY_DIR}
+          
+          # Login to ECR
+          aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
+          
+          # Create docker-compose.yml
+          cat > docker-compose.yml << EOF
+          version: '3.8'
+          
+          services:
+            ${APP_NAME}:
+              image: ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}
+              container_name: ${APP_NAME}
+              restart: unless-stopped
+              ports:
+                - "${APP_PORT}:8080"
+              environment:
+                - SPRING_PROFILES_ACTIVE=production
+              logging:
+                driver: "json-file"
+                options:
+                  max-size: "10m"
+                  max-file: "3"
+          EOF
+          
+          # Create start.sh script
+          cat > start.sh << 'STARTEOF'
+          #!/bin/bash
+          set -e
+          
+          echo "Starting application..."
+          docker-compose pull
+          docker-compose up -d
+          echo "Application started successfully"
+          docker-compose ps
+          STARTEOF
+          chmod +x start.sh
+          
+          # Create stop.sh script
+          cat > stop.sh << 'STOPEOF'
+          #!/bin/bash
+          set -e
+          
+          echo "Stopping application..."
+          docker-compose down
+          echo "Application stopped successfully"
+          STOPEOF
+          chmod +x stop.sh
+          
+          # Stop existing container if running
+          if [ -n "$(docker ps -q -f name=${APP_NAME} 2>/dev/null)" ]; then
+            echo "Stopping existing container..."
+            ./stop.sh || true
+          fi
+          
+          # Start the new container
+          ./start.sh
+          
+          echo "Deployment completed successfully!"
+          DEPLOY_SCRIPT
+          
+          # Copy and execute deployment script on EC2
+          scp -i ~/.ssh/deploy_key /tmp/deploy.sh ${EC2_USER}@${EC2_HOST}:/tmp/deploy.sh
+          ssh -i ~/.ssh/deploy_key ${EC2_USER}@${EC2_HOST} "chmod +x /tmp/deploy.sh && \
+            ECR_REGISTRY=${ECR_REGISTRY} \
+            ECR_REPOSITORY=${ECR_REPOSITORY} \
+            IMAGE_TAG=${IMAGE_TAG} \
+            APP_NAME=${APP_NAME} \
+            APP_PORT=${APP_PORT} \
+            AWS_REGION=${AWS_REGION} \
+            bash /tmp/deploy.sh"
+          
+          echo "### Deployment to EC2 Completed" >> $GITHUB_STEP_SUMMARY
+          echo "- **Host:** $EC2_HOST" >> $GITHUB_STEP_SUMMARY
+          echo "- **Application:** $APP_NAME" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** $IMAGE_TAG" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image:** $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_STEP_SUMMARY
