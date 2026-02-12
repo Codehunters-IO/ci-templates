@@ -53,6 +53,16 @@ on:
         required: false
         type: boolean
         default: false
+      run_cleanup:
+        description: 'Delete merged branch after deploy'
+        required: false
+        type: boolean
+        default: false
+      run_release:
+        description: 'Create release PR after deploy'
+        required: false
+        type: boolean
+        default: false
 
       # Test options
       coverage_threshold:
@@ -80,6 +90,13 @@ on:
         type: string
         default: ''
 
+      # Release options
+      release_target_branch:
+        description: 'Target branch for release PR'
+        required: false
+        type: string
+        default: 'main'
+
     outputs:
       image_tag:
         description: 'Docker image tag pushed'
@@ -93,6 +110,15 @@ on:
       quality_gate:
         description: 'SonarQube Quality Gate status'
         value: ${{ jobs.test.outputs.quality_gate_status }}
+      deleted_branch:
+        description: 'Name of deleted branch'
+        value: ${{ jobs.cleanup.outputs.deleted_branch }}
+      release_version:
+        description: 'Release version created'
+        value: ${{ jobs.release.outputs.version }}
+      release_pr_url:
+        description: 'Release PR URL'
+        value: ${{ jobs.release.outputs.pr_url }}
 
 jobs:
   # ============================================
@@ -169,3 +195,38 @@ jobs:
       environment: ${{ inputs.environment }}
       health_check_path: ${{ inputs.health_check_path }}
     secrets: inherit
+
+  # ============================================
+  # CLEANUP - Delete merged branch
+  # ============================================
+  cleanup:
+    name: Delete Branch
+    if: |
+      inputs.run_cleanup &&
+      always() &&
+      (needs.deploy.result == 'success' || (needs.deploy.result == 'skipped' && needs.artifact.result == 'success'))
+    needs: [deploy]
+    uses: ./.github/workflows/java-delete-branch.yml
+    secrets: inherit
+    permissions:
+      contents: write
+
+  # ============================================
+  # RELEASE - Create release PR
+  # ============================================
+  release:
+    name: Create Release
+    if: |
+      inputs.run_release &&
+      always() &&
+      (needs.deploy.result == 'success' || (needs.deploy.result == 'skipped' && needs.artifact.result == 'success')) &&
+      (needs.cleanup.result == 'success' || needs.cleanup.result == 'skipped')
+    needs: [deploy, cleanup]
+    uses: ./.github/workflows/java-release.yml
+    with:
+      base_branch: ${{ inputs.environment }}
+      target_branch: ${{ inputs.release_target_branch }}
+    secrets: inherit
+    permissions:
+      contents: write
+      pull-requests: write

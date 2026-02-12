@@ -46,23 +46,9 @@ jobs:
       run_owasp: true
       run_artifact: true
       run_deploy: true
+      run_cleanup: true
+      run_release: true
       environment: 'develop'
+      release_target_branch: 'main'
       health_check_path: '/actuator/health'
-    secrets: inherit
-
-  cleanup:
-    name: Delete Merged Branch
-    needs: pipeline
-    if: success()
-    uses: <org>/ci-templates/.github/workflows/java-delete-branch.yml@main
-    secrets: inherit
-
-  release:
-    name: Create Release PR
-    needs: [pipeline, cleanup]
-    if: success()
-    uses: <org>/ci-templates/.github/workflows/java-release.yml@main
-    with:
-      base_branch: 'develop'
-      target_branch: 'main'
     secrets: inherit
