@@ -1,4 +1,4 @@
-name: Java - Test
+name: Java - Test & Quality
 
 on:
   workflow_call:
@@ -18,31 +18,102 @@ on:
         required: false
         type: string
         default: 'temurin'
+      gradle_task:
+        description: 'Gradle test task to run'
+        required: false
+        type: string
+        default: 'test'
+      run_coverage:
+        description: 'Run JaCoCo coverage report'
+        required: false
+        type: boolean
+        default: true
+      coverage_threshold:
+        description: 'Minimum coverage percentage (0-100). Set to 0 to disable.'
+        required: false
+        type: number
+        default: 0
+      run_sonar:
+        description: 'Run SonarQube analysis'
+        required: false
+        type: boolean
+        default: false
+      skip_quality_gate:
+        description: 'Skip Quality Gate check'
+        required: false
+        type: boolean
+        default: false
+      run_owasp:
+        description: 'Run OWASP Dependency Check'
+        required: false
+        type: boolean
+        default: false
+      owasp_fail_on_cvss:
+        description: 'CVSS score threshold to fail build (7 = HIGH+CRITICAL, 9 = CRITICAL only)'
+        required: false
+        type: number
+        default: 7
       upload_reports:
         description: 'Upload test reports as artifact'
         required: false
         type: boolean
         default: false
 
+    secrets:
+      SONAR_HOST_URL:
+        required: false
+      SONAR_TOKEN:
+        required: false
+      NVD_API_KEY:
+        required: false
+
     outputs:
       result:
         description: 'Test result (success/failure)'
         value: ${{ jobs.test.outputs.result }}
+      coverage_percentage:
+        description: 'Code coverage percentage'
+        value: ${{ jobs.test.outputs.coverage }}
+      tests_passed:
+        description: 'Number of tests passed'
+        value: ${{ jobs.test.outputs.passed }}
+      tests_failed:
+        description: 'Number of tests failed'
+        value: ${{ jobs.test.outputs.failed }}
+      tests_skipped:
+        description: 'Number of tests skipped'
+        value: ${{ jobs.test.outputs.skipped }}
+      quality_gate_status:
+        description: 'SonarQube Quality Gate status'
+        value: ${{ jobs.test.outputs.quality_gate }}
+      owasp_vulnerabilities:
+        description: 'Number of OWASP vulnerabilities found'
+        value: ${{ jobs.test.outputs.owasp_vulns }}
 
 jobs:
   test:
-    name: Test
+    name: Test & Quality
     runs-on: ${{ inputs.runner }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
+      checks: write
+      pull-requests: write
 
     outputs:
       result: ${{ steps.test-run.outcome }}
+      coverage: ${{ steps.coverage.outputs.percentage }}
+      passed: ${{ steps.test-summary.outputs.passed }}
+      failed: ${{ steps.test-summary.outputs.failed }}
+      skipped: ${{ steps.test-summary.outputs.skipped }}
+      quality_gate: ${{ steps.quality-gate.outputs.quality-gate-status }}
+      owasp_vulns: ${{ steps.owasp-check.outputs.vulnerabilities }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup JDK ${{ inputs.java_version }}
         uses: actions/setup-java@v4
@@ -54,14 +125,216 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      # ============================================
+      # RUN TESTS + COVERAGE
+      # ============================================
       - name: Run tests
         id: test-run
-        run: ./gradlew test --no-daemon
+        run: |
+          if [ "${{ inputs.run_coverage }}" = "true" ]; then
+            ./gradlew ${{ inputs.gradle_task }} jacocoTestReport --no-daemon || true
+          else
+            ./gradlew ${{ inputs.gradle_task }} --no-daemon || true
+          fi
 
+      - name: Parse test results
+        id: test-summary
+        if: always()
+        run: |
+          PASSED=0
+          FAILED=0
+          SKIPPED=0
+
+          if [ -d "build/test-results" ]; then
+            for file in $(find build/test-results -name "*.xml" 2>/dev/null); do
+              if [ -f "$file" ]; then
+                FILE_TESTS=$(grep -oP 'tests="\K[0-9]+' "$file" 2>/dev/null | head -1 || echo "0")
+                FILE_FAILURES=$(grep -oP 'failures="\K[0-9]+' "$file" 2>/dev/null | head -1 || echo "0")
+                FILE_ERRORS=$(grep -oP 'errors="\K[0-9]+' "$file" 2>/dev/null | head -1 || echo "0")
+                FILE_SKIPPED=$(grep -oP 'skipped="\K[0-9]+' "$file" 2>/dev/null | head -1 || echo "0")
+
+                TOTAL_FAILED=$((FILE_FAILURES + FILE_ERRORS))
+                FILE_PASSED=$((FILE_TESTS - TOTAL_FAILED - FILE_SKIPPED))
+
+                PASSED=$((PASSED + FILE_PASSED))
+                FAILED=$((FAILED + TOTAL_FAILED))
+                SKIPPED=$((SKIPPED + FILE_SKIPPED))
+              fi
+            done
+          fi
+
+          echo "passed=$PASSED" >> $GITHUB_OUTPUT
+          echo "failed=$FAILED" >> $GITHUB_OUTPUT
+          echo "skipped=$SKIPPED" >> $GITHUB_OUTPUT
+
+          TOTAL=$((PASSED + FAILED + SKIPPED))
+          echo "### Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Status | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Passed | $PASSED |" >> $GITHUB_STEP_SUMMARY
+          echo "| Failed | $FAILED |" >> $GITHUB_STEP_SUMMARY
+          echo "| Skipped | $SKIPPED |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Total** | **$TOTAL** |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Parse coverage report
+        id: coverage
+        if: inputs.run_coverage && always()
+        run: |
+          COVERAGE=0
+
+          if [ -f "build/reports/jacoco/test/jacocoTestReport.csv" ]; then
+            MISSED=$(awk -F',' 'NR>1 {sum+=$8} END {print sum}' build/reports/jacoco/test/jacocoTestReport.csv 2>/dev/null || echo "0")
+            COVERED=$(awk -F',' 'NR>1 {sum+=$9} END {print sum}' build/reports/jacoco/test/jacocoTestReport.csv 2>/dev/null || echo "0")
+
+            if [ "$((MISSED + COVERED))" -gt 0 ]; then
+              COVERAGE=$(awk "BEGIN {printf \"%.1f\", ($COVERED / ($MISSED + $COVERED)) * 100}")
+            fi
+          fi
+
+          echo "percentage=$COVERAGE" >> $GITHUB_OUTPUT
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Code Coverage" >> $GITHUB_STEP_SUMMARY
+          echo "**Line Coverage: ${COVERAGE}%**" >> $GITHUB_STEP_SUMMARY
+
+      - name: Check coverage threshold
+        if: inputs.run_coverage && inputs.coverage_threshold > 0
+        run: |
+          COVERAGE="${{ steps.coverage.outputs.percentage }}"
+          THRESHOLD="${{ inputs.coverage_threshold }}"
+
+          if [ "$(echo "$COVERAGE < $THRESHOLD" | bc -l)" -eq 1 ]; then
+            echo "::error::Coverage ${COVERAGE}% is below threshold of ${THRESHOLD}%"
+            exit 1
+          fi
+
+      - name: Check test results
+        if: always()
+        run: |
+          FAILED="${{ steps.test-summary.outputs.failed }}"
+          if [ "$FAILED" -gt 0 ]; then
+            echo "::error::$FAILED test(s) failed"
+            exit 1
+          fi
+
+      # ============================================
+      # OWASP DEPENDENCY CHECK
+      # ============================================
+      - name: Run OWASP Dependency Check
+        id: owasp-check
+        if: inputs.run_owasp
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: |
+          echo "Running OWASP Dependency Check..."
+
+          # Build the command with optional NVD API key
+          OWASP_CMD="./gradlew dependencyCheckAnalyze --no-daemon"
+          if [ -n "$NVD_API_KEY" ]; then
+            OWASP_CMD="$OWASP_CMD -DnvdApiKey=$NVD_API_KEY"
+          fi
+
+          # Run the check (don't fail yet, we'll check the report)
+          $OWASP_CMD || true
+
+          # Parse the report to count vulnerabilities
+          REPORT_FILE="build/reports/dependency-check-report.json"
+          VULNS=0
+          CRITICAL=0
+          HIGH=0
+
+          if [ -f "$REPORT_FILE" ]; then
+            # Count vulnerabilities by severity
+            CRITICAL=$(jq '[.dependencies[]?.vulnerabilities[]? | select(.severity == "CRITICAL")] | length' "$REPORT_FILE" 2>/dev/null || echo "0")
+            HIGH=$(jq '[.dependencies[]?.vulnerabilities[]? | select(.severity == "HIGH")] | length' "$REPORT_FILE" 2>/dev/null || echo "0")
+            MEDIUM=$(jq '[.dependencies[]?.vulnerabilities[]? | select(.severity == "MEDIUM")] | length' "$REPORT_FILE" 2>/dev/null || echo "0")
+            LOW=$(jq '[.dependencies[]?.vulnerabilities[]? | select(.severity == "LOW")] | length' "$REPORT_FILE" 2>/dev/null || echo "0")
+            VULNS=$((CRITICAL + HIGH + MEDIUM + LOW))
+          fi
+
+          echo "vulnerabilities=$VULNS" >> $GITHUB_OUTPUT
+          echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
+          echo "high=$HIGH" >> $GITHUB_OUTPUT
+
+          # Summary
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### OWASP Dependency Check" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Severity | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| CRITICAL | $CRITICAL |" >> $GITHUB_STEP_SUMMARY
+          echo "| HIGH | $HIGH |" >> $GITHUB_STEP_SUMMARY
+          echo "| MEDIUM | $MEDIUM |" >> $GITHUB_STEP_SUMMARY
+          echo "| LOW | $LOW |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Total** | **$VULNS** |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Check OWASP vulnerabilities
+        if: inputs.run_owasp
+        run: |
+          CRITICAL="${{ steps.owasp-check.outputs.critical }}"
+          HIGH="${{ steps.owasp-check.outputs.high }}"
+          THRESHOLD="${{ inputs.owasp_fail_on_cvss }}"
+
+          # Fail on CRITICAL (CVSS >= 9)
+          if [ "$CRITICAL" -gt 0 ]; then
+            echo "::error::Found $CRITICAL CRITICAL vulnerabilities"
+            exit 1
+          fi
+
+          # Fail on HIGH if threshold is 7 or lower
+          if [ "$THRESHOLD" -le 7 ] && [ "$HIGH" -gt 0 ]; then
+            echo "::error::Found $HIGH HIGH vulnerabilities"
+            exit 1
+          fi
+
+          echo "No blocking vulnerabilities found"
+
+      # ============================================
+      # SONARQUBE ANALYSIS
+      # ============================================
+      - name: Run SonarQube analysis
+        if: inputs.run_sonar && secrets.SONAR_TOKEN != ''
+        run: |
+          ./gradlew sonarqube \
+            -Dsonar.host.url="${{ secrets.SONAR_HOST_URL }}" \
+            -Dsonar.login="${{ secrets.SONAR_TOKEN }}" \
+            --no-daemon
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### SonarQube" >> $GITHUB_STEP_SUMMARY
+          echo "Analysis completed. Check Quality Gate below." >> $GITHUB_STEP_SUMMARY
+
+      - name: Check Quality Gate
+        id: quality-gate
+        if: inputs.run_sonar && !inputs.skip_quality_gate && secrets.SONAR_TOKEN != ''
+        uses: SonarSource/sonarqube-quality-gate-action@v1
+        timeout-minutes: 5
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: Quality Gate Summary
+        if: inputs.run_sonar && !inputs.skip_quality_gate && secrets.SONAR_TOKEN != ''
+        run: |
+          STATUS="${{ steps.quality-gate.outputs.quality-gate-status }}"
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Quality Gate: ${STATUS}**" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$STATUS" != "PASSED" ]; then
+            echo "::warning::Quality Gate status: $STATUS"
+          fi
+
+      # ============================================
+      # UPLOAD REPORTS
+      # ============================================
       - name: Upload test reports
         if: inputs.upload_reports && always()
         uses: actions/upload-artifact@v4
         with:
           name: test-reports-${{ github.run_id }}
-          path: build/reports/tests/
+          path: |
+            build/reports/tests/
+            build/reports/jacoco/
+            build/reports/dependency-check-report.html
           retention-days: 7

@@ -18,15 +18,16 @@ on:
         required: false
         type: string
         default: 'temurin'
-      version:
-        description: 'Version tag for Docker image (required)'
-        required: true
+      image_tag:
+        description: 'Docker image tag. If empty, uses short commit SHA (7 chars)'
+        required: false
         type: string
+        default: ''
       push_latest:
         description: 'Also push :latest tag'
         required: false
         type: boolean
-        default: true
+        default: false
       dockerfile_path:
         description: 'Path to Dockerfile'
         required: false
@@ -48,6 +49,9 @@ on:
       image_uri:
         description: 'Full Docker image URI'
         value: ${{ jobs.artifact.outputs.image_uri }}
+      commit_sha:
+        description: 'Short commit SHA used'
+        value: ${{ jobs.artifact.outputs.commit_sha }}
 
 jobs:
   artifact:
@@ -59,12 +63,29 @@ jobs:
       id-token: write
 
     outputs:
-      image_tag: ${{ steps.push-ecr.outputs.image_tag }}
+      image_tag: ${{ steps.set-tag.outputs.tag }}
       image_uri: ${{ steps.push-ecr.outputs.image_uri }}
+      commit_sha: ${{ steps.set-tag.outputs.commit_sha }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Determine image tag
+        id: set-tag
+        run: |
+          COMMIT_SHA="${{ github.sha }}"
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+
+          if [ -n "${{ inputs.image_tag }}" ]; then
+            TAG="${{ inputs.image_tag }}"
+          else
+            TAG="$SHORT_SHA"
+          fi
+
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "commit_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "Using image tag: $TAG"
 
       - name: Setup JDK ${{ inputs.java_version }}
         uses: actions/setup-java@v4
@@ -94,7 +115,7 @@ jobs:
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
-          IMAGE_TAG: ${{ inputs.version }}
+          IMAGE_TAG: ${{ steps.set-tag.outputs.tag }}
         run: |
           IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
@@ -107,13 +128,16 @@ jobs:
           if [ "${{ inputs.push_latest }}" = "true" ]; then
             docker tag $IMAGE_URI $ECR_REGISTRY/$ECR_REPOSITORY:latest
             docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+            echo "Also pushed :latest tag"
           fi
 
-          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
           echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
 
           echo "### Docker Image Pushed to ECR" >> $GITHUB_STEP_SUMMARY
-          echo "- **Registry:** $ECR_REGISTRY" >> $GITHUB_STEP_SUMMARY
-          echo "- **Repository:** $ECR_REPOSITORY" >> $GITHUB_STEP_SUMMARY
-          echo "- **Tag:** $IMAGE_TAG" >> $GITHUB_STEP_SUMMARY
-          echo "- **URI:** $IMAGE_URI" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Registry** | $ECR_REGISTRY |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Repository** | $ECR_REPOSITORY |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Tag** | $IMAGE_TAG |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Full URI** | $IMAGE_URI |" >> $GITHUB_STEP_SUMMARY

@@ -2,21 +2,27 @@
 # Copy to: .github/workflows/develop-deploy.yml
 #
 # Triggers on push to develop branch (after PR merge)
-# Runs: build + test + semver + artifact + deploy (DEV environment)
+# Flow: build → test → artifact → deploy → delete branch → create release PR
+# Image tag: commit SHA (7 chars)
 #
 # Required secrets:
-#   - AWS_ROLE_TO_ASSUME: ARN of AWS IAM role for OIDC
+#   AWS:
+#   - AWS_ROLE_TO_ASSUME: ARN of AWS IAM role (for ECR push from GitHub)
 #   - AWS_REGION: AWS region (e.g., us-east-1)
 #   - ECR_REPOSITORY: ECR repository name
-#   - EC2_HOST: EC2 instance hostname/IP
-#   - EC2_USER: SSH username (e.g., ec2-user, ubuntu)
-#   - EC2_SSH_KEY: SSH private key for EC2 access
-#   - APP_NAME: Application name
-#   - APP_PORT: Port to expose
-#   - SONAR_HOST_URL: SonarQube server URL (optional)
-#   - SONAR_TOKEN: SonarQube token (optional)
+#
+#   EC2:
+#   - EC2_HOST: Server IP or hostname
+#   - EC2_USER: SSH username (e.g., ubuntu, ec2-user)
+#   - EC2_SSH_KEY: SSH private key
+#   - APP_PORT: External port for the application
+#
+#   Optional:
+#   - SONAR_HOST_URL: SonarQube server URL
+#   - SONAR_TOKEN: SonarQube token
+#   - NVD_API_KEY: NVD API key for OWASP
 
-name: Deploy to DEV
+name: Deploy to Develop
 
 on:
   push:
@@ -26,18 +32,37 @@ on:
 permissions:
   contents: write
   id-token: write
+  checks: write
+  pull-requests: write
 
 jobs:
-  deploy:
+  pipeline:
     if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
     uses: <org>/ci-templates/.github/workflows/main-pipeline-backend.yml@main
     with:
       run_build: true
       run_test: true
-      run_semver: true
+      run_sonar: true
+      run_owasp: true
       run_artifact: true
       run_deploy: true
-      update_changelog: true
-      spring_profile: 'develop'
+      environment: 'develop'
       health_check_path: '/actuator/health'
+    secrets: inherit
+
+  cleanup:
+    name: Delete Merged Branch
+    needs: pipeline
+    if: success()
+    uses: <org>/ci-templates/.github/workflows/java-delete-branch.yml@main
+    secrets: inherit
+
+  release:
+    name: Create Release PR
+    needs: [pipeline, cleanup]
+    if: success()
+    uses: <org>/ci-templates/.github/workflows/java-release.yml@main
+    with:
+      base_branch: 'develop'
+      target_branch: 'main'
     secrets: inherit

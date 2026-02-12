@@ -29,17 +29,17 @@ on:
         type: boolean
         default: true
       run_test:
-        description: 'Run test job'
+        description: 'Run test job (includes coverage)'
         required: false
         type: boolean
         default: false
       run_sonar:
-        description: 'Run SonarQube analysis'
+        description: 'Run SonarQube analysis (requires run_test: true)'
         required: false
         type: boolean
         default: false
-      run_semver:
-        description: 'Run semantic versioning'
+      run_owasp:
+        description: 'Run OWASP Dependency Check (requires run_test: true)'
         required: false
         type: boolean
         default: false
@@ -54,19 +54,26 @@ on:
         type: boolean
         default: false
 
-      # Semver options
-      update_changelog:
-        description: 'Generate and commit CHANGELOG.md'
+      # Test options
+      coverage_threshold:
+        description: 'Minimum coverage percentage (0-100)'
         required: false
-        type: boolean
-        default: false
+        type: number
+        default: 0
 
-      # Deploy options
-      spring_profile:
-        description: 'Spring profile for deployment'
+      # Artifact options
+      image_tag:
+        description: 'Docker image tag (empty = commit SHA)'
         required: false
         type: string
-        default: 'production'
+        default: ''
+
+      # Deploy options
+      environment:
+        description: 'Deployment environment'
+        required: false
+        type: string
+        default: 'develop'
       health_check_path:
         description: 'Health check endpoint path'
         required: false
@@ -74,19 +81,22 @@ on:
         default: ''
 
     outputs:
-      version:
-        description: 'Semantic version calculated'
-        value: ${{ jobs.semver.outputs.version }}
-      version_tag:
-        description: 'Semantic version tag'
-        value: ${{ jobs.semver.outputs.version_tag }}
       image_tag:
         description: 'Docker image tag pushed'
         value: ${{ jobs.artifact.outputs.image_tag }}
+      image_uri:
+        description: 'Full Docker image URI'
+        value: ${{ jobs.artifact.outputs.image_uri }}
+      coverage:
+        description: 'Code coverage percentage'
+        value: ${{ jobs.test.outputs.coverage_percentage }}
+      quality_gate:
+        description: 'SonarQube Quality Gate status'
+        value: ${{ jobs.test.outputs.quality_gate_status }}
 
 jobs:
   # ============================================
-  # BUILD - Always runs first
+  # BUILD
   # ============================================
   build:
     name: Build
@@ -99,10 +109,10 @@ jobs:
     secrets: inherit
 
   # ============================================
-  # TEST - Runs after build
+  # TEST & QUALITY (Tests + Coverage + Sonar)
   # ============================================
   test:
-    name: Test
+    name: Test & Quality
     if: inputs.run_test
     needs: build
     uses: ./.github/workflows/java-test.yml
@@ -110,39 +120,18 @@ jobs:
       runner: ${{ inputs.runner }}
       java_version: ${{ inputs.java_version }}
       java_distribution: ${{ inputs.java_distribution }}
-    secrets: inherit
-
-  # ============================================
-  # SONARQUBE - Runs after build
-  # ============================================
-  sonar:
-    name: SonarQube
-    if: inputs.run_sonar
-    needs: build
-    uses: ./.github/workflows/java-sonarqube.yml
-    with:
-      runner: ${{ inputs.runner }}
-      java_version: ${{ inputs.java_version }}
-      java_distribution: ${{ inputs.java_distribution }}
-    secrets: inherit
-
-  # ============================================
-  # SEMVER - Runs after build
-  # ============================================
-  semver:
-    name: Semantic Version
-    if: inputs.run_semver
-    needs: build
-    uses: ./.github/workflows/java-semver.yml
-    with:
-      runner: ${{ inputs.runner }}
-      update_changelog: ${{ inputs.update_changelog }}
+      run_coverage: true
+      coverage_threshold: ${{ inputs.coverage_threshold }}
+      run_sonar: ${{ inputs.run_sonar }}
+      run_owasp: ${{ inputs.run_owasp }}
     secrets: inherit
     permissions:
-      contents: write
+      contents: read
+      checks: write
+      pull-requests: write
 
   # ============================================
-  # ARTIFACT - Runs after build, test, semver
+  # ARTIFACT - Build Docker & Push to ECR
   # ============================================
   artifact:
     name: Build & Push ECR
@@ -150,22 +139,21 @@ jobs:
       inputs.run_artifact &&
       always() &&
       needs.build.result == 'success' &&
-      (needs.test.result == 'success' || needs.test.result == 'skipped') &&
-      (needs.semver.result == 'success' || needs.semver.result == 'skipped')
-    needs: [build, test, semver]
+      (needs.test.result == 'success' || needs.test.result == 'skipped')
+    needs: [build, test]
     uses: ./.github/workflows/java-artifact-ecr.yml
     with:
       runner: ${{ inputs.runner }}
       java_version: ${{ inputs.java_version }}
       java_distribution: ${{ inputs.java_distribution }}
-      version: ${{ needs.semver.outputs.version || 'latest' }}
+      image_tag: ${{ inputs.image_tag }}
     secrets: inherit
     permissions:
       contents: read
       id-token: write
 
   # ============================================
-  # DEPLOY - Runs after artifact
+  # DEPLOY - Deploy to EC2 via SSH
   # ============================================
   deploy:
     name: Deploy EC2
@@ -173,14 +161,11 @@ jobs:
       inputs.run_deploy &&
       always() &&
       needs.artifact.result == 'success'
-    needs: [artifact, semver]
+    needs: [artifact]
     uses: ./.github/workflows/java-deploy-ec2.yml
     with:
       runner: ${{ inputs.runner }}
-      version: ${{ needs.semver.outputs.version || needs.artifact.outputs.image_tag }}
-      spring_profile: ${{ inputs.spring_profile }}
+      image_tag: ${{ needs.artifact.outputs.image_tag }}
+      environment: ${{ inputs.environment }}
       health_check_path: ${{ inputs.health_check_path }}
     secrets: inherit
-    permissions:
-      contents: read
-      id-token: write
