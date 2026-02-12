@@ -1,37 +1,67 @@
-name: Java Build + Tests + Sonar
+name: Java - Test
 
 on:
   workflow_call:
     inputs:
       runner:
-        description: 'The type of machine to run the job on'
+        description: 'Runner type'
         required: false
         type: string
         default: 'ubuntu-latest'
+      java_version:
+        description: 'Java version'
+        required: false
+        type: string
+        default: '21'
+      java_distribution:
+        description: 'Java distribution'
+        required: false
+        type: string
+        default: 'temurin'
+      upload_reports:
+        description: 'Upload test reports as artifact'
+        required: false
+        type: boolean
+        default: false
+
+    outputs:
+      result:
+        description: 'Test result (success/failure)'
+        value: ${{ jobs.test.outputs.result }}
 
 jobs:
   test:
     name: Test
     runs-on: ${{ inputs.runner }}
+    timeout-minutes: 20
     permissions:
       contents: read
+
+    outputs:
+      result: ${{ steps.test-run.outcome }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Setup Temurin JDK 21
+      - name: Setup JDK ${{ inputs.java_version }}
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: '21'
+          distribution: ${{ inputs.java_distribution }}
+          java-version: ${{ inputs.java_version }}
           cache: gradle
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build (con tests)
-        run: ./gradlew clean test --no-daemon
+      - name: Run tests
+        id: test-run
+        run: ./gradlew test --no-daemon
 
-
+      - name: Upload test reports
+        if: inputs.upload_reports && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-${{ github.run_id }}
+          path: build/reports/tests/
+          retention-days: 7

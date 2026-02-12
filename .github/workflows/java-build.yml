@@ -1,38 +1,88 @@
-name: Java - Build CI (no tests + Spotless)
+name: Java - Build
 
 on:
   workflow_call:
     inputs:
       runner:
-        description: 'The type of machine to run the job on'
+        description: 'Runner type'
         required: false
         type: string
         default: 'ubuntu-latest'
+      java_version:
+        description: 'Java version'
+        required: false
+        type: string
+        default: '21'
+      java_distribution:
+        description: 'Java distribution (temurin, corretto, zulu, etc.)'
+        required: false
+        type: string
+        default: 'temurin'
+      run_spotless:
+        description: 'Run Spotless code formatting check'
+        required: false
+        type: boolean
+        default: true
+      upload_artifact:
+        description: 'Upload build artifact for downstream jobs'
+        required: false
+        type: boolean
+        default: false
+      artifact_retention_days:
+        description: 'Days to retain uploaded artifact'
+        required: false
+        type: number
+        default: 1
+
+    outputs:
+      artifact_name:
+        description: 'Name of uploaded artifact (if enabled)'
+        value: ${{ jobs.build.outputs.artifact_name }}
 
 jobs:
   build:
     name: Build
     runs-on: ${{ inputs.runner }}
+    timeout-minutes: 15
     permissions:
       contents: read
+
+    outputs:
+      artifact_name: ${{ steps.artifact-info.outputs.name }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-            fetch-depth: 0
 
-      - name: Setup Temurin JDK 21
+      - name: Setup JDK ${{ inputs.java_version }}
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: '21'
+          distribution: ${{ inputs.java_distribution }}
+          java-version: ${{ inputs.java_version }}
           cache: gradle
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Clean and build (skip tests)
+      - name: Build (skip tests)
         run: ./gradlew clean build -x test --no-daemon
 
       - name: Spotless check
+        if: inputs.run_spotless
         run: ./gradlew spotlessCheck --no-daemon
+
+      - name: Get artifact info
+        id: artifact-info
+        if: inputs.upload_artifact
+        run: |
+          JAR_FILE=$(find build/libs -name "*.jar" -not -name "*-plain.jar" | head -1)
+          echo "path=$JAR_FILE" >> $GITHUB_OUTPUT
+          echo "name=build-artifact-${{ github.run_id }}" >> $GITHUB_OUTPUT
+
+      - name: Upload build artifact
+        if: inputs.upload_artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact-info.outputs.name }}
+          path: build/libs/*.jar
+          retention-days: ${{ inputs.artifact_retention_days }}

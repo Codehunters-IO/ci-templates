@@ -1,45 +1,137 @@
-name: main-pipeline-backend
+name: Java - Main Pipeline
 
 on:
   workflow_call:
     inputs:
+      # Runner configuration
       runner:
-        description: 'The type of machine to run the job on'
+        description: 'Runner type'
         required: false
         type: string
         default: 'ubuntu-latest'
+
+      # Java configuration
+      java_version:
+        description: 'Java version'
+        required: false
+        type: string
+        default: '21'
+      java_distribution:
+        description: 'Java distribution'
+        required: false
+        type: string
+        default: 'temurin'
+
+      # Pipeline steps control
+      run_build:
+        description: 'Run build job'
+        required: false
+        type: boolean
+        default: true
       run_test:
         description: 'Run test job'
         required: false
         type: boolean
         default: false
+      run_sonar:
+        description: 'Run SonarQube analysis'
+        required: false
+        type: boolean
+        default: false
+      run_semver:
+        description: 'Run semantic versioning'
+        required: false
+        type: boolean
+        default: false
       run_artifact:
-        description: 'Run artifact (Docker) job'
+        description: 'Build and push Docker image to ECR'
         required: false
         type: boolean
         default: false
-      run_sonarqube:
-        description: 'Run SonarQube analysis job'
-        required: false
-        type: boolean
-        default: false
-      update_changelog:
-        description: 'Generate and commit CHANGELOG.md during semver'
+      run_deploy:
+        description: 'Deploy to EC2'
         required: false
         type: boolean
         default: false
 
+      # Semver options
+      update_changelog:
+        description: 'Generate and commit CHANGELOG.md'
+        required: false
+        type: boolean
+        default: false
+
+      # Deploy options
+      spring_profile:
+        description: 'Spring profile for deployment'
+        required: false
+        type: string
+        default: 'production'
+      health_check_path:
+        description: 'Health check endpoint path'
+        required: false
+        type: string
+        default: ''
+
+    outputs:
+      version:
+        description: 'Semantic version calculated'
+        value: ${{ jobs.semver.outputs.version }}
+      version_tag:
+        description: 'Semantic version tag'
+        value: ${{ jobs.semver.outputs.version_tag }}
+      image_tag:
+        description: 'Docker image tag pushed'
+        value: ${{ jobs.artifact.outputs.image_tag }}
+
 jobs:
+  # ============================================
+  # BUILD - Always runs first
+  # ============================================
   build:
     name: Build
+    if: inputs.run_build
     uses: ./.github/workflows/java-build.yml
     with:
       runner: ${{ inputs.runner }}
+      java_version: ${{ inputs.java_version }}
+      java_distribution: ${{ inputs.java_distribution }}
     secrets: inherit
 
+  # ============================================
+  # TEST - Runs after build
+  # ============================================
+  test:
+    name: Test
+    if: inputs.run_test
+    needs: build
+    uses: ./.github/workflows/java-test.yml
+    with:
+      runner: ${{ inputs.runner }}
+      java_version: ${{ inputs.java_version }}
+      java_distribution: ${{ inputs.java_distribution }}
+    secrets: inherit
+
+  # ============================================
+  # SONARQUBE - Runs after build
+  # ============================================
+  sonar:
+    name: SonarQube
+    if: inputs.run_sonar
+    needs: build
+    uses: ./.github/workflows/java-sonarqube.yml
+    with:
+      runner: ${{ inputs.runner }}
+      java_version: ${{ inputs.java_version }}
+      java_distribution: ${{ inputs.java_distribution }}
+    secrets: inherit
+
+  # ============================================
+  # SEMVER - Runs after build
+  # ============================================
   semver:
     name: Semantic Version
-    if: github.ref_name == 'develop'
+    if: inputs.run_semver
     needs: build
     uses: ./.github/workflows/java-semver.yml
     with:
@@ -49,28 +141,46 @@ jobs:
     permissions:
       contents: write
 
-  test:
-    name: Test
-    if: inputs.run_test
-    needs: build
-    uses: ./.github/workflows/java-test.yml
-    with:
-      runner: ${{ inputs.runner }}
-    secrets: inherit
-
+  # ============================================
+  # ARTIFACT - Runs after build, test, semver
+  # ============================================
   artifact:
-    name: Artifact
+    name: Build & Push ECR
     if: |
-      inputs.run_artifact && 
-      (github.ref_name == 'develop' || github.ref_name == 'main') &&
-      always() && 
+      inputs.run_artifact &&
+      always() &&
       needs.build.result == 'success' &&
       (needs.test.result == 'success' || needs.test.result == 'skipped') &&
       (needs.semver.result == 'success' || needs.semver.result == 'skipped')
-    needs: [build, semver, test]
-    uses: ./.github/workflows/java-artifact.yml
+    needs: [build, test, semver]
+    uses: ./.github/workflows/java-artifact-ecr.yml
     with:
       runner: ${{ inputs.runner }}
-      version: ${{ needs.semver.outputs.version }}
-      branch: ${{ github.ref_name }}
+      java_version: ${{ inputs.java_version }}
+      java_distribution: ${{ inputs.java_distribution }}
+      version: ${{ needs.semver.outputs.version || 'latest' }}
     secrets: inherit
+    permissions:
+      contents: read
+      id-token: write
+
+  # ============================================
+  # DEPLOY - Runs after artifact
+  # ============================================
+  deploy:
+    name: Deploy EC2
+    if: |
+      inputs.run_deploy &&
+      always() &&
+      needs.artifact.result == 'success'
+    needs: [artifact, semver]
+    uses: ./.github/workflows/java-deploy-ec2.yml
+    with:
+      runner: ${{ inputs.runner }}
+      version: ${{ needs.semver.outputs.version || needs.artifact.outputs.image_tag }}
+      spring_profile: ${{ inputs.spring_profile }}
+      health_check_path: ${{ inputs.health_check_path }}
+    secrets: inherit
+    permissions:
+      contents: read
+      id-token: write

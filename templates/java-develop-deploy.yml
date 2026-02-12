@@ -1,0 +1,43 @@
+# Template: Deploy on merge to develop
+# Copy to: .github/workflows/develop-deploy.yml
+#
+# Triggers on push to develop branch (after PR merge)
+# Runs: build + test + semver + artifact + deploy (DEV environment)
+#
+# Required secrets:
+#   - AWS_ROLE_TO_ASSUME: ARN of AWS IAM role for OIDC
+#   - AWS_REGION: AWS region (e.g., us-east-1)
+#   - ECR_REPOSITORY: ECR repository name
+#   - EC2_HOST: EC2 instance hostname/IP
+#   - EC2_USER: SSH username (e.g., ec2-user, ubuntu)
+#   - EC2_SSH_KEY: SSH private key for EC2 access
+#   - APP_NAME: Application name
+#   - APP_PORT: Port to expose
+#   - SONAR_HOST_URL: SonarQube server URL (optional)
+#   - SONAR_TOKEN: SonarQube token (optional)
+
+name: Deploy to DEV
+
+on:
+  push:
+    branches:
+      - develop
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  deploy:
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    uses: <org>/ci-templates/.github/workflows/main-pipeline-backend.yml@main
+    with:
+      run_build: true
+      run_test: true
+      run_semver: true
+      run_artifact: true
+      run_deploy: true
+      update_changelog: true
+      spring_profile: 'develop'
+      health_check_path: '/actuator/health'
+    secrets: inherit

@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       runner:
-        description: 'The type of machine to run the job on'
+        description: 'Runner type'
         required: false
         type: string
         default: 'ubuntu-latest'
@@ -12,14 +12,62 @@ on:
         description: 'Version/tag of the Docker image to deploy'
         required: true
         type: string
+      spring_profile:
+        description: 'Spring profile to activate'
+        required: false
+        type: string
+        default: 'production'
+      app_internal_port:
+        description: 'Internal container port'
+        required: false
+        type: string
+        default: '8080'
+      health_check_path:
+        description: 'Health check endpoint path (e.g., /actuator/health). Empty to skip.'
+        required: false
+        type: string
+        default: ''
+      health_check_timeout:
+        description: 'Health check timeout in seconds'
+        required: false
+        type: number
+        default: 60
+
+    secrets:
+      AWS_ROLE_TO_ASSUME:
+        required: true
+      AWS_REGION:
+        required: true
+      ECR_REPOSITORY:
+        required: true
+      EC2_HOST:
+        required: true
+      EC2_USER:
+        required: true
+      EC2_SSH_KEY:
+        required: true
+      APP_NAME:
+        required: true
+      APP_PORT:
+        required: true
+
+    outputs:
+      deploy_status:
+        description: 'Deployment status (success/failure)'
+        value: ${{ jobs.deploy.outputs.status }}
 
 jobs:
   deploy:
     name: Deploy to EC2
     runs-on: ${{ inputs.runner }}
+    timeout-minutes: 15
     permissions:
       contents: read
       id-token: write
+
+    outputs:
+      status: ${{ steps.deploy.outputs.status }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,6 +83,7 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Deploy to EC2
+        id: deploy
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
@@ -44,97 +93,110 @@ jobs:
           IMAGE_TAG: ${{ inputs.version }}
           APP_NAME: ${{ secrets.APP_NAME }}
           APP_PORT: ${{ secrets.APP_PORT }}
+          APP_INTERNAL_PORT: ${{ inputs.app_internal_port }}
+          SPRING_PROFILE: ${{ inputs.spring_profile }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
+          HEALTH_CHECK_PATH: ${{ inputs.health_check_path }}
+          HEALTH_CHECK_TIMEOUT: ${{ inputs.health_check_timeout }}
         run: |
-          # Save SSH key
+          # Setup SSH
           mkdir -p ~/.ssh
           echo "$EC2_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          
-          # Add EC2 host to known_hosts
           ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts
-          
+
           # Create deployment script
           cat > /tmp/deploy.sh << 'DEPLOY_SCRIPT'
           #!/bin/bash
           set -e
-          
-          # Variables
-          ECR_REGISTRY="${ECR_REGISTRY}"
-          ECR_REPOSITORY="${ECR_REPOSITORY}"
-          IMAGE_TAG="${IMAGE_TAG}"
-          APP_NAME="${APP_NAME}"
-          APP_PORT="${APP_PORT}"
-          AWS_REGION="${AWS_REGION}"
+
           DEPLOY_DIR="/opt/docker/${APP_NAME}"
-          
+
           echo "Deploying ${APP_NAME} version ${IMAGE_TAG}..."
-          
-          # Create deployment directory and set ownership
+
+          # Create deployment directory
           sudo mkdir -p ${DEPLOY_DIR}
           sudo chown ${USER}:${USER} ${DEPLOY_DIR}
           cd ${DEPLOY_DIR}
-          
+
           # Login to ECR
           aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
-          
-          # Create docker-compose.yml
+
+          # Create docker-compose.yml (Compose V2 format)
           cat > docker-compose.yml << EOF
-          version: '3.8'
-          
           services:
             ${APP_NAME}:
               image: ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}
               container_name: ${APP_NAME}
               restart: unless-stopped
               ports:
-                - "${APP_PORT}:8080"
+                - "${APP_PORT}:${APP_INTERNAL_PORT}"
               environment:
-                - SPRING_PROFILES_ACTIVE=production
+                - SPRING_PROFILES_ACTIVE=${SPRING_PROFILE}
               logging:
                 driver: "json-file"
                 options:
                   max-size: "10m"
                   max-file: "3"
           EOF
-          
-          # Create start.sh script
+
+          # Create management scripts
           cat > start.sh << 'STARTEOF'
           #!/bin/bash
           set -e
-          
           echo "Starting application..."
-          docker-compose pull
-          docker-compose up -d
-          echo "Application started successfully"
-          docker-compose ps
+          docker compose pull
+          docker compose up -d
+          echo "Application started"
+          docker compose ps
           STARTEOF
           chmod +x start.sh
-          
-          # Create stop.sh script
+
           cat > stop.sh << 'STOPEOF'
           #!/bin/bash
           set -e
-          
           echo "Stopping application..."
-          docker-compose down
-          echo "Application stopped successfully"
+          docker compose down
+          echo "Application stopped"
           STOPEOF
           chmod +x stop.sh
-          
+
           # Stop existing container if running
-          if [ -n "$(docker ps -q -f name=${APP_NAME} 2>/dev/null)" ]; then
+          if docker ps -q -f name=${APP_NAME} 2>/dev/null | grep -q .; then
             echo "Stopping existing container..."
             ./stop.sh || true
           fi
-          
-          # Start the new container
+
+          # Start new container
           ./start.sh
-          
+
+          # Health check
+          if [ -n "${HEALTH_CHECK_PATH}" ]; then
+            echo "Waiting for health check..."
+            HEALTH_URL="http://localhost:${APP_PORT}${HEALTH_CHECK_PATH}"
+            TIMEOUT=${HEALTH_CHECK_TIMEOUT:-60}
+            ELAPSED=0
+
+            while [ $ELAPSED -lt $TIMEOUT ]; do
+              if curl -sf "$HEALTH_URL" > /dev/null 2>&1; then
+                echo "Health check passed!"
+                break
+              fi
+              sleep 5
+              ELAPSED=$((ELAPSED + 5))
+              echo "Waiting... ($ELAPSED/$TIMEOUT seconds)"
+            done
+
+            if [ $ELAPSED -ge $TIMEOUT ]; then
+              echo "Health check failed after ${TIMEOUT} seconds"
+              exit 1
+            fi
+          fi
+
           echo "Deployment completed successfully!"
           DEPLOY_SCRIPT
-          
-          # Copy and execute deployment script on EC2
+
+          # Execute deployment on EC2
           scp -i ~/.ssh/deploy_key /tmp/deploy.sh ${EC2_USER}@${EC2_HOST}:/tmp/deploy.sh
           ssh -i ~/.ssh/deploy_key ${EC2_USER}@${EC2_HOST} "chmod +x /tmp/deploy.sh && \
             ECR_REGISTRY=${ECR_REGISTRY} \
@@ -142,11 +204,18 @@ jobs:
             IMAGE_TAG=${IMAGE_TAG} \
             APP_NAME=${APP_NAME} \
             APP_PORT=${APP_PORT} \
+            APP_INTERNAL_PORT=${APP_INTERNAL_PORT} \
+            SPRING_PROFILE=${SPRING_PROFILE} \
             AWS_REGION=${AWS_REGION} \
+            HEALTH_CHECK_PATH=${HEALTH_CHECK_PATH} \
+            HEALTH_CHECK_TIMEOUT=${HEALTH_CHECK_TIMEOUT} \
             bash /tmp/deploy.sh"
-          
+
+          echo "status=success" >> $GITHUB_OUTPUT
+
           echo "### Deployment to EC2 Completed" >> $GITHUB_STEP_SUMMARY
           echo "- **Host:** $EC2_HOST" >> $GITHUB_STEP_SUMMARY
           echo "- **Application:** $APP_NAME" >> $GITHUB_STEP_SUMMARY
           echo "- **Version:** $IMAGE_TAG" >> $GITHUB_STEP_SUMMARY
-          echo "- **Image:** $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_STEP_SUMMARY
+          echo "- **Profile:** $SPRING_PROFILE" >> $GITHUB_STEP_SUMMARY
+          echo "- **Port:** $APP_PORT -> $APP_INTERNAL_PORT" >> $GITHUB_STEP_SUMMARY
