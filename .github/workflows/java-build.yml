@@ -27,7 +27,7 @@ on:
         description: 'Upload build artifact for downstream jobs'
         required: false
         type: boolean
-        default: false
+        default: true
       artifact_retention_days:
         description: 'Days to retain uploaded artifact'
         required: false

@@ -294,7 +294,9 @@ jobs:
       # SONARQUBE ANALYSIS
       # ============================================
       - name: Run SonarQube analysis
-        if: inputs.run_sonar && secrets.SONAR_TOKEN != ''
+        if: inputs.run_sonar && env.SONAR_TOKEN != ''
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           ./gradlew sonarqube \
             -Dsonar.host.url="${{ secrets.SONAR_HOST_URL }}" \
@@ -307,7 +309,7 @@ jobs:
 
       - name: Check Quality Gate
         id: quality-gate
-        if: inputs.run_sonar && !inputs.skip_quality_gate && secrets.SONAR_TOKEN != ''
+        if: inputs.run_sonar && !inputs.skip_quality_gate && env.SONAR_TOKEN != ''
         uses: SonarSource/sonarqube-quality-gate-action@v1
         timeout-minutes: 5
         env:
@@ -315,7 +317,9 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
       - name: Quality Gate Summary
-        if: inputs.run_sonar && !inputs.skip_quality_gate && secrets.SONAR_TOKEN != ''
+        if: inputs.run_sonar && !inputs.skip_quality_gate && env.SONAR_TOKEN != ''
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           STATUS="${{ steps.quality-gate.outputs.quality-gate-status }}"
           echo "" >> $GITHUB_STEP_SUMMARY
