@@ -60,7 +60,7 @@ on:
         default: false
 
     secrets:
-      SONAR_HOST_URL:
+      SONAR_URL:
         required: false
       SONAR_TOKEN:
         required: false
@@ -99,6 +99,10 @@ jobs:
       contents: read
       checks: write
       pull-requests: write
+
+    env:
+      SONAR_URL: ${{ secrets.SONAR_URL }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
     outputs:
       result: ${{ steps.test-run.outcome }}
@@ -295,12 +299,10 @@ jobs:
       # ============================================
       - name: Run SonarQube analysis
         if: inputs.run_sonar && env.SONAR_TOKEN != ''
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           ./gradlew sonarqube \
-            -Dsonar.host.url="${{ secrets.SONAR_HOST_URL }}" \
-            -Dsonar.login="${{ secrets.SONAR_TOKEN }}" \
+            -Dsonar.host.url="${{ env.SONAR_URL }}" \
+            -Dsonar.login="${{ env.SONAR_TOKEN }}" \
             --no-daemon
 
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -313,13 +315,10 @@ jobs:
         uses: SonarSource/sonarqube-quality-gate-action@v1
         timeout-minutes: 5
         env:
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ env.SONAR_URL }}
 
       - name: Quality Gate Summary
         if: inputs.run_sonar && !inputs.skip_quality_gate && env.SONAR_TOKEN != ''
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           STATUS="${{ steps.quality-gate.outputs.quality-gate-status }}"
           echo "" >> $GITHUB_STEP_SUMMARY
