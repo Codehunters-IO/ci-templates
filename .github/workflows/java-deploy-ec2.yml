@@ -32,6 +32,16 @@ on:
         required: false
         type: string
         default: 'linux/amd64'
+      memory_limit:
+        description: 'Container memory limit (e.g., 512m, 1g)'
+        required: false
+        type: string
+        default: '512m'
+      memory_reservation:
+        description: 'Container memory reservation (e.g., 256m, 512m)'
+        required: false
+        type: string
+        default: '256m'
 
     secrets:
       AWS_ECR_URL:
@@ -97,6 +107,8 @@ jobs:
           HEALTH_CHECK_PATH: ${{ inputs.health_check_path }}
           HEALTH_CHECK_TIMEOUT: ${{ inputs.health_check_timeout }}
           DOCKER_PLATFORM: ${{ inputs.docker_platform }}
+          MEMORY_LIMIT: ${{ inputs.memory_limit }}
+          MEMORY_RESERVATION: ${{ inputs.memory_reservation }}
         run: |
           # Setup SSH
           mkdir -p ~/.ssh
@@ -140,6 +152,8 @@ jobs:
               restart: unless-stopped
               ports:
                 - "${APP_PORT}:8080"
+              mem_limit: ${MEMORY_LIMIT}
+              mem_reservation: ${MEMORY_RESERVATION}
               volumes:
                 - ${REPO_NAME}:/opt/app
               networks:
@@ -238,6 +252,8 @@ jobs:
             HEALTH_CHECK_PATH='${HEALTH_CHECK_PATH}' \
             HEALTH_CHECK_TIMEOUT='${HEALTH_CHECK_TIMEOUT}' \
             DOCKER_PLATFORM='${DOCKER_PLATFORM}' \
+            MEMORY_LIMIT='${MEMORY_LIMIT}' \
+            MEMORY_RESERVATION='${MEMORY_RESERVATION}' \
             /tmp/deploy.sh
           "
 

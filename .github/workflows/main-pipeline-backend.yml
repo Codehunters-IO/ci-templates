@@ -94,6 +94,16 @@ on:
         required: false
         type: string
         default: ''
+      memory_limit:
+        description: 'Container memory limit (e.g., 512m, 1g)'
+        required: false
+        type: string
+        default: '512m'
+      memory_reservation:
+        description: 'Container memory reservation (e.g., 256m, 512m)'
+        required: false
+        type: string
+        default: '256m'
 
       # Release options
       release_target_branch:
@@ -201,6 +211,8 @@ jobs:
       docker_platform: ${{ inputs.docker_platform }}
       environment: ${{ inputs.environment }}
       health_check_path: ${{ inputs.health_check_path }}
+      memory_limit: ${{ inputs.memory_limit }}
+      memory_reservation: ${{ inputs.memory_reservation }}
     secrets: inherit
 
   # ============================================
