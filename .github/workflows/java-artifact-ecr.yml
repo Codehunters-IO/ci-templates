@@ -41,8 +41,6 @@ on:
         required: true
       AWS_REGION:
         required: true
-      ECR_REPOSITORY:
-        required: true
 
     outputs:
       image_tag:
@@ -116,12 +114,12 @@ jobs:
         id: push-ecr
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+          ECR_REPOSITORY: ${{ github.event.repository.name }}
           IMAGE_TAG: ${{ steps.set-tag.outputs.tag }}
         run: |
           IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-          echo "Building Docker image..."
+          echo "Building Docker image: $IMAGE_URI"
           docker build -t $IMAGE_URI ${{ inputs.dockerfile_path }}
 
           echo "Pushing Docker image to ECR..."

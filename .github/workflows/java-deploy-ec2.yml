@@ -29,9 +29,11 @@ on:
         default: 120
 
     secrets:
-      AWS_REGION:
+      AWS_ACCESS_KEY_ID:
         required: true
-      ECR_REPOSITORY:
+      AWS_SECRET_ACCESS_KEY:
+        required: true
+      AWS_REGION:
         required: true
       EC2_HOST:
         required: true
@@ -76,8 +78,10 @@ jobs:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
           EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
-          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+          ECR_REPOSITORY: ${{ github.event.repository.name }}
           IMAGE_TAG: ${{ inputs.image_tag }}
           APP_PORT: ${{ secrets.APP_PORT }}
           REPO_NAME: ${{ steps.repo.outputs.name }}
@@ -219,6 +223,8 @@ jobs:
             chmod +x /tmp/deploy.sh && \
             REPO_NAME='${REPO_NAME}' \
             IMAGE_TAG='${IMAGE_TAG}' \
+            AWS_ACCESS_KEY_ID='${AWS_ACCESS_KEY_ID}' \
+            AWS_SECRET_ACCESS_KEY='${AWS_SECRET_ACCESS_KEY}' \
             AWS_REGION='${AWS_REGION}' \
             ECR_REPOSITORY='${ECR_REPOSITORY}' \
             APP_PORT='${APP_PORT}' \
