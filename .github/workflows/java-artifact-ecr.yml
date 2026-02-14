@@ -35,11 +35,13 @@ on:
         default: '.'
 
     secrets:
-      AWS_ROLE_TO_ASSUME:
+      AWS_ACCESS_KEY_ID:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
         required: true
       AWS_REGION:
         required: true
-      ECR_REPOSITORY:
+      AWS_ECR_URL:
         required: true
 
     outputs:
@@ -60,7 +62,6 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-      id-token: write
 
     outputs:
       image_tag: ${{ steps.set-tag.outputs.tag }}
@@ -103,7 +104,8 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Login to Amazon ECR
@@ -114,7 +116,7 @@ jobs:
         id: push-ecr
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+          ECR_REPOSITORY: ${{ secrets.AWS_ECR_URL }}
           IMAGE_TAG: ${{ steps.set-tag.outputs.tag }}
         run: |
           IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"

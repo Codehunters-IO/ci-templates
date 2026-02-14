@@ -33,6 +33,11 @@ on:
         required: false
         type: number
         default: 1
+      jar_path:
+        description: 'Path to search for JAR files'
+        required: false
+        type: string
+        default: 'bootstrap/build/libs'
 
     outputs:
       artifact_name:
@@ -75,7 +80,7 @@ jobs:
         id: artifact-info
         if: inputs.upload_artifact
         run: |
-          JAR_FILE=$(find build/libs -name "*.jar" -not -name "*-plain.jar" | head -1)
+          JAR_FILE=$(find ${{ inputs.jar_path }} -name "*.jar" -not -name "*-plain.jar" | head -1)
           echo "path=$JAR_FILE" >> $GITHUB_OUTPUT
           echo "name=build-artifact-${{ github.run_id }}" >> $GITHUB_OUTPUT
 
@@ -84,5 +89,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.artifact-info.outputs.name }}
-          path: build/libs/*.jar
+          path: ${{ inputs.jar_path }}/*.jar
           retention-days: ${{ inputs.artifact_retention_days }}
