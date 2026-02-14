@@ -80,7 +80,7 @@ on:
 
       # Deploy options
       environment:
-        description: 'Deployment environment'
+        description: 'GitHub environment (develop, production)'
         required: false
         type: string
         default: 'develop'
@@ -173,10 +173,10 @@ jobs:
       java_version: ${{ inputs.java_version }}
       java_distribution: ${{ inputs.java_distribution }}
       image_tag: ${{ inputs.image_tag }}
+      environment: ${{ inputs.environment }}
     secrets: inherit
     permissions:
       contents: read
-      id-token: write
 
   # ============================================
   # DEPLOY - Deploy to EC2 via SSH

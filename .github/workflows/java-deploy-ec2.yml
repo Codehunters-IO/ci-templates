@@ -13,7 +13,7 @@ on:
         required: true
         type: string
       environment:
-        description: 'Deployment environment (develop, staging, production)'
+        description: 'GitHub environment (develop, production)'
         required: false
         type: string
         default: 'develop'
@@ -29,19 +29,21 @@ on:
         default: 120
 
     secrets:
+      AWS_ECR_URL:
+        required: true
       AWS_ACCESS_KEY_ID:
         required: true
       AWS_SECRET_ACCESS_KEY:
         required: true
       AWS_REGION:
         required: true
-      EC2_HOST:
+      AWS_EC2_HOST:
         required: true
-      EC2_USER:
+      AWS_EC2_USER:
         required: true
-      EC2_SSH_KEY:
+      AWS_EC2_SSH_KEY:
         required: true
-      APP_PORT:
+      AWS_APP_PORT:
         required: true
 
     outputs:
@@ -56,6 +58,7 @@ jobs:
   deploy:
     name: Deploy to EC2
     runs-on: ${{ inputs.runner }}
+    environment: ${{ inputs.environment }}
     timeout-minutes: 15
 
     outputs:
@@ -75,15 +78,15 @@ jobs:
       - name: Deploy via SSH
         id: deploy
         env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_HOST: ${{ secrets.AWS_EC2_HOST }}
+          EC2_USER: ${{ secrets.AWS_EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.AWS_EC2_SSH_KEY }}
+          AWS_ECR_URL: ${{ secrets.AWS_ECR_URL }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
-          ECR_REPOSITORY: ${{ github.event.repository.name }}
           IMAGE_TAG: ${{ inputs.image_tag }}
-          APP_PORT: ${{ secrets.APP_PORT }}
+          APP_PORT: ${{ secrets.AWS_APP_PORT }}
           REPO_NAME: ${{ steps.repo.outputs.name }}
           ENVIRONMENT: ${{ inputs.environment }}
           HEALTH_CHECK_PATH: ${{ inputs.health_check_path }}
@@ -116,20 +119,16 @@ jobs:
           fi
           cd "$DEPLOY_DIR"
 
-          # Get ECR registry URL
-          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-
           # Login to ECR
           echo "Logging in to ECR..."
-          aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
+          aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ECR_URL}
 
           # Create docker-compose.yml
           echo "Creating docker-compose.yml..."
           cat > docker-compose.yml << EOF
           services:
             ${REPO_NAME}:
-              image: ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}
+              image: ${AWS_ECR_URL}/${REPO_NAME}:${IMAGE_TAG}
               container_name: ${REPO_NAME}
               restart: unless-stopped
               ports:
@@ -223,10 +222,10 @@ jobs:
             chmod +x /tmp/deploy.sh && \
             REPO_NAME='${REPO_NAME}' \
             IMAGE_TAG='${IMAGE_TAG}' \
+            AWS_ECR_URL='${AWS_ECR_URL}' \
             AWS_ACCESS_KEY_ID='${AWS_ACCESS_KEY_ID}' \
             AWS_SECRET_ACCESS_KEY='${AWS_SECRET_ACCESS_KEY}' \
             AWS_REGION='${AWS_REGION}' \
-            ECR_REPOSITORY='${ECR_REPOSITORY}' \
             APP_PORT='${APP_PORT}' \
             ENVIRONMENT='${ENVIRONMENT}' \
             HEALTH_CHECK_PATH='${HEALTH_CHECK_PATH}' \
