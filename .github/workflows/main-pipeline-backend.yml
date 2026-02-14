@@ -178,6 +178,7 @@ jobs:
       java_version: ${{ inputs.java_version }}
       java_distribution: ${{ inputs.java_distribution }}
       image_tag: ${{ inputs.image_tag }}
+      docker_platform: ${{ inputs.docker_platform }}
       environment: ${{ inputs.environment }}
     secrets: inherit
     permissions:
@@ -197,6 +198,7 @@ jobs:
     with:
       runner: ${{ inputs.runner }}
       image_tag: ${{ needs.artifact.outputs.image_tag }}
+      docker_platform: ${{ inputs.docker_platform }}
       environment: ${{ inputs.environment }}
       health_check_path: ${{ inputs.health_check_path }}
     secrets: inherit
