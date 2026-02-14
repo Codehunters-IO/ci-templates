@@ -33,6 +33,11 @@ on:
         required: false
         type: string
         default: '.'
+      docker_platform:
+        description: 'Docker platform (linux/amd64, linux/arm64, linux/amd64,linux/arm64)'
+        required: false
+        type: string
+        default: 'linux/amd64'
       environment:
         description: 'GitHub environment (develop, production)'
         required: false
@@ -116,6 +121,12 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build and push to ECR
         id: push-ecr
         env:
@@ -125,17 +136,18 @@ jobs:
         run: |
           IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-          echo "Building Docker image: $IMAGE_URI"
-          docker build -t $IMAGE_URI ${{ inputs.dockerfile_path }}
-
-          echo "Pushing Docker image to ECR..."
-          docker push $IMAGE_URI
-
+          TAGS="-t $IMAGE_URI"
           if [ "${{ inputs.push_latest }}" = "true" ]; then
-            docker tag $IMAGE_URI $ECR_REGISTRY/$ECR_REPOSITORY:latest
-            docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-            echo "Also pushed :latest tag"
+            TAGS="$TAGS -t $ECR_REGISTRY/$ECR_REPOSITORY:latest"
           fi
+
+          echo "Building and pushing Docker image: $IMAGE_URI"
+          echo "Platform: ${{ inputs.docker_platform }}"
+          docker buildx build \
+            --platform ${{ inputs.docker_platform }} \
+            $TAGS \
+            --push \
+            ${{ inputs.dockerfile_path }}
 
           echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
 
@@ -146,4 +158,5 @@ jobs:
           echo "| **Registry** | $ECR_REGISTRY |" >> $GITHUB_STEP_SUMMARY
           echo "| **Repository** | $ECR_REPOSITORY |" >> $GITHUB_STEP_SUMMARY
           echo "| **Tag** | $IMAGE_TAG |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Platform** | ${{ inputs.docker_platform }} |" >> $GITHUB_STEP_SUMMARY
           echo "| **Full URI** | $IMAGE_URI |" >> $GITHUB_STEP_SUMMARY

@@ -71,12 +71,17 @@ on:
         type: number
         default: 0
 
-      # Artifact options
+      # Artifact & Deploy options
       image_tag:
         description: 'Docker image tag (empty = commit SHA)'
         required: false
         type: string
         default: ''
+      docker_platform:
+        description: 'Docker platform (linux/amd64, linux/arm64)'
+        required: false
+        type: string
+        default: 'linux/amd64'
 
       # Deploy options
       environment:

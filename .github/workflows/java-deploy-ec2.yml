@@ -27,6 +27,11 @@ on:
         required: false
         type: number
         default: 120
+      docker_platform:
+        description: 'Docker platform for the container (linux/amd64, linux/arm64)'
+        required: false
+        type: string
+        default: 'linux/amd64'
 
     secrets:
       AWS_ECR_URL:
@@ -91,6 +96,7 @@ jobs:
           ENVIRONMENT: ${{ inputs.environment }}
           HEALTH_CHECK_PATH: ${{ inputs.health_check_path }}
           HEALTH_CHECK_TIMEOUT: ${{ inputs.health_check_timeout }}
+          DOCKER_PLATFORM: ${{ inputs.docker_platform }}
         run: |
           # Setup SSH
           mkdir -p ~/.ssh
@@ -129,6 +135,7 @@ jobs:
           services:
             ${REPO_NAME}:
               image: ${AWS_ECR_URL}/${REPO_NAME}:${IMAGE_TAG}
+              platform: ${DOCKER_PLATFORM}
               container_name: ${REPO_NAME}
               restart: unless-stopped
               ports:
@@ -230,6 +237,7 @@ jobs:
             ENVIRONMENT='${ENVIRONMENT}' \
             HEALTH_CHECK_PATH='${HEALTH_CHECK_PATH}' \
             HEALTH_CHECK_TIMEOUT='${HEALTH_CHECK_TIMEOUT}' \
+            DOCKER_PLATFORM='${DOCKER_PLATFORM}' \
             /tmp/deploy.sh
           "
 
