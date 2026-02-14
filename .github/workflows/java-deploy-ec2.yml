@@ -155,7 +155,7 @@ jobs:
               mem_limit: ${MEMORY_LIMIT}
               mem_reservation: ${MEMORY_RESERVATION}
               volumes:
-                - ${REPO_NAME}:/opt/app
+                - ${REPO_NAME}:/app
               networks:
                 - soldife_net
               logging:
