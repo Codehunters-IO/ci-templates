@@ -147,9 +147,9 @@ jobs:
         id: test-run
         run: |
           if [ "${{ inputs.run_coverage }}" = "true" ]; then
-            ./gradlew build test jacocoTestReport --no-daemon --build-cache --parallel || true
+            ./gradlew clean build test jacocoTestReport --no-daemon --build-cache --parallel || true
           else
-            ./gradlew build test --no-daemon --build-cache --parallel || true
+            ./gradlew clean build test --no-daemon --build-cache --parallel || true
           fi
 
       - name: Parse test results

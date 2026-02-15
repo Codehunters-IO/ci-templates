@@ -43,6 +43,11 @@ on:
         required: false
         type: string
         default: ''
+      jar_path:
+        description: 'Path where JAR files are expected by the Dockerfile'
+        required: false
+        type: string
+        default: 'bootstrap/build/libs'
       environment:
         description: 'GitHub environment (develop, production)'
         required: false
@@ -106,7 +111,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ${{ inputs.artifact_name }}
-          path: .
+          path: ${{ inputs.jar_path }}
 
       # Build from source if no artifact provided
       - name: Setup JDK ${{ inputs.java_version }}
