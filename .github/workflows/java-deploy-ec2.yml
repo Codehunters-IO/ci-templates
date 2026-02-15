@@ -181,7 +181,7 @@ jobs:
           set -euo pipefail
 
           COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
-          PROJECT_NAME="${REPO_NAME:-$(basename $(pwd))}"
+          PROJECT_NAME="${PROJECT_NAME:-${REPO_NAME}}"
 
           echo "==> Starting stack (project: ${PROJECT_NAME}) using ${COMPOSE_FILE}"
           docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" up -d
@@ -225,7 +225,7 @@ jobs:
           echo "Starting new container..."
           ./start.sh
 
-          # Health check
+          # Health check - Phase 1: Container status
           TIMEOUT=${HEALTH_CHECK_TIMEOUT:-120}
           ELAPSED=0
 
@@ -254,7 +254,7 @@ jobs:
             exit 1
           fi
 
-          # HTTP health check (optional)
+          # Health check - Phase 2: HTTP endpoint (optional)
           if [ -n "${HEALTH_CHECK_PATH}" ]; then
             echo "Running HTTP health check on http://localhost:${APP_PORT}${HEALTH_CHECK_PATH}..."
             HEALTH_URL="http://localhost:${APP_PORT}${HEALTH_CHECK_PATH}"
