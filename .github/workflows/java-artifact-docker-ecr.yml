@@ -34,7 +34,7 @@ on:
         type: string
         default: '.'
       docker_platform:
-        description: 'Docker platform (linux/amd64, linux/arm64, linux/amd64,linux/arm64)'
+        description: 'Docker platform (linux/amd64, linux/arm64)'
         required: false
         type: string
         default: 'linux/arm64'

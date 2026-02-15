@@ -18,11 +18,6 @@ on:
         required: false
         type: string
         default: 'temurin'
-      gradle_task:
-        description: 'Gradle test task to run'
-        required: false
-        type: string
-        default: 'test'
       run_coverage:
         description: 'Run JaCoCo coverage report'
         required: false
@@ -152,9 +147,9 @@ jobs:
         id: test-run
         run: |
           if [ "${{ inputs.run_coverage }}" = "true" ]; then
-            ./gradlew ${{ inputs.gradle_task }} jacocoTestReport --no-daemon --build-cache --parallel || true
+            ./gradlew build test jacocoTestReport --no-daemon --build-cache --parallel || true
           else
-            ./gradlew ${{ inputs.gradle_task }} --no-daemon --build-cache --parallel || true
+            ./gradlew build test --no-daemon --build-cache --parallel || true
           fi
 
       - name: Parse test results
