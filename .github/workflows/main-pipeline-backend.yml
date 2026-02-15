@@ -44,10 +44,15 @@ on:
         type: boolean
         default: false
       run_artifact:
-        description: 'Build and push Docker image to ECR'
+        description: 'Build and push Docker image'
         required: false
         type: boolean
         default: false
+      artifact_registry:
+        description: 'Container registry to use (ecr, github)'
+        required: false
+        type: string
+        default: 'ecr'
       run_deploy:
         description: 'Deploy to EC2'
         required: false
@@ -81,7 +86,7 @@ on:
         description: 'Docker platform (linux/amd64, linux/arm64)'
         required: false
         type: string
-        default: 'linux/amd64'
+        default: 'linux/arm64'
 
       # Deploy options
       environment:
@@ -115,10 +120,10 @@ on:
     outputs:
       image_tag:
         description: 'Docker image tag pushed'
-        value: ${{ jobs.artifact.outputs.image_tag }}
+        value: ${{ jobs.artifact-ecr.outputs.image_tag || jobs.artifact-github.outputs.image_tag }}
       image_uri:
         description: 'Full Docker image URI'
-        value: ${{ jobs.artifact.outputs.image_uri }}
+        value: ${{ jobs.artifact-ecr.outputs.image_uri || jobs.artifact-github.outputs.image_uri }}
       coverage:
         description: 'Code coverage percentage'
         value: ${{ jobs.test.outputs.coverage_percentage }}
@@ -174,10 +179,11 @@ jobs:
   # ============================================
   # ARTIFACT - Build Docker & Push to ECR
   # ============================================
-  artifact:
+  artifact-ecr:
     name: Build & Push ECR
     if: |
       inputs.run_artifact &&
+      inputs.artifact_registry == 'ecr' &&
       always() &&
       needs.build.result == 'success' &&
       (needs.test.result == 'success' || needs.test.result == 'skipped')
@@ -195,6 +201,30 @@ jobs:
       contents: read
 
   # ============================================
+  # ARTIFACT - Build Docker & Push to GitHub Registry
+  # ============================================
+  artifact-github:
+    name: Build & Push GitHub Registry
+    if: |
+      inputs.run_artifact &&
+      inputs.artifact_registry == 'github' &&
+      always() &&
+      needs.build.result == 'success' &&
+      (needs.test.result == 'success' || needs.test.result == 'skipped')
+    needs: [build, test]
+    uses: ./.github/workflows/java-artifact-github.yml
+    with:
+      runner: ${{ inputs.runner }}
+      java_version: ${{ inputs.java_version }}
+      java_distribution: ${{ inputs.java_distribution }}
+      image_tag: ${{ inputs.image_tag }}
+      docker_platform: ${{ inputs.docker_platform }}
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: write
+
+  # ============================================
   # DEPLOY - Deploy to EC2 via SSH
   # ============================================
   deploy:
@@ -202,12 +232,12 @@ jobs:
     if: |
       inputs.run_deploy &&
       always() &&
-      needs.artifact.result == 'success'
-    needs: [artifact]
+      (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success')
+    needs: [artifact-ecr, artifact-github]
     uses: ./.github/workflows/java-deploy-ec2.yml
     with:
       runner: ${{ inputs.runner }}
-      image_tag: ${{ needs.artifact.outputs.image_tag }}
+      image_tag: ${{ needs.artifact-ecr.outputs.image_tag || needs.artifact-github.outputs.image_tag }}
       docker_platform: ${{ inputs.docker_platform }}
       environment: ${{ inputs.environment }}
       health_check_path: ${{ inputs.health_check_path }}
@@ -223,7 +253,8 @@ jobs:
     if: |
       inputs.run_cleanup &&
       always() &&
-      (needs.deploy.result == 'success' || (needs.deploy.result == 'skipped' && needs.artifact.result == 'success'))
+      (needs.deploy.result == 'success' || (needs.deploy.result == 'skipped' &&
+        (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success')))
     needs: [deploy]
     uses: ./.github/workflows/java-delete-branch.yml
     secrets: inherit
@@ -238,7 +269,8 @@ jobs:
     if: |
       inputs.run_release &&
       always() &&
-      (needs.deploy.result == 'success' || (needs.deploy.result == 'skipped' && needs.artifact.result == 'success')) &&
+      (needs.deploy.result == 'success' || (needs.deploy.result == 'skipped' &&
+        (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success'))) &&
       (needs.cleanup.result == 'success' || needs.cleanup.result == 'skipped')
     needs: [deploy, cleanup]
     uses: ./.github/workflows/java-release.yml

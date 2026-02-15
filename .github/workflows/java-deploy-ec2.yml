@@ -31,7 +31,7 @@ on:
         description: 'Docker platform for the container (linux/amd64, linux/arm64)'
         required: false
         type: string
-        default: 'linux/amd64'
+        default: 'linux/arm64'
       memory_limit:
         description: 'Container memory limit (e.g., 512m, 1g)'
         required: false
