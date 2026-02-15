@@ -23,35 +23,12 @@ on:
         required: false
         type: boolean
         default: true
-      upload_artifact:
-        description: 'Upload build artifact for downstream jobs'
-        required: false
-        type: boolean
-        default: true
-      artifact_retention_days:
-        description: 'Days to retain uploaded artifact'
-        required: false
-        type: number
-        default: 1
-      jar_path:
-        description: 'Path to search for JAR files'
-        required: false
-        type: string
-        default: 'bootstrap/build/libs'
-
-    outputs:
-      artifact_name:
-        description: 'Name of uploaded artifact (if enabled)'
-        value: ${{ jobs.build.outputs.artifact_name }}
 
 jobs:
   build:
     name: Build
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 15
-
-    outputs:
-      artifact_name: ${{ steps.artifact-info.outputs.name }}
 
     steps:
       - name: Checkout
@@ -72,19 +49,3 @@ jobs:
       - name: Spotless check
         if: inputs.run_spotless
         run: ./gradlew spotlessCheck --no-daemon --build-cache
-
-      - name: Get artifact info
-        id: artifact-info
-        if: inputs.upload_artifact
-        run: |
-          JAR_FILE=$(find ${{ inputs.jar_path }} -name "*.jar" -not -name "*-plain.jar" | head -1)
-          echo "path=$JAR_FILE" >> $GITHUB_OUTPUT
-          echo "name=build-artifact-${{ github.run_id }}" >> $GITHUB_OUTPUT
-
-      - name: Upload build artifact
-        if: inputs.upload_artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.artifact-info.outputs.name }}
-          path: ${{ inputs.jar_path }}/*.jar
-          retention-days: ${{ inputs.artifact_retention_days }}
