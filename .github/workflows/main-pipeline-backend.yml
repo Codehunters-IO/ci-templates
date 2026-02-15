@@ -171,10 +171,6 @@ jobs:
       run_sonar: ${{ inputs.run_sonar }}
       run_owasp: ${{ inputs.run_owasp }}
     secrets: inherit
-    permissions:
-      contents: read
-      checks: write
-      pull-requests: write
 
   # ============================================
   # ARTIFACT - Build Docker & Push to ECR
@@ -188,7 +184,7 @@ jobs:
       needs.build.result == 'success' &&
       (needs.test.result == 'success' || needs.test.result == 'skipped')
     needs: [build, test]
-    uses: ./.github/workflows/java-artifact-ecr.yml
+    uses: ./.github/workflows/java-artifact-docker-ecr.yml
     with:
       runner: ${{ inputs.runner }}
       java_version: ${{ inputs.java_version }}
@@ -197,8 +193,6 @@ jobs:
       docker_platform: ${{ inputs.docker_platform }}
       environment: ${{ inputs.environment }}
     secrets: inherit
-    permissions:
-      contents: read
 
   # ============================================
   # ARTIFACT - Build Docker & Push to GitHub Registry
@@ -212,7 +206,7 @@ jobs:
       needs.build.result == 'success' &&
       (needs.test.result == 'success' || needs.test.result == 'skipped')
     needs: [build, test]
-    uses: ./.github/workflows/java-artifact-github.yml
+    uses: ./.github/workflows/java-artifact-docker-github.yml
     with:
       runner: ${{ inputs.runner }}
       java_version: ${{ inputs.java_version }}
@@ -220,9 +214,6 @@ jobs:
       image_tag: ${{ inputs.image_tag }}
       docker_platform: ${{ inputs.docker_platform }}
     secrets: inherit
-    permissions:
-      contents: read
-      packages: write
 
   # ============================================
   # DEPLOY - Deploy to EC2 via SSH
@@ -258,8 +249,6 @@ jobs:
     needs: [deploy]
     uses: ./.github/workflows/java-delete-branch.yml
     secrets: inherit
-    permissions:
-      contents: write
 
   # ============================================
   # RELEASE - Create release PR
@@ -278,6 +267,3 @@ jobs:
       base_branch: ${{ inputs.environment }}
       target_branch: ${{ inputs.release_target_branch }}
     secrets: inherit
-    permissions:
-      contents: write
-      pull-requests: write

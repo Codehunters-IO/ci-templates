@@ -1,4 +1,4 @@
-name: Java - Artifact to GitHub Registry
+name: Java - Docker Artifact to ECR
 
 on:
   workflow_call:
@@ -38,6 +38,19 @@ on:
         required: false
         type: string
         default: 'linux/arm64'
+      environment:
+        description: 'GitHub environment (develop, production)'
+        required: false
+        type: string
+        default: 'develop'
+
+    secrets:
+      AWS_ACCESS_KEY_ID:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
+      AWS_REGION:
+        required: true
 
     outputs:
       image_tag:
@@ -52,16 +65,16 @@ on:
 
 jobs:
   artifact:
-    name: Build and Push to GitHub Registry
+    name: Build and Push to ECR
     runs-on: ${{ inputs.runner }}
+    environment: ${{ inputs.environment }}
     timeout-minutes: 20
     permissions:
       contents: read
-      packages: write
 
     outputs:
       image_tag: ${{ steps.set-tag.outputs.tag }}
-      image_uri: ${{ steps.push-ghcr.outputs.image_uri }}
+      image_uri: ${{ steps.push-ecr.outputs.image_uri }}
       commit_sha: ${{ steps.set-tag.outputs.commit_sha }}
 
     steps:
@@ -97,12 +110,16 @@ jobs:
       - name: Build JAR
         run: ./gradlew clean build -x test --no-daemon
 
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -110,22 +127,18 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push to GitHub Registry
-        id: push-ghcr
+      - name: Build and push to ECR
+        id: push-ecr
         env:
-          GHCR_REGISTRY: ghcr.io/${{ github.repository_owner }}
-          GHCR_REPOSITORY: ${{ github.event.repository.name }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ github.event.repository.name }}
           IMAGE_TAG: ${{ steps.set-tag.outputs.tag }}
         run: |
-          # GitHub Registry requires lowercase
-          GHCR_REGISTRY=$(echo "$GHCR_REGISTRY" | tr '[:upper:]' '[:lower:]')
-          GHCR_REPOSITORY=$(echo "$GHCR_REPOSITORY" | tr '[:upper:]' '[:lower:]')
-
-          IMAGE_URI="$GHCR_REGISTRY/$GHCR_REPOSITORY:$IMAGE_TAG"
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
           TAGS="-t $IMAGE_URI"
           if [ "${{ inputs.push_latest }}" = "true" ]; then
-            TAGS="$TAGS -t $GHCR_REGISTRY/$GHCR_REPOSITORY:latest"
+            TAGS="$TAGS -t $ECR_REGISTRY/$ECR_REPOSITORY:latest"
           fi
 
           echo "Building and pushing Docker image: $IMAGE_URI"
@@ -138,12 +151,12 @@ jobs:
 
           echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
 
-          echo "### Docker Image Pushed to GitHub Registry" >> $GITHUB_STEP_SUMMARY
+          echo "### Docker Image Pushed to ECR" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| **Registry** | $GHCR_REGISTRY |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Repository** | $GHCR_REPOSITORY |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Registry** | $ECR_REGISTRY |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Repository** | $ECR_REPOSITORY |" >> $GITHUB_STEP_SUMMARY
           echo "| **Tag** | $IMAGE_TAG |" >> $GITHUB_STEP_SUMMARY
           echo "| **Platform** | ${{ inputs.docker_platform }} |" >> $GITHUB_STEP_SUMMARY
           echo "| **Full URI** | $IMAGE_URI |" >> $GITHUB_STEP_SUMMARY
