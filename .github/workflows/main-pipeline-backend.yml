@@ -33,11 +33,11 @@ on:
         required: false
         type: boolean
         default: false
-      run_sonar:
-        description: 'Run SonarQube analysis (requires run_test: true)'
+      code_analysis:
+        description: 'Code analysis tool: none, sonar, qodana (requires run_test: true)'
         required: false
-        type: boolean
-        default: false
+        type: string
+        default: 'none'
       run_owasp:
         description: 'Run OWASP Dependency Check (requires run_test: true)'
         required: false
@@ -168,7 +168,7 @@ jobs:
       java_distribution: ${{ inputs.java_distribution }}
       run_coverage: true
       coverage_threshold: ${{ inputs.coverage_threshold }}
-      run_sonar: ${{ inputs.run_sonar }}
+      code_analysis: ${{ inputs.code_analysis }}
       run_owasp: ${{ inputs.run_owasp }}
     secrets: inherit
 

@@ -62,17 +62,16 @@ jobs:
         with:
           distribution: ${{ inputs.java_distribution }}
           java-version: ${{ inputs.java_version }}
-          cache: gradle
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
 
       - name: Build (skip tests)
-        run: ./gradlew clean build -x test --no-daemon
+        run: ./gradlew clean build -x test --no-daemon --build-cache --parallel
 
       - name: Spotless check
         if: inputs.run_spotless
-        run: ./gradlew spotlessCheck --no-daemon
+        run: ./gradlew spotlessCheck --no-daemon --build-cache
 
       - name: Get artifact info
         id: artifact-info

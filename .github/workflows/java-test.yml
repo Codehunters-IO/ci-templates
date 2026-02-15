@@ -33,13 +33,13 @@ on:
         required: false
         type: number
         default: 0
-      run_sonar:
-        description: 'Run SonarQube analysis'
+      code_analysis:
+        description: 'Code analysis tool (none, sonar, qodana)'
         required: false
-        type: boolean
-        default: false
+        type: string
+        default: 'none'
       skip_quality_gate:
-        description: 'Skip Quality Gate check'
+        description: 'Skip Quality Gate check (Sonar/Qodana)'
         required: false
         type: boolean
         default: false
@@ -64,6 +64,8 @@ on:
         required: false
       SONAR_TOKEN:
         required: false
+      QODANA_TOKEN:
+        required: false
       NVD_API_KEY:
         required: false
 
@@ -84,7 +86,7 @@ on:
         description: 'Number of tests skipped'
         value: ${{ jobs.test.outputs.skipped }}
       quality_gate_status:
-        description: 'SonarQube Quality Gate status'
+        description: 'Quality Gate status (Sonar/Qodana)'
         value: ${{ jobs.test.outputs.quality_gate }}
       owasp_vulnerabilities:
         description: 'Number of OWASP vulnerabilities found'
@@ -120,10 +122,9 @@ jobs:
         with:
           distribution: ${{ inputs.java_distribution }}
           java-version: ${{ inputs.java_version }}
-          cache: gradle
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
 
       # ============================================
       # RUN TESTS + COVERAGE
@@ -132,9 +133,9 @@ jobs:
         id: test-run
         run: |
           if [ "${{ inputs.run_coverage }}" = "true" ]; then
-            ./gradlew ${{ inputs.gradle_task }} jacocoTestReport --no-daemon || true
+            ./gradlew ${{ inputs.gradle_task }} jacocoTestReport --no-daemon --build-cache --parallel || true
           else
-            ./gradlew ${{ inputs.gradle_task }} --no-daemon || true
+            ./gradlew ${{ inputs.gradle_task }} --no-daemon --build-cache --parallel || true
           fi
 
       - name: Parse test results
@@ -230,7 +231,7 @@ jobs:
           echo "Running OWASP Dependency Check..."
 
           # Build the command with optional NVD API key
-          OWASP_CMD="./gradlew dependencyCheckAnalyze --no-daemon"
+          OWASP_CMD="./gradlew dependencyCheckAnalyze --no-daemon --build-cache"
           if [ -n "$NVD_API_KEY" ]; then
             OWASP_CMD="$OWASP_CMD -DnvdApiKey=$NVD_API_KEY"
           fi
@@ -294,27 +295,27 @@ jobs:
       # SONARQUBE ANALYSIS
       # ============================================
       - name: Run SonarQube analysis
-        if: inputs.run_sonar && env.SONAR_TOKEN != ''
+        if: inputs.code_analysis == 'sonar' && env.SONAR_TOKEN != ''
         run: |
           ./gradlew sonarqube \
             -Dsonar.host.url="${{ env.SONAR_URL }}" \
             -Dsonar.login="${{ env.SONAR_TOKEN }}" \
-            --no-daemon
+            --no-daemon --build-cache
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### SonarQube" >> $GITHUB_STEP_SUMMARY
           echo "Analysis completed. Check Quality Gate below." >> $GITHUB_STEP_SUMMARY
 
-      - name: Check Quality Gate
+      - name: SonarQube Quality Gate
         id: quality-gate
-        if: inputs.run_sonar && !inputs.skip_quality_gate && env.SONAR_TOKEN != ''
+        if: inputs.code_analysis == 'sonar' && !inputs.skip_quality_gate && env.SONAR_TOKEN != ''
         uses: SonarSource/sonarqube-quality-gate-action@v1
         timeout-minutes: 5
         env:
           SONAR_HOST_URL: ${{ env.SONAR_URL }}
 
-      - name: Quality Gate Summary
-        if: inputs.run_sonar && !inputs.skip_quality_gate && env.SONAR_TOKEN != ''
+      - name: SonarQube Quality Gate Summary
+        if: inputs.code_analysis == 'sonar' && !inputs.skip_quality_gate && env.SONAR_TOKEN != ''
         run: |
           STATUS="${{ steps.quality-gate.outputs.quality-gate-status }}"
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -323,6 +324,25 @@ jobs:
           if [ "$STATUS" != "PASSED" ]; then
             echo "::warning::Quality Gate status: $STATUS"
           fi
+
+      # ============================================
+      # QODANA ANALYSIS
+      # ============================================
+      - name: Run Qodana analysis
+        id: qodana
+        if: inputs.code_analysis == 'qodana'
+        uses: JetBrains/qodana-action@v2024.3
+        with:
+          args: --apply-fixes
+        env:
+          QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
+
+      - name: Qodana Summary
+        if: inputs.code_analysis == 'qodana'
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Qodana Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "Analysis completed. Check [Qodana Cloud](https://qodana.cloud) for details." >> $GITHUB_STEP_SUMMARY
 
       # ============================================
       # UPLOAD REPORTS
