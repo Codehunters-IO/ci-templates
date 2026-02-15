@@ -32,9 +32,6 @@ jobs:
   release:
     name: Create Release PR
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
 
     outputs:
       version: ${{ steps.semver.outputs.version }}

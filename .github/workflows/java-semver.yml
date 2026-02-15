@@ -42,8 +42,6 @@ jobs:
     name: Semantic Version
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 10
-    permissions:
-      contents: write
 
     outputs:
       version: ${{ steps.semver.outputs.version }}

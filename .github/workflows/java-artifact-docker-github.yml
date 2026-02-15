@@ -55,9 +55,6 @@ jobs:
     name: Build and Push to GitHub Registry
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 20
-    permissions:
-      contents: read
-      packages: write
 
     outputs:
       image_tag: ${{ steps.set-tag.outputs.tag }}

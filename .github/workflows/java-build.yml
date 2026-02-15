@@ -49,8 +49,6 @@ jobs:
     name: Build
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 15
-    permissions:
-      contents: read
 
     outputs:
       artifact_name: ${{ steps.artifact-info.outputs.name }}

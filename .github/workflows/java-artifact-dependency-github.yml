@@ -40,9 +40,6 @@ jobs:
     name: Publish to GitHub Packages
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 15
-    permissions:
-      contents: read
-      packages: write
 
     outputs:
       version: ${{ steps.info.outputs.version }}

@@ -69,8 +69,6 @@ jobs:
     runs-on: ${{ inputs.runner }}
     environment: ${{ inputs.environment }}
     timeout-minutes: 20
-    permissions:
-      contents: read
 
     outputs:
       image_tag: ${{ steps.set-tag.outputs.tag }}
