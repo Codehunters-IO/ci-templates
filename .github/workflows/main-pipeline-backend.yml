@@ -215,6 +215,7 @@ jobs:
       image_tag: ${{ inputs.image_tag }}
       docker_platform: ${{ inputs.docker_platform }}
       artifact_name: ${{ needs.test.outputs.artifact_name }}
+      environment: ${{ inputs.environment }}
     secrets: inherit
 
   # ============================================

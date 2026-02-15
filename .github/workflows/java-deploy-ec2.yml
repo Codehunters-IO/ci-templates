@@ -150,6 +150,10 @@ jobs:
               platform: ${DOCKER_PLATFORM}
               container_name: ${REPO_NAME}
               restart: unless-stopped
+              environment:
+                - APP_NAME=${REPO_NAME}
+                - SPRING_PROFILES_ACTIVE=${ENVIRONMENT}
+                - SERVER_CONTEXT_PATH=/${REPO_NAME}
               ports:
                 - "${APP_PORT}:8080"
               mem_limit: ${MEMORY_LIMIT}
