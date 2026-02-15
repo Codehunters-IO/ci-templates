@@ -177,14 +177,20 @@ jobs:
           if [ ! -f "start.sh" ]; then
             echo "Creating start.sh..."
             cat > start.sh << 'STARTEOF'
-          #!/bin/bash
-          set -e
-          echo "Pulling latest image..."
-          docker compose pull
-          echo "Starting containers..."
-          docker compose up -d
-          echo "Container status:"
-          docker compose ps
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
+          PROJECT_NAME="${REPO_NAME:-$(basename $(pwd))}"
+
+          echo "==> Starting stack (project: ${PROJECT_NAME}) using ${COMPOSE_FILE}"
+          docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" up -d
+
+          echo "==> Current status:"
+          docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" ps
+
+          echo "==> App logs (last 50 lines):"
+          docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" logs --tail=50
           STARTEOF
             chmod +x start.sh
           fi
@@ -193,11 +199,18 @@ jobs:
           if [ ! -f "stop.sh" ]; then
             echo "Creating stop.sh..."
             cat > stop.sh << 'STOPEOF'
-          #!/bin/bash
-          set -e
-          echo "Stopping containers..."
-          docker compose down
-          echo "Containers stopped."
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
+          PROJECT_NAME="${REPO_NAME:-$(basename $(pwd))}"
+
+          echo "==> Stopping stack (project: ${PROJECT_NAME})"
+          docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" down
+
+          echo "==> Done."
+          echo "Tip: if you ALSO want to remove volumes (DATA LOSS), run:"
+          echo "  docker compose -p \"${PROJECT_NAME}\" -f \"${COMPOSE_FILE}\" down -v"
           STOPEOF
             chmod +x stop.sh
           fi
@@ -213,24 +226,65 @@ jobs:
           ./start.sh
 
           # Health check
+          TIMEOUT=${HEALTH_CHECK_TIMEOUT:-120}
+          ELAPSED=0
+
+          echo "Waiting for container '${REPO_NAME}' to be running..."
+          while [ $ELAPSED -lt $TIMEOUT ]; do
+            CONTAINER_STATUS=$(docker inspect --format='{{.State.Status}}' ${REPO_NAME} 2>/dev/null || echo "not_found")
+
+            if [ "$CONTAINER_STATUS" = "running" ]; then
+              echo "Container is running!"
+              break
+            elif [ "$CONTAINER_STATUS" = "exited" ] || [ "$CONTAINER_STATUS" = "dead" ]; then
+              echo "Container failed with status: ${CONTAINER_STATUS}"
+              echo "Container logs:"
+              docker logs --tail=50 ${REPO_NAME} 2>&1 || true
+              exit 1
+            fi
+
+            sleep 5
+            ELAPSED=$((ELAPSED + 5))
+            echo "Waiting for container... ($ELAPSED/$TIMEOUT seconds) [status: ${CONTAINER_STATUS}]"
+          done
+
+          if [ $ELAPSED -ge $TIMEOUT ]; then
+            echo "Container did not start after ${TIMEOUT} seconds"
+            docker logs --tail=50 ${REPO_NAME} 2>&1 || true
+            exit 1
+          fi
+
+          # HTTP health check (optional)
           if [ -n "${HEALTH_CHECK_PATH}" ]; then
-            echo "Running health check..."
+            echo "Running HTTP health check on http://localhost:${APP_PORT}${HEALTH_CHECK_PATH}..."
             HEALTH_URL="http://localhost:${APP_PORT}${HEALTH_CHECK_PATH}"
-            TIMEOUT=${HEALTH_CHECK_TIMEOUT:-120}
             ELAPSED=0
 
             while [ $ELAPSED -lt $TIMEOUT ]; do
-              if curl -sf "$HEALTH_URL" > /dev/null 2>&1; then
-                echo "Health check passed!"
-                exit 0
+              HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" "$HEALTH_URL" 2>/dev/null || echo "000")
+
+              if [ "$HTTP_CODE" = "200" ]; then
+                echo "HTTP health check passed! (HTTP ${HTTP_CODE})"
+                break
               fi
+
+              # Check container is still running
+              if ! docker ps -q -f name=${REPO_NAME} | grep -q .; then
+                echo "Container stopped unexpectedly during health check"
+                docker logs --tail=50 ${REPO_NAME} 2>&1 || true
+                exit 1
+              fi
+
               sleep 5
               ELAPSED=$((ELAPSED + 5))
-              echo "Waiting for app... ($ELAPSED/$TIMEOUT seconds)"
+              echo "Waiting for HTTP response... ($ELAPSED/$TIMEOUT seconds) [HTTP ${HTTP_CODE}]"
             done
 
-            echo "Health check failed after ${TIMEOUT} seconds"
-            exit 1
+            if [ $ELAPSED -ge $TIMEOUT ]; then
+              echo "HTTP health check failed after ${TIMEOUT} seconds"
+              docker logs --tail=50 ${REPO_NAME} 2>&1 || true
+              exit 1
+            fi
           fi
 
           echo "Deployment completed successfully!"
