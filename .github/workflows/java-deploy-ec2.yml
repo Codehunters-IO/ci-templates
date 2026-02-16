@@ -154,6 +154,8 @@ jobs:
                 - APP_NAME=${REPO_NAME}
                 - SPRING_PROFILES_ACTIVE=${ENVIRONMENT}
                 - SERVER_CONTEXT_PATH=/${REPO_NAME}
+                - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+                - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
               ports:
                 - "${APP_PORT}:8080"
               mem_limit: ${MEMORY_LIMIT}
