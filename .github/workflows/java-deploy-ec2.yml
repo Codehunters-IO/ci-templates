@@ -13,7 +13,7 @@ on:
         required: true
         type: string
       environment:
-        description: 'GitHub environment (develop, production)'
+        description: 'GitHub environment (develop, prod)'
         required: false
         type: string
         default: 'develop'
@@ -42,6 +42,11 @@ on:
         required: false
         type: string
         default: '256m'
+      spring_profiles:
+        description: 'Additional Spring profiles (e.g., awsparamstore). Environment is always included.'
+        required: false
+        type: string
+        default: ''
 
     secrets:
       AWS_ECR_URL:
@@ -109,6 +114,7 @@ jobs:
           DOCKER_PLATFORM: ${{ inputs.docker_platform }}
           MEMORY_LIMIT: ${{ inputs.memory_limit }}
           MEMORY_RESERVATION: ${{ inputs.memory_reservation }}
+          SPRING_PROFILES: ${{ inputs.spring_profiles }}
         run: |
           # Setup SSH
           mkdir -p ~/.ssh
@@ -137,6 +143,14 @@ jobs:
           fi
           cd "$DEPLOY_DIR"
 
+          # Build Spring profiles: environment is always included
+          if [ -n "${SPRING_PROFILES}" ]; then
+            SPRING_PROFILES_ACTIVE="${SPRING_PROFILES},${ENVIRONMENT}"
+          else
+            SPRING_PROFILES_ACTIVE="${ENVIRONMENT}"
+          fi
+          echo "Spring profiles: ${SPRING_PROFILES_ACTIVE}"
+
           # Login to ECR
           echo "Logging in to ECR..."
           aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ECR_URL}
@@ -152,7 +166,7 @@ jobs:
               restart: unless-stopped
               environment:
                 - APP_NAME=${REPO_NAME}
-                - SPRING_PROFILES_ACTIVE=${ENVIRONMENT}
+                - SPRING_PROFILES_ACTIVE=${SPRING_PROFILES_ACTIVE}
                 - SERVER_CONTEXT_PATH=/${REPO_NAME}
                 - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
                 - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
@@ -314,6 +328,7 @@ jobs:
             DOCKER_PLATFORM='${DOCKER_PLATFORM}' \
             MEMORY_LIMIT='${MEMORY_LIMIT}' \
             MEMORY_RESERVATION='${MEMORY_RESERVATION}' \
+            SPRING_PROFILES='${SPRING_PROFILES}' \
             /tmp/deploy.sh
           "
 

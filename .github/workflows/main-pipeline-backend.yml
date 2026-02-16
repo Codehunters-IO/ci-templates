@@ -90,7 +90,7 @@ on:
 
       # Deploy options
       environment:
-        description: 'GitHub environment (develop, production)'
+        description: 'GitHub environment (develop, prod)'
         required: false
         type: string
         default: 'develop'
@@ -109,6 +109,11 @@ on:
         required: false
         type: string
         default: '256m'
+      spring_profiles:
+        description: 'Additional Spring profiles (e.g., awsparamstore). Environment is always included.'
+        required: false
+        type: string
+        default: ''
 
       # Release options
       release_target_branch:
@@ -237,6 +242,7 @@ jobs:
       health_check_path: ${{ inputs.health_check_path }}
       memory_limit: ${{ inputs.memory_limit }}
       memory_reservation: ${{ inputs.memory_reservation }}
+      spring_profiles: ${{ inputs.spring_profiles }}
     secrets: inherit
 
   # ============================================
