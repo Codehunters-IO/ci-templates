@@ -68,6 +68,11 @@ on:
         required: false
         type: boolean
         default: false
+      run_commit_lint:
+        description: 'Run commit message validation'
+        required: false
+        type: boolean
+        default: false
 
       # Test options
       coverage_threshold:
@@ -141,6 +146,16 @@ on:
         value: ${{ jobs.release.outputs.pr_url }}
 
 jobs:
+  # ============================================
+  # COMMIT LINT
+  # ============================================
+  commit-lint:
+    name: Commit Lint
+    if: inputs.run_commit_lint
+    uses: ./.github/workflows/java-commit-lint.yml
+    with:
+      runner: ${{ inputs.runner }}
+
   # ============================================
   # BUILD
   # ============================================

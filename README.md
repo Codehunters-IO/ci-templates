@@ -83,6 +83,7 @@ See [Configuration Guide](docs/CONFIGURATION.md) for required secrets.
 | `java-sonarqube.yml` | SonarQube analysis |
 | `java-artifact-ecr.yml` | Build Docker + push to ECR |
 | `java-deploy-ec2.yml` | Deploy to EC2 via SSH |
+| `java-commit-lint.yml` | Validate commit message format |
 
 ## Main Pipeline Inputs
 
@@ -100,6 +101,7 @@ with:
   run_semver: false            # Calculate version (default: false)
   run_artifact: false          # Build/push Docker (default: false)
   run_deploy: false            # Deploy to EC2 (default: false)
+  run_commit_lint: false       # Validate commits (default: false)
 
   # Semver options
   update_changelog: false      # Update CHANGELOG.md (default: false)

@@ -53,9 +53,8 @@ jobs:
       # ============================================
       # CLEANUP
       # ============================================
-      - name: Cleanup Gradle cache
+      - name: Cleanup Gradle daemon
         if: always()
         run: |
-          rm -rf ~/.gradle/caches/build-cache-*
           rm -rf ~/.gradle/daemon
           ./gradlew --stop 2>/dev/null || true

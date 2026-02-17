@@ -152,6 +152,17 @@ jobs:
             ./gradlew clean build test --no-daemon --build-cache --parallel || true
           fi
 
+      - name: Publish Jacoco Report
+        if: inputs.run_coverage && always()
+        uses: madrapps/jacoco-report@v1.7.1
+        with:
+          paths: ${{ github.workspace }}/**/build/reports/jacoco/test/jacocoTestReport.xml
+          token: ${{ secrets.GITHUB_TOKEN }}
+          min-coverage-overall: ${{ inputs.coverage_threshold }}
+          min-coverage-changed-files: ${{ inputs.coverage_threshold }}
+          title: "Code Coverage Report"
+          update-comment: true
+
       - name: Parse test results
         id: test-summary
         if: always()
@@ -361,6 +372,18 @@ jobs:
       # ============================================
       # UPLOAD REPORTS
       # ============================================
+      - name: Check if Karate reports exist
+        id: check-karate
+        if: inputs.upload_reports && always()
+        run: |
+          if [ -d "build/karate-reports" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Karate reports found."
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Karate reports not found."
+          fi
+
       - name: Upload test reports
         if: inputs.upload_reports && always()
         uses: actions/upload-artifact@v4
@@ -370,6 +393,7 @@ jobs:
             build/reports/tests/
             build/reports/jacoco/
             build/reports/dependency-check-report.html
+            build/karate-reports/
           retention-days: 7
 
       # ============================================
