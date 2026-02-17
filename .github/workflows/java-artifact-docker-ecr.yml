@@ -164,6 +164,7 @@ jobs:
           echo "Platform: ${{ inputs.docker_platform }}"
           docker buildx build \
             --platform ${{ inputs.docker_platform }} \
+            --no-cache \
             $TAGS \
             --push \
             ${{ inputs.dockerfile_path }}
