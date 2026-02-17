@@ -26,7 +26,7 @@ on:
         description: 'Health check timeout in seconds'
         required: false
         type: number
-        default: 120
+        default: 180
       docker_platform:
         description: 'Docker platform for the container (linux/amd64, linux/arm64)'
         required: false
@@ -274,16 +274,25 @@ jobs:
 
           # Health check - Phase 2: HTTP endpoint (optional)
           if [ -n "${HEALTH_CHECK_PATH}" ]; then
+            # Give Spring Boot time to start before polling
+            echo "Waiting 15s for Spring Boot initialization..."
+            sleep 15
+
             echo "Running HTTP health check on http://localhost:${APP_PORT}${HEALTH_CHECK_PATH}..."
             HEALTH_URL="http://localhost:${APP_PORT}${HEALTH_CHECK_PATH}"
             ELAPSED=0
 
             while [ $ELAPSED -lt $TIMEOUT ]; do
-              HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" "$HEALTH_URL" 2>/dev/null || echo "000")
+              HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" 2>/dev/null || echo "000")
 
               if [ "$HTTP_CODE" = "200" ]; then
                 echo "HTTP health check passed! (HTTP ${HTTP_CODE})"
                 break
+              fi
+
+              # 503 means actuator is responding but app not fully ready - keep waiting
+              if [ "$HTTP_CODE" != "000" ] && [ "$HTTP_CODE" != "503" ]; then
+                echo "Unexpected HTTP response: ${HTTP_CODE}"
               fi
 
               # Check container is still running
@@ -300,7 +309,7 @@ jobs:
 
             if [ $ELAPSED -ge $TIMEOUT ]; then
               echo "HTTP health check failed after ${TIMEOUT} seconds"
-              docker logs --tail=50 ${REPO_NAME} 2>&1 || true
+              docker logs --tail=100 ${REPO_NAME} 2>&1 || true
               exit 1
             fi
           fi
