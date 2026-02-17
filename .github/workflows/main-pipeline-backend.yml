@@ -94,11 +94,6 @@ on:
         required: false
         type: string
         default: 'develop'
-      health_check_path:
-        description: 'Health check endpoint path'
-        required: false
-        type: string
-        default: ''
       memory_limit:
         description: 'Container memory limit (e.g., 512m, 1g)'
         required: false
@@ -239,7 +234,6 @@ jobs:
       image_tag: ${{ needs.artifact-ecr.outputs.image_tag || needs.artifact-github.outputs.image_tag }}
       docker_platform: ${{ inputs.docker_platform }}
       environment: ${{ inputs.environment }}
-      health_check_path: ${{ inputs.health_check_path }}
       memory_limit: ${{ inputs.memory_limit }}
       memory_reservation: ${{ inputs.memory_reservation }}
       spring_profiles: ${{ inputs.spring_profiles }}

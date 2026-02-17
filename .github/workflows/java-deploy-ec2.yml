@@ -17,16 +17,6 @@ on:
         required: false
         type: string
         default: 'develop'
-      health_check_path:
-        description: 'Health check endpoint (empty to skip)'
-        required: false
-        type: string
-        default: ''
-      health_check_timeout:
-        description: 'Health check timeout in seconds'
-        required: false
-        type: number
-        default: 180
       docker_platform:
         description: 'Docker platform for the container (linux/amd64, linux/arm64)'
         required: false
@@ -109,8 +99,6 @@ jobs:
           APP_PORT: ${{ secrets.AWS_APP_PORT }}
           REPO_NAME: ${{ steps.repo.outputs.name }}
           ENVIRONMENT: ${{ inputs.environment }}
-          HEALTH_CHECK_PATH: ${{ inputs.health_check_path }}
-          HEALTH_CHECK_TIMEOUT: ${{ inputs.health_check_timeout }}
           DOCKER_PLATFORM: ${{ inputs.docker_platform }}
           MEMORY_LIMIT: ${{ inputs.memory_limit }}
           MEMORY_RESERVATION: ${{ inputs.memory_reservation }}
@@ -243,78 +231,6 @@ jobs:
           echo "Starting new container..."
           ./start.sh
 
-          # Health check - Phase 1: Container status
-          TIMEOUT=${HEALTH_CHECK_TIMEOUT:-120}
-          ELAPSED=0
-
-          echo "Waiting for container '${REPO_NAME}' to be running..."
-          while [ $ELAPSED -lt $TIMEOUT ]; do
-            CONTAINER_STATUS=$(docker inspect --format='{{.State.Status}}' ${REPO_NAME} 2>/dev/null || echo "not_found")
-
-            if [ "$CONTAINER_STATUS" = "running" ]; then
-              echo "Container is running!"
-              break
-            elif [ "$CONTAINER_STATUS" = "exited" ] || [ "$CONTAINER_STATUS" = "dead" ]; then
-              echo "Container failed with status: ${CONTAINER_STATUS}"
-              echo "Container logs:"
-              docker logs --tail=50 ${REPO_NAME} 2>&1 || true
-              exit 1
-            fi
-
-            sleep 5
-            ELAPSED=$((ELAPSED + 5))
-            echo "Waiting for container... ($ELAPSED/$TIMEOUT seconds) [status: ${CONTAINER_STATUS}]"
-          done
-
-          if [ $ELAPSED -ge $TIMEOUT ]; then
-            echo "Container did not start after ${TIMEOUT} seconds"
-            docker logs --tail=50 ${REPO_NAME} 2>&1 || true
-            exit 1
-          fi
-
-          # Health check - Phase 2: HTTP endpoint (optional)
-          if [ -n "${HEALTH_CHECK_PATH}" ]; then
-            # Give Spring Boot time to start before polling
-            echo "Waiting 15s for Spring Boot initialization..."
-            sleep 15
-
-            # Build URL with context path (SERVER_CONTEXT_PATH=/${REPO_NAME})
-            HEALTH_URL="http://localhost:${APP_PORT}/${REPO_NAME}${HEALTH_CHECK_PATH}"
-            echo "Running HTTP health check on ${HEALTH_URL}..."
-            ELAPSED=0
-
-            while [ $ELAPSED -lt $TIMEOUT ]; do
-              HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" 2>/dev/null || echo "000")
-
-              if [ "$HTTP_CODE" = "200" ]; then
-                echo "HTTP health check passed! (HTTP ${HTTP_CODE})"
-                break
-              fi
-
-              # 503 means actuator is responding but app not fully ready - keep waiting
-              if [ "$HTTP_CODE" != "000" ] && [ "$HTTP_CODE" != "503" ]; then
-                echo "Unexpected HTTP response: ${HTTP_CODE}"
-              fi
-
-              # Check container is still running
-              if ! docker ps -q -f name=${REPO_NAME} | grep -q .; then
-                echo "Container stopped unexpectedly during health check"
-                docker logs --tail=50 ${REPO_NAME} 2>&1 || true
-                exit 1
-              fi
-
-              sleep 5
-              ELAPSED=$((ELAPSED + 5))
-              echo "Waiting for HTTP response... ($ELAPSED/$TIMEOUT seconds) [HTTP ${HTTP_CODE}]"
-            done
-
-            if [ $ELAPSED -ge $TIMEOUT ]; then
-              echo "HTTP health check failed after ${TIMEOUT} seconds"
-              docker logs --tail=100 ${REPO_NAME} 2>&1 || true
-              exit 1
-            fi
-          fi
-
           echo "Deployment completed successfully!"
           DEPLOY_SCRIPT
 
@@ -331,8 +247,6 @@ jobs:
             AWS_REGION='${AWS_REGION}' \
             APP_PORT='${APP_PORT}' \
             ENVIRONMENT='${ENVIRONMENT}' \
-            HEALTH_CHECK_PATH='${HEALTH_CHECK_PATH}' \
-            HEALTH_CHECK_TIMEOUT='${HEALTH_CHECK_TIMEOUT}' \
             DOCKER_PLATFORM='${DOCKER_PLATFORM}' \
             MEMORY_LIMIT='${MEMORY_LIMIT}' \
             MEMORY_RESERVATION='${MEMORY_RESERVATION}' \
