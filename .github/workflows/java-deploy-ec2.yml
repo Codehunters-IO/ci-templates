@@ -174,8 +174,6 @@ jobs:
                 - "${APP_PORT}:8080"
               mem_limit: ${MEMORY_LIMIT}
               mem_reservation: ${MEMORY_RESERVATION}
-              volumes:
-                - ${REPO_NAME}:/app
               networks:
                 - soldife_net
               logging:
@@ -183,10 +181,6 @@ jobs:
                 options:
                   max-size: "10m"
                   max-file: "3"
-
-          volumes:
-            ${REPO_NAME}:
-              driver: local
 
           networks:
             soldife_net:
@@ -234,6 +228,10 @@ jobs:
           STOPEOF
             chmod +x stop.sh
           fi
+
+          # Pull latest image from ECR
+          echo "Pulling latest image..."
+          docker pull ${AWS_ECR_URL}/${REPO_NAME}:${IMAGE_TAG}
 
           # Stop existing container if running
           if docker ps -q -f name=${REPO_NAME} 2>/dev/null | grep -q .; then

@@ -49,3 +49,13 @@ jobs:
       - name: Spotless check
         if: inputs.run_spotless
         run: ./gradlew spotlessCheck --no-daemon --build-cache
+
+      # ============================================
+      # CLEANUP
+      # ============================================
+      - name: Cleanup Gradle cache
+        if: always()
+        run: |
+          rm -rf ~/.gradle/caches/build-cache-*
+          rm -rf ~/.gradle/daemon
+          ./gradlew --stop 2>/dev/null || true
