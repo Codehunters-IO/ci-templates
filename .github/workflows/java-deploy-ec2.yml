@@ -278,8 +278,9 @@ jobs:
             echo "Waiting 15s for Spring Boot initialization..."
             sleep 15
 
-            echo "Running HTTP health check on http://localhost:${APP_PORT}${HEALTH_CHECK_PATH}..."
-            HEALTH_URL="http://localhost:${APP_PORT}${HEALTH_CHECK_PATH}"
+            # Build URL with context path (SERVER_CONTEXT_PATH=/${REPO_NAME})
+            HEALTH_URL="http://localhost:${APP_PORT}/${REPO_NAME}${HEALTH_CHECK_PATH}"
+            echo "Running HTTP health check on ${HEALTH_URL}..."
             ELAPSED=0
 
             while [ $ELAPSED -lt $TIMEOUT ]; do
@@ -320,7 +321,7 @@ jobs:
           # Copy and execute script on EC2
           scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no /tmp/deploy.sh ${EC2_USER}@${EC2_HOST}:/tmp/deploy.sh
 
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} "
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=10 ${EC2_USER}@${EC2_HOST} "
             chmod +x /tmp/deploy.sh && \
             REPO_NAME='${REPO_NAME}' \
             IMAGE_TAG='${IMAGE_TAG}' \
