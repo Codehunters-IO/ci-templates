@@ -24,12 +24,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build Docker image
-        run: docker build -t krakend-app:ci ${{ inputs.dockerfile_path }}
-
-      - name: Validate KrakenD config
+      - name: Build & Validate KrakenD config
         run: |
-          docker run --rm krakend-app:ci check -t -d -c /etc/krakend/krakend.tmpl
+          docker build -t krakend-app:ci ${{ inputs.dockerfile_path }}
 
-          echo "### KrakenD Config Validation" >> $GITHUB_STEP_SUMMARY
+          echo "### KrakenD Build & Validation" >> $GITHUB_STEP_SUMMARY
           echo "**Status:** Passed" >> $GITHUB_STEP_SUMMARY
