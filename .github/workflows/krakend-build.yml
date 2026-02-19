@@ -29,7 +29,7 @@ jobs:
 
       - name: Validate KrakenD config
         run: |
-          docker run --rm krakend-app:ci check -t -d -c /etc/krakend/krakend.json
+          docker run --rm krakend-app:ci check -t -d -c /etc/krakend/krakend.tmpl
 
           echo "### KrakenD Config Validation" >> $GITHUB_STEP_SUMMARY
           echo "**Status:** Passed" >> $GITHUB_STEP_SUMMARY

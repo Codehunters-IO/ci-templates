@@ -50,7 +50,7 @@ jobs:
           # Run audit and capture output
           AUDIT_OUTPUT=$(docker run --rm \
             krakend-app:ci \
-            audit -c /etc/krakend/krakend.json 2>&1) || true
+            audit -c /etc/krakend/krakend.tmpl 2>&1) || true
 
           echo "$AUDIT_OUTPUT"
 

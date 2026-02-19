@@ -16,7 +16,6 @@ on:
         required: false
         type: string
         default: '.'
-
       # Pipeline steps control
       run_build:
         description: 'Run build job (config validation)'
