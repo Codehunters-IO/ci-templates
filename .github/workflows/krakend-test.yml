@@ -13,36 +13,6 @@ on:
         required: false
         type: string
         default: '.'
-      config_path:
-        description: 'Path to KrakenD config file inside the container'
-        required: false
-        type: string
-        default: '/etc/krakend/krakend.json'
-      fc_enable:
-        description: 'Enable Flexible Configuration'
-        required: false
-        type: boolean
-        default: false
-      fc_settings:
-        description: 'FC settings directory (inside the container)'
-        required: false
-        type: string
-        default: '/etc/krakend/config/settings'
-      fc_partials:
-        description: 'FC partials directory (inside the container)'
-        required: false
-        type: string
-        default: '/etc/krakend/config/partials'
-      fc_templates:
-        description: 'FC templates directory (inside the container)'
-        required: false
-        type: string
-        default: '/etc/krakend/config/templates'
-      fc_out:
-        description: 'FC output file for the compiled config (inside the container)'
-        required: false
-        type: string
-        default: '/etc/krakend/compiled-krakend.json'
       audit_threshold:
         description: 'Minimum audit score (0-100). Set to 0 to disable.'
         required: false
@@ -72,36 +42,15 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: |
-          echo "Building KrakenD image from Dockerfile..."
-          docker build -t krakend-app:ci ${{ inputs.dockerfile_path }}
-
-      - name: Generate compiled config (Flexible Configuration)
-        if: inputs.fc_enable
-        run: |
-          docker run --rm \
-            -e FC_ENABLE=1 \
-            -e FC_SETTINGS="${{ inputs.fc_settings }}" \
-            -e FC_PARTIALS="${{ inputs.fc_partials }}" \
-            -e FC_TEMPLATES="${{ inputs.fc_templates }}" \
-            -e FC_OUT="${{ inputs.fc_out }}" \
-            krakend-app:ci \
-            check -t -d -c ${{ inputs.config_path }}
+        run: docker build -t krakend-app:ci ${{ inputs.dockerfile_path }}
 
       - name: Run KrakenD audit
         id: audit
         run: |
-          # Determine which config file to audit
-          if [ "${{ inputs.fc_enable }}" = "true" ]; then
-            AUDIT_CONFIG="${{ inputs.fc_out }}"
-          else
-            AUDIT_CONFIG="${{ inputs.config_path }}"
-          fi
-
           # Run audit and capture output
           AUDIT_OUTPUT=$(docker run --rm \
             krakend-app:ci \
-            audit -c "$AUDIT_CONFIG" 2>&1) || true
+            audit -c /etc/krakend/krakend.json 2>&1) || true
 
           echo "$AUDIT_OUTPUT"
 
