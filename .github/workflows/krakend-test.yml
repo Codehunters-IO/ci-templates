@@ -8,41 +8,41 @@ on:
         required: false
         type: string
         default: 'ubuntu-latest'
-      krakend_version:
-        description: 'KrakenD Docker image version'
+      dockerfile_path:
+        description: 'Path to Dockerfile'
         required: false
         type: string
-        default: '2.9'
+        default: '.'
       config_path:
-        description: 'Path to KrakenD config file'
+        description: 'Path to KrakenD config file inside the container'
         required: false
         type: string
-        default: 'krakend.json'
+        default: '/etc/krakend/krakend.json'
       fc_enable:
         description: 'Enable Flexible Configuration'
         required: false
         type: boolean
         default: false
       fc_settings:
-        description: 'FC settings directory (relative to workspace)'
+        description: 'FC settings directory (inside the container)'
         required: false
         type: string
-        default: 'config/settings'
+        default: '/etc/krakend/config/settings'
       fc_partials:
-        description: 'FC partials directory (relative to workspace)'
+        description: 'FC partials directory (inside the container)'
         required: false
         type: string
-        default: 'config/partials'
+        default: '/etc/krakend/config/partials'
       fc_templates:
-        description: 'FC templates directory (relative to workspace)'
+        description: 'FC templates directory (inside the container)'
         required: false
         type: string
-        default: 'config/templates'
+        default: '/etc/krakend/config/templates'
       fc_out:
-        description: 'FC output file for the compiled config'
+        description: 'FC output file for the compiled config (inside the container)'
         required: false
         type: string
-        default: 'compiled-krakend.json'
+        default: '/etc/krakend/compiled-krakend.json'
       audit_threshold:
         description: 'Minimum audit score (0-100). Set to 0 to disable.'
         required: false
@@ -61,7 +61,7 @@ jobs:
   test:
     name: Test & Audit
     runs-on: ${{ inputs.runner }}
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     outputs:
       result: ${{ steps.audit.outputs.result }}
@@ -71,33 +71,36 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Build Docker image
+        run: |
+          echo "Building KrakenD image from Dockerfile..."
+          docker build -t krakend-app:ci ${{ inputs.dockerfile_path }}
+
       - name: Generate compiled config (Flexible Configuration)
         if: inputs.fc_enable
         run: |
           docker run --rm \
-            -v "${{ github.workspace }}:/etc/krakend" \
             -e FC_ENABLE=1 \
-            -e FC_SETTINGS="/etc/krakend/${{ inputs.fc_settings }}" \
-            -e FC_PARTIALS="/etc/krakend/${{ inputs.fc_partials }}" \
-            -e FC_TEMPLATES="/etc/krakend/${{ inputs.fc_templates }}" \
-            -e FC_OUT="/etc/krakend/${{ inputs.fc_out }}" \
-            devopsfaith/krakend:${{ inputs.krakend_version }} \
-            check -t -d -c /etc/krakend/${{ inputs.config_path }}
+            -e FC_SETTINGS="${{ inputs.fc_settings }}" \
+            -e FC_PARTIALS="${{ inputs.fc_partials }}" \
+            -e FC_TEMPLATES="${{ inputs.fc_templates }}" \
+            -e FC_OUT="${{ inputs.fc_out }}" \
+            krakend-app:ci \
+            check -t -d -c ${{ inputs.config_path }}
 
       - name: Run KrakenD audit
         id: audit
         run: |
           # Determine which config file to audit
           if [ "${{ inputs.fc_enable }}" = "true" ]; then
-            AUDIT_CONFIG="/etc/krakend/${{ inputs.fc_out }}"
+            AUDIT_CONFIG="${{ inputs.fc_out }}"
           else
-            AUDIT_CONFIG="/etc/krakend/${{ inputs.config_path }}"
+            AUDIT_CONFIG="${{ inputs.config_path }}"
           fi
 
           # Run audit and capture output
           AUDIT_OUTPUT=$(docker run --rm \
-            -v "${{ github.workspace }}:/etc/krakend" \
-            devopsfaith/krakend:${{ inputs.krakend_version }} \
+            krakend-app:ci \
             audit -c "$AUDIT_CONFIG" 2>&1) || true
 
           echo "$AUDIT_OUTPUT"

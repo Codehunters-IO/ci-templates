@@ -11,16 +11,16 @@ on:
         default: 'ubuntu-latest'
 
       # KrakenD configuration
-      krakend_version:
-        description: 'KrakenD Docker image version for validation'
+      dockerfile_path:
+        description: 'Path to Dockerfile'
         required: false
         type: string
-        default: '2.9'
+        default: '.'
       config_path:
-        description: 'Path to KrakenD config file'
+        description: 'Path to KrakenD config file inside the container'
         required: false
         type: string
-        default: 'krakend.json'
+        default: '/etc/krakend/krakend.json'
 
       # Flexible Configuration
       fc_enable:
@@ -29,25 +29,25 @@ on:
         type: boolean
         default: false
       fc_settings:
-        description: 'FC settings directory (relative to workspace)'
+        description: 'FC settings directory (inside the container)'
         required: false
         type: string
-        default: 'config/settings'
+        default: '/etc/krakend/config/settings'
       fc_partials:
-        description: 'FC partials directory (relative to workspace)'
+        description: 'FC partials directory (inside the container)'
         required: false
         type: string
-        default: 'config/partials'
+        default: '/etc/krakend/config/partials'
       fc_templates:
-        description: 'FC templates directory (relative to workspace)'
+        description: 'FC templates directory (inside the container)'
         required: false
         type: string
-        default: 'config/templates'
+        default: '/etc/krakend/config/templates'
       fc_out:
-        description: 'FC output file for the compiled config'
+        description: 'FC output file for the compiled config (inside the container)'
         required: false
         type: string
-        default: 'compiled-krakend.json'
+        default: '/etc/krakend/compiled-krakend.json'
 
       # Pipeline steps control
       run_build:
@@ -172,7 +172,7 @@ jobs:
     uses: ./.github/workflows/krakend-build.yml
     with:
       runner: ${{ inputs.runner }}
-      krakend_version: ${{ inputs.krakend_version }}
+      dockerfile_path: ${{ inputs.dockerfile_path }}
       config_path: ${{ inputs.config_path }}
       fc_enable: ${{ inputs.fc_enable }}
       fc_settings: ${{ inputs.fc_settings }}
@@ -191,7 +191,7 @@ jobs:
     uses: ./.github/workflows/krakend-test.yml
     with:
       runner: ${{ inputs.runner }}
-      krakend_version: ${{ inputs.krakend_version }}
+      dockerfile_path: ${{ inputs.dockerfile_path }}
       config_path: ${{ inputs.config_path }}
       fc_enable: ${{ inputs.fc_enable }}
       fc_settings: ${{ inputs.fc_settings }}
