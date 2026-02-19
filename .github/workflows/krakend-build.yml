@@ -1,0 +1,82 @@
+name: KrakenD - Build & Validate
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      krakend_version:
+        description: 'KrakenD Docker image version for validation'
+        required: false
+        type: string
+        default: '2.9'
+      config_path:
+        description: 'Path to KrakenD config file'
+        required: false
+        type: string
+        default: 'krakend.json'
+      fc_enable:
+        description: 'Enable Flexible Configuration'
+        required: false
+        type: boolean
+        default: false
+      fc_settings:
+        description: 'FC settings directory (relative to workspace)'
+        required: false
+        type: string
+        default: 'config/settings'
+      fc_partials:
+        description: 'FC partials directory (relative to workspace)'
+        required: false
+        type: string
+        default: 'config/partials'
+      fc_templates:
+        description: 'FC templates directory (relative to workspace)'
+        required: false
+        type: string
+        default: 'config/templates'
+      fc_out:
+        description: 'FC output file for the compiled config'
+        required: false
+        type: string
+        default: 'compiled-krakend.json'
+
+jobs:
+  build:
+    name: Build & Validate
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate KrakenD config
+        run: |
+          echo "Validating KrakenD configuration..."
+
+          if [ "${{ inputs.fc_enable }}" = "true" ]; then
+            echo "Flexible Configuration enabled"
+            docker run --rm \
+              -v "${{ github.workspace }}:/etc/krakend" \
+              -e FC_ENABLE=1 \
+              -e FC_SETTINGS="/etc/krakend/${{ inputs.fc_settings }}" \
+              -e FC_PARTIALS="/etc/krakend/${{ inputs.fc_partials }}" \
+              -e FC_TEMPLATES="/etc/krakend/${{ inputs.fc_templates }}" \
+              -e FC_OUT="/etc/krakend/${{ inputs.fc_out }}" \
+              devopsfaith/krakend:${{ inputs.krakend_version }} \
+              check -t -d -c /etc/krakend/${{ inputs.config_path }}
+          else
+            docker run --rm \
+              -v "${{ github.workspace }}:/etc/krakend" \
+              devopsfaith/krakend:${{ inputs.krakend_version }} \
+              check -t -d -c /etc/krakend/${{ inputs.config_path }}
+          fi
+
+          echo "### KrakenD Config Validation" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** Passed" >> $GITHUB_STEP_SUMMARY
+          echo "**Config:** \`${{ inputs.config_path }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Flexible Config:** ${{ inputs.fc_enable }}" >> $GITHUB_STEP_SUMMARY

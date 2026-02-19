@@ -1,0 +1,107 @@
+name: React - Deploy to S3
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      environment:
+        description: 'GitHub environment (develop, staging, production)'
+        required: false
+        type: string
+        default: 'develop'
+      build_output_dir:
+        description: 'Build output directory name (must match build artifact)'
+        required: false
+        type: string
+        default: 'build'
+
+    secrets:
+      AWS_ACCESS_KEY_ID:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
+      AWS_REGION:
+        required: true
+      AWS_S3_BUCKET:
+        required: true
+      AWS_CLOUDFRONT_DISTRIBUTION_ID:
+        required: false
+
+    outputs:
+      deploy_status:
+        description: 'Deployment status'
+        value: ${{ jobs.deploy.outputs.status }}
+      s3_bucket:
+        description: 'S3 bucket deployed to'
+        value: ${{ jobs.deploy.outputs.bucket }}
+
+jobs:
+  deploy:
+    name: Deploy to S3
+    runs-on: ${{ inputs.runner }}
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 15
+
+    outputs:
+      status: ${{ steps.deploy.outputs.status }}
+      bucket: ${{ steps.deploy.outputs.bucket }}
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-output-${{ github.run_id }}
+          path: ${{ inputs.build_output_dir }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Deploy to S3
+        id: deploy
+        env:
+          S3_BUCKET: ${{ secrets.AWS_S3_BUCKET }}
+          CLOUDFRONT_DISTRIBUTION_ID: ${{ secrets.AWS_CLOUDFRONT_DISTRIBUTION_ID }}
+        run: |
+          echo "Deploying to S3 bucket: $S3_BUCKET"
+
+          # Sync build output to S3 (delete stale files)
+          aws s3 sync ${{ inputs.build_output_dir }} "s3://${S3_BUCKET}" --delete
+
+          echo "bucket=$S3_BUCKET" >> $GITHUB_OUTPUT
+
+          # CloudFront cache invalidation (optional)
+          if [ -n "$CLOUDFRONT_DISTRIBUTION_ID" ]; then
+            echo "Invalidating CloudFront distribution: $CLOUDFRONT_DISTRIBUTION_ID"
+            INVALIDATION_ID=$(aws cloudfront create-invalidation \
+              --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" \
+              --paths "/*" \
+              --query 'Invalidation.Id' \
+              --output text)
+            echo "Invalidation created: $INVALIDATION_ID"
+            echo "invalidation_id=$INVALIDATION_ID" >> $GITHUB_OUTPUT
+          else
+            echo "No CloudFront distribution ID provided, skipping invalidation"
+          fi
+
+          echo "status=success" >> $GITHUB_OUTPUT
+
+          # Summary
+          echo "### Deployment Completed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **S3 Bucket** | $S3_BUCKET |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Environment** | ${{ inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$CLOUDFRONT_DISTRIBUTION_ID" ]; then
+            echo "| **CloudFront** | $CLOUDFRONT_DISTRIBUTION_ID |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Invalidation** | $INVALIDATION_ID |" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "| **Source** | ${{ inputs.build_output_dir }} |" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,42 @@
+# Template: Deploy on merge to develop
+# Copy to: .github/workflows/develop-deploy.yml
+#
+# Triggers on push to develop branch (after PR merge)
+# Flow: build → test → deploy (S3) → delete branch → create release PR
+#
+# Required secrets:
+#   AWS:
+#   - AWS_ACCESS_KEY_ID: AWS access key
+#   - AWS_SECRET_ACCESS_KEY: AWS secret key
+#   - AWS_REGION: AWS region (e.g., us-east-1)
+#   - AWS_S3_BUCKET: S3 bucket name for hosting
+#
+#   Optional:
+#   - AWS_CLOUDFRONT_DISTRIBUTION_ID: CloudFront distribution for cache invalidation
+
+name: Deploy to Develop
+
+on:
+  push:
+    branches:
+      - develop
+
+permissions:
+  contents: write
+  id-token: write
+  checks: write
+  pull-requests: write
+
+jobs:
+  pipeline:
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    uses: <org>/ci-templates/.github/workflows/react-main-pipeline.yml@main
+    with:
+      run_build: true
+      run_test: true
+      run_deploy: true
+      run_cleanup: true
+      run_release: true
+      environment: 'develop'
+      release_target_branch: 'main'
+    secrets: inherit

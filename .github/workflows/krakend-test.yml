@@ -1,0 +1,131 @@
+name: KrakenD - Test & Audit
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      krakend_version:
+        description: 'KrakenD Docker image version'
+        required: false
+        type: string
+        default: '2.9'
+      config_path:
+        description: 'Path to KrakenD config file'
+        required: false
+        type: string
+        default: 'krakend.json'
+      fc_enable:
+        description: 'Enable Flexible Configuration'
+        required: false
+        type: boolean
+        default: false
+      fc_settings:
+        description: 'FC settings directory (relative to workspace)'
+        required: false
+        type: string
+        default: 'config/settings'
+      fc_partials:
+        description: 'FC partials directory (relative to workspace)'
+        required: false
+        type: string
+        default: 'config/partials'
+      fc_templates:
+        description: 'FC templates directory (relative to workspace)'
+        required: false
+        type: string
+        default: 'config/templates'
+      fc_out:
+        description: 'FC output file for the compiled config'
+        required: false
+        type: string
+        default: 'compiled-krakend.json'
+      audit_threshold:
+        description: 'Minimum audit score (0-100). Set to 0 to disable.'
+        required: false
+        type: number
+        default: 0
+
+    outputs:
+      result:
+        description: 'Audit result (success/failure)'
+        value: ${{ jobs.test.outputs.result }}
+      audit_score:
+        description: 'Audit score (0-100)'
+        value: ${{ jobs.test.outputs.score }}
+
+jobs:
+  test:
+    name: Test & Audit
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 10
+
+    outputs:
+      result: ${{ steps.audit.outputs.result }}
+      score: ${{ steps.audit.outputs.score }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate compiled config (Flexible Configuration)
+        if: inputs.fc_enable
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/etc/krakend" \
+            -e FC_ENABLE=1 \
+            -e FC_SETTINGS="/etc/krakend/${{ inputs.fc_settings }}" \
+            -e FC_PARTIALS="/etc/krakend/${{ inputs.fc_partials }}" \
+            -e FC_TEMPLATES="/etc/krakend/${{ inputs.fc_templates }}" \
+            -e FC_OUT="/etc/krakend/${{ inputs.fc_out }}" \
+            devopsfaith/krakend:${{ inputs.krakend_version }} \
+            check -t -d -c /etc/krakend/${{ inputs.config_path }}
+
+      - name: Run KrakenD audit
+        id: audit
+        run: |
+          # Determine which config file to audit
+          if [ "${{ inputs.fc_enable }}" = "true" ]; then
+            AUDIT_CONFIG="/etc/krakend/${{ inputs.fc_out }}"
+          else
+            AUDIT_CONFIG="/etc/krakend/${{ inputs.config_path }}"
+          fi
+
+          # Run audit and capture output
+          AUDIT_OUTPUT=$(docker run --rm \
+            -v "${{ github.workspace }}:/etc/krakend" \
+            devopsfaith/krakend:${{ inputs.krakend_version }} \
+            audit -c "$AUDIT_CONFIG" 2>&1) || true
+
+          echo "$AUDIT_OUTPUT"
+
+          # Parse audit score from output
+          SCORE=$(echo "$AUDIT_OUTPUT" | grep -oP '\d+/100' | grep -oP '^\d+' || echo "0")
+
+          if [ -z "$SCORE" ]; then
+            SCORE=0
+          fi
+
+          echo "score=$SCORE" >> $GITHUB_OUTPUT
+          echo "result=success" >> $GITHUB_OUTPUT
+
+          # Summary
+          echo "### KrakenD Audit Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Audit Score: ${SCORE}/100**" >> $GITHUB_STEP_SUMMARY
+
+      - name: Check audit threshold
+        if: inputs.audit_threshold > 0
+        run: |
+          SCORE="${{ steps.audit.outputs.score }}"
+          THRESHOLD="${{ inputs.audit_threshold }}"
+
+          if [ "$SCORE" -lt "$THRESHOLD" ]; then
+            echo "::error::Audit score ${SCORE}/100 is below threshold of ${THRESHOLD}/100"
+            exit 1
+          fi
+
+          echo "Audit score ${SCORE}/100 meets threshold of ${THRESHOLD}/100"

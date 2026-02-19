@@ -1,0 +1,30 @@
+# Template: Deploy on release branch
+# Copy to: .github/workflows/release-deploy.yml
+#
+# Triggers on push to release/* branches
+# Runs: build + test + artifact + deploy (STAGING environment)
+#
+# Required secrets: Same as develop-deploy.yml
+
+name: Deploy to STAGING
+
+on:
+  push:
+    branches:
+      - 'release/**'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    uses: <org>/ci-templates/.github/workflows/krakend-main-pipeline.yml@main
+    with:
+      run_build: true
+      run_test: true
+      run_artifact: true
+      run_deploy: true
+      environment: 'staging'
+    secrets: inherit

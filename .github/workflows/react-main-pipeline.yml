@@ -1,0 +1,206 @@
+name: React - Main Pipeline
+
+on:
+  workflow_call:
+    inputs:
+      # Runner configuration
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+
+      # Node configuration
+      node_version:
+        description: 'Node.js version'
+        required: false
+        type: string
+        default: '20'
+
+      # Pipeline steps control
+      run_build:
+        description: 'Run build job'
+        required: false
+        type: boolean
+        default: true
+      run_test:
+        description: 'Run test job (includes coverage)'
+        required: false
+        type: boolean
+        default: false
+      run_deploy:
+        description: 'Deploy to S3'
+        required: false
+        type: boolean
+        default: false
+      run_cleanup:
+        description: 'Delete merged branch after deploy'
+        required: false
+        type: boolean
+        default: false
+      run_release:
+        description: 'Create release PR after deploy'
+        required: false
+        type: boolean
+        default: false
+      run_commit_lint:
+        description: 'Run commit message validation'
+        required: false
+        type: boolean
+        default: false
+
+      # Build options
+      build_command:
+        description: 'Build script name (yarn <command>)'
+        required: false
+        type: string
+        default: 'build'
+      build_output_dir:
+        description: 'Build output directory (build for CRA, dist for Vite)'
+        required: false
+        type: string
+        default: 'build'
+      run_lint:
+        description: 'Run yarn lint during build'
+        required: false
+        type: boolean
+        default: true
+      run_type_check:
+        description: 'Run yarn type-check during build (TypeScript projects)'
+        required: false
+        type: boolean
+        default: false
+
+      # Test options
+      coverage_threshold:
+        description: 'Minimum coverage percentage (0-100)'
+        required: false
+        type: number
+        default: 0
+      test_command:
+        description: 'Test script name (yarn <command>)'
+        required: false
+        type: string
+        default: 'test'
+
+      # Deploy options
+      environment:
+        description: 'GitHub environment (develop, staging, production)'
+        required: false
+        type: string
+        default: 'develop'
+
+      # Release options
+      release_target_branch:
+        description: 'Target branch for release PR'
+        required: false
+        type: string
+        default: 'main'
+
+    outputs:
+      coverage:
+        description: 'Code coverage percentage'
+        value: ${{ jobs.test.outputs.coverage_percentage }}
+      deploy_status:
+        description: 'Deployment status'
+        value: ${{ jobs.deploy.outputs.deploy_status }}
+      deleted_branch:
+        description: 'Name of deleted branch'
+        value: ${{ jobs.cleanup.outputs.deleted_branch }}
+      release_version:
+        description: 'Release version created'
+        value: ${{ jobs.release.outputs.version }}
+      release_pr_url:
+        description: 'Release PR URL'
+        value: ${{ jobs.release.outputs.pr_url }}
+
+jobs:
+  # ============================================
+  # COMMIT LINT
+  # ============================================
+  commit-lint:
+    name: Commit Lint
+    if: inputs.run_commit_lint
+    uses: ./.github/workflows/react-commit-lint.yml
+    with:
+      runner: ${{ inputs.runner }}
+
+  # ============================================
+  # BUILD
+  # ============================================
+  build:
+    name: Build
+    if: inputs.run_build
+    uses: ./.github/workflows/react-build.yml
+    with:
+      runner: ${{ inputs.runner }}
+      node_version: ${{ inputs.node_version }}
+      build_command: ${{ inputs.build_command }}
+      build_output_dir: ${{ inputs.build_output_dir }}
+      run_lint: ${{ inputs.run_lint }}
+      run_type_check: ${{ inputs.run_type_check }}
+    secrets: inherit
+
+  # ============================================
+  # TEST & COVERAGE
+  # ============================================
+  test:
+    name: Test & Coverage
+    if: inputs.run_test
+    needs: build
+    uses: ./.github/workflows/react-test.yml
+    with:
+      runner: ${{ inputs.runner }}
+      node_version: ${{ inputs.node_version }}
+      run_coverage: true
+      coverage_threshold: ${{ inputs.coverage_threshold }}
+      test_command: ${{ inputs.test_command }}
+    secrets: inherit
+
+  # ============================================
+  # DEPLOY - Upload to S3 + CloudFront Invalidation
+  # ============================================
+  deploy:
+    name: Deploy S3
+    if: |
+      inputs.run_deploy &&
+      always() &&
+      needs.build.result == 'success' &&
+      (needs.test.result == 'success' || needs.test.result == 'skipped')
+    needs: [build, test]
+    uses: ./.github/workflows/react-deploy-s3.yml
+    with:
+      runner: ${{ inputs.runner }}
+      environment: ${{ inputs.environment }}
+      build_output_dir: ${{ inputs.build_output_dir }}
+    secrets: inherit
+
+  # ============================================
+  # CLEANUP - Delete merged branch
+  # ============================================
+  cleanup:
+    name: Delete Branch
+    if: |
+      inputs.run_cleanup &&
+      always() &&
+      needs.deploy.result == 'success'
+    needs: [deploy]
+    uses: ./.github/workflows/react-delete-branch.yml
+    secrets: inherit
+
+  # ============================================
+  # RELEASE - Create release PR
+  # ============================================
+  release:
+    name: Create Release
+    if: |
+      inputs.run_release &&
+      always() &&
+      needs.deploy.result == 'success' &&
+      (needs.cleanup.result == 'success' || needs.cleanup.result == 'skipped')
+    needs: [deploy, cleanup]
+    uses: ./.github/workflows/react-release.yml
+    with:
+      base_branch: ${{ inputs.environment }}
+      target_branch: ${{ inputs.release_target_branch }}
+    secrets: inherit

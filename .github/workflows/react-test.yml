@@ -1,0 +1,169 @@
+name: React - Test & Coverage
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      node_version:
+        description: 'Node.js version'
+        required: false
+        type: string
+        default: '20'
+      run_coverage:
+        description: 'Run tests with coverage'
+        required: false
+        type: boolean
+        default: true
+      coverage_threshold:
+        description: 'Minimum coverage percentage (0-100). Set to 0 to disable.'
+        required: false
+        type: number
+        default: 0
+      test_command:
+        description: 'Test script name (yarn <command>)'
+        required: false
+        type: string
+        default: 'test'
+      upload_reports:
+        description: 'Upload coverage reports as artifact'
+        required: false
+        type: boolean
+        default: false
+
+    outputs:
+      result:
+        description: 'Test result (success/failure)'
+        value: ${{ jobs.test.outputs.result }}
+      coverage_percentage:
+        description: 'Code coverage percentage'
+        value: ${{ jobs.test.outputs.coverage }}
+      tests_passed:
+        description: 'Number of tests passed'
+        value: ${{ jobs.test.outputs.passed }}
+      tests_failed:
+        description: 'Number of tests failed'
+        value: ${{ jobs.test.outputs.failed }}
+
+jobs:
+  test:
+    name: Test & Coverage
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 30
+
+    outputs:
+      result: ${{ steps.test-run.outcome }}
+      coverage: ${{ steps.coverage.outputs.percentage }}
+      passed: ${{ steps.test-summary.outputs.passed }}
+      failed: ${{ steps.test-summary.outputs.failed }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ inputs.node_version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: 'yarn'
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      # ============================================
+      # RUN TESTS
+      # ============================================
+      - name: Run tests
+        id: test-run
+        run: |
+          if [ "${{ inputs.run_coverage }}" = "true" ]; then
+            yarn ${{ inputs.test_command }} --coverage --ci 2>&1 | tee test-output.log || true
+          else
+            yarn ${{ inputs.test_command }} --ci 2>&1 | tee test-output.log || true
+          fi
+
+      - name: Parse test results
+        id: test-summary
+        if: always()
+        run: |
+          PASSED=0
+          FAILED=0
+
+          if [ -f "test-output.log" ]; then
+            # Parse Jest output: "Tests: X passed, Y failed, Z total"
+            PASSED=$(grep -oP 'Tests:.*?(\d+) passed' test-output.log | grep -oP '\d+' | tail -1 || echo "0")
+            FAILED=$(grep -oP 'Tests:.*?(\d+) failed' test-output.log | grep -oP '\d+' | tail -1 || echo "0")
+
+            # Fallback if parsing fails
+            if [ -z "$PASSED" ]; then PASSED=0; fi
+            if [ -z "$FAILED" ]; then FAILED=0; fi
+          fi
+
+          echo "passed=$PASSED" >> $GITHUB_OUTPUT
+          echo "failed=$FAILED" >> $GITHUB_OUTPUT
+
+          TOTAL=$((PASSED + FAILED))
+          echo "### Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Status | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Passed | $PASSED |" >> $GITHUB_STEP_SUMMARY
+          echo "| Failed | $FAILED |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Total** | **$TOTAL** |" >> $GITHUB_STEP_SUMMARY
+
+      # ============================================
+      # COVERAGE
+      # ============================================
+      - name: Parse coverage report
+        id: coverage
+        if: inputs.run_coverage && always()
+        run: |
+          COVERAGE=0
+
+          if [ -f "coverage/coverage-summary.json" ]; then
+            COVERAGE=$(node -e "
+              const report = require('./coverage/coverage-summary.json');
+              const pct = report.total.lines.pct;
+              console.log(typeof pct === 'number' ? pct.toFixed(1) : '0');
+            " 2>/dev/null || echo "0")
+          fi
+
+          echo "percentage=$COVERAGE" >> $GITHUB_OUTPUT
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Code Coverage" >> $GITHUB_STEP_SUMMARY
+          echo "**Line Coverage: ${COVERAGE}%**" >> $GITHUB_STEP_SUMMARY
+
+      - name: Check coverage threshold
+        if: inputs.run_coverage && inputs.coverage_threshold > 0
+        run: |
+          COVERAGE="${{ steps.coverage.outputs.percentage }}"
+          THRESHOLD="${{ inputs.coverage_threshold }}"
+
+          if [ "$(echo "$COVERAGE < $THRESHOLD" | bc -l)" -eq 1 ]; then
+            echo "::error::Coverage ${COVERAGE}% is below threshold of ${THRESHOLD}%"
+            exit 1
+          fi
+
+      - name: Check test results
+        if: always()
+        run: |
+          FAILED="${{ steps.test-summary.outputs.failed }}"
+          if [ -n "$FAILED" ] && [ "$FAILED" -gt 0 ]; then
+            echo "::error::$FAILED test(s) failed"
+            exit 1
+          fi
+
+      # ============================================
+      # UPLOAD REPORTS
+      # ============================================
+      - name: Upload coverage reports
+        if: inputs.upload_reports && inputs.run_coverage && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports-${{ github.run_id }}
+          path: coverage/
+          retention-days: 7

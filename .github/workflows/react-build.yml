@@ -1,0 +1,77 @@
+name: React - Build & Lint
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      node_version:
+        description: 'Node.js version'
+        required: false
+        type: string
+        default: '20'
+      build_command:
+        description: 'Build script name (yarn <command>)'
+        required: false
+        type: string
+        default: 'build'
+      build_output_dir:
+        description: 'Build output directory (build for CRA, dist for Vite)'
+        required: false
+        type: string
+        default: 'build'
+      run_lint:
+        description: 'Run yarn lint'
+        required: false
+        type: boolean
+        default: true
+      run_type_check:
+        description: 'Run yarn type-check (TypeScript projects)'
+        required: false
+        type: boolean
+        default: false
+      artifact_retention_days:
+        description: 'Days to retain build artifact'
+        required: false
+        type: number
+        default: 1
+
+jobs:
+  build:
+    name: Build & Lint
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ inputs.node_version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: 'yarn'
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Lint
+        if: inputs.run_lint
+        run: yarn lint
+
+      - name: Type check
+        if: inputs.run_type_check
+        run: yarn type-check
+
+      - name: Build
+        run: yarn ${{ inputs.build_command }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output-${{ github.run_id }}
+          path: ${{ inputs.build_output_dir }}
+          retention-days: ${{ inputs.artifact_retention_days }}

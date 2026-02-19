@@ -1,0 +1,20 @@
+# Template: Build on feature/bugfix branches
+# Copy to: .github/workflows/feature-build.yml
+#
+# Triggers on every push to feature/* or bugfix/* branches
+# Runs: config validation only (fast feedback)
+
+name: Feature/Bugfix Build
+
+on:
+  push:
+    branches:
+      - 'feature/**'
+      - 'bugfix/**'
+
+jobs:
+  build:
+    uses: <org>/ci-templates/.github/workflows/krakend-main-pipeline.yml@main
+    with:
+      run_build: true
+    secrets: inherit
