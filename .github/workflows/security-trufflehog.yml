@@ -1,0 +1,91 @@
+name: Security - TruffleHog Secret Scan
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      extra_args:
+        description: 'Additional TruffleHog arguments'
+        required: false
+        type: string
+        default: ''
+      only_verified:
+        description: 'Only report verified secrets'
+        required: false
+        type: boolean
+        default: true
+      fail_on_findings:
+        description: 'Fail the workflow if secrets are found'
+        required: false
+        type: boolean
+        default: true
+
+    outputs:
+      result:
+        description: 'Scan result (success/failure)'
+        value: ${{ jobs.trufflehog.outputs.result }}
+      findings:
+        description: 'Number of secrets found'
+        value: ${{ jobs.trufflehog.outputs.findings }}
+
+jobs:
+  trufflehog:
+    name: TruffleHog Secret Scan
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 15
+
+    outputs:
+      result: ${{ steps.scan.outcome }}
+      findings: ${{ steps.results.outputs.findings }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ============================================
+      # TRUFFLEHOG SCAN
+      # ============================================
+      - name: TruffleHog Scan
+        id: scan
+        uses: trufflesecurity/trufflehog@v3
+        continue-on-error: ${{ !inputs.fail_on_findings }}
+        with:
+          extra_args: >-
+            ${{ inputs.only_verified && '--only-verified' || '' }}
+            ${{ inputs.extra_args }}
+
+      - name: Parse results
+        id: results
+        if: always()
+        run: |
+          if [ "${{ steps.scan.outcome }}" == "failure" ]; then
+            echo "findings=1" >> $GITHUB_OUTPUT
+            echo "::warning::TruffleHog found potential secrets in the repository"
+
+            echo "### Security - TruffleHog" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Status | Result |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Scan | :x: **Secrets found** |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "> Review the scan output above for details on found secrets." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "findings=0" >> $GITHUB_OUTPUT
+            echo "### Security - TruffleHog" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Status | Result |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Scan | :white_check_mark: **No secrets found** |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Fail on findings
+        if: inputs.fail_on_findings && steps.scan.outcome == 'failure'
+        run: |
+          echo "::error::TruffleHog detected secrets in the repository. Please remove them before proceeding."
+          exit 1
