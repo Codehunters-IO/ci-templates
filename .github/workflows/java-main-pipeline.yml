@@ -157,6 +157,19 @@ jobs:
       runner: ${{ inputs.runner }}
 
   # ============================================
+  # SECURITY
+  # ============================================
+  security:
+    name: Security Scan
+    if: inputs.run_trufflehog
+    uses: ./.github/workflows/security-trufflehog.yml
+    with:
+      runner: ${{ inputs.runner }}
+      only_verified: ${{ inputs.trufflehog_only_verified }}
+      fail_on_findings: ${{ inputs.trufflehog_fail_on_findings }}
+    secrets: inherit
+
+  # ============================================
   # BUILD
   # ============================================
   build:
