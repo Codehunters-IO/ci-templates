@@ -12,7 +12,7 @@ on:
         description: 'Node.js version'
         required: false
         type: string
-        default: '20'
+        default: '24'
       build_command:
         description: 'Build script name (yarn <command>)'
         required: false
