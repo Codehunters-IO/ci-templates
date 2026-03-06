@@ -13,6 +13,11 @@ on:
         required: false
         type: string
         default: '24'
+      package_manager:
+        description: 'Package manager (npm or yarn)'
+        required: false
+        type: string
+        default: 'yarn'
       run_coverage:
         description: 'Run tests with coverage'
         required: false
@@ -68,10 +73,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node_version }}
-          cache: 'yarn'
+          cache: ${{ inputs.package_manager }}
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: |
+          if [ "${{ inputs.package_manager }}" = "yarn" ]; then
+            yarn install --frozen-lockfile
+          else
+            npm ci
+          fi
 
       # ============================================
       # RUN TESTS
@@ -79,10 +89,18 @@ jobs:
       - name: Run tests
         id: test-run
         run: |
-          if [ "${{ inputs.run_coverage }}" = "true" ]; then
-            yarn ${{ inputs.test_command }} --coverage --ci 2>&1 | tee test-output.log || true
+          if [ "${{ inputs.package_manager }}" = "yarn" ]; then
+            if [ "${{ inputs.run_coverage }}" = "true" ]; then
+              yarn ${{ inputs.test_command }} --coverage --ci 2>&1 | tee test-output.log || true
+            else
+              yarn ${{ inputs.test_command }} --ci 2>&1 | tee test-output.log || true
+            fi
           else
-            yarn ${{ inputs.test_command }} --ci 2>&1 | tee test-output.log || true
+            if [ "${{ inputs.run_coverage }}" = "true" ]; then
+              npm run ${{ inputs.test_command }} -- --coverage --ci 2>&1 | tee test-output.log || true
+            else
+              npm run ${{ inputs.test_command }} -- --ci 2>&1 | tee test-output.log || true
+            fi
           fi
 
       - name: Parse test results

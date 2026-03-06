@@ -16,6 +16,11 @@ on:
         required: false
         type: string
         default: '24'
+      package_manager:
+        description: 'Package manager (npm or yarn)'
+        required: false
+        type: string
+        default: 'yarn'
 
       # Pipeline steps control
       run_build:
@@ -135,6 +140,7 @@ jobs:
     with:
       runner: ${{ inputs.runner }}
       node_version: ${{ inputs.node_version }}
+      package_manager: ${{ inputs.package_manager }}
       build_command: ${{ inputs.build_command }}
       build_output_dir: ${{ inputs.build_output_dir }}
       run_lint: ${{ inputs.run_lint }}
@@ -152,6 +158,7 @@ jobs:
     with:
       runner: ${{ inputs.runner }}
       node_version: ${{ inputs.node_version }}
+      package_manager: ${{ inputs.package_manager }}
       run_coverage: true
       coverage_threshold: ${{ inputs.coverage_threshold }}
       test_command: ${{ inputs.test_command }}
