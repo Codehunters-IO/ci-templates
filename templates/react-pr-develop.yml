@@ -2,7 +2,11 @@
 # Copy to: .github/workflows/pr-develop.yml
 #
 # Triggers on pull requests targeting develop branch
-# Runs: commit-lint + build + test
+# Runs: commit-lint + build + test + sonar + quality gate
+#
+# Required secrets for SonarQube (optional):
+#   - SONAR_URL: SonarQube server URL
+#   - SONAR_TOKEN: SonarQube authentication token
 #
 # Customize:
 #   - coverage_threshold: Set minimum coverage (e.g., 80)
@@ -22,5 +26,6 @@ jobs:
       run_commit_lint: true
       run_build: true
       run_test: true
+      code_analysis: 'sonar'
       coverage_threshold: 0
     secrets: inherit

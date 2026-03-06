@@ -33,6 +33,16 @@ on:
         required: false
         type: boolean
         default: false
+      code_analysis:
+        description: 'Code analysis tool: none, sonar, qodana (requires run_test: true)'
+        required: false
+        type: string
+        default: 'none'
+      skip_quality_gate:
+        description: 'Skip Quality Gate check (Sonar/Qodana)'
+        required: false
+        type: boolean
+        default: false
       run_deploy:
         description: 'Deploy to S3'
         required: false
@@ -162,6 +172,8 @@ jobs:
       run_coverage: true
       coverage_threshold: ${{ inputs.coverage_threshold }}
       test_command: ${{ inputs.test_command }}
+      code_analysis: ${{ inputs.code_analysis }}
+      skip_quality_gate: ${{ inputs.skip_quality_gate }}
     secrets: inherit
 
   # ============================================

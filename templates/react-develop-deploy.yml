@@ -13,6 +13,8 @@
 #
 #   Optional:
 #   - AWS_CLOUDFRONT_DISTRIBUTION_ID: CloudFront distribution for cache invalidation
+#   - SONAR_URL: SonarQube server URL
+#   - SONAR_TOKEN: SonarQube authentication token
 
 name: Deploy to Develop
 
@@ -34,6 +36,7 @@ jobs:
     with:
       run_build: true
       run_test: true
+      code_analysis: 'sonar'
       run_deploy: true
       run_cleanup: true
       run_release: true

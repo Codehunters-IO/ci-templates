@@ -43,6 +43,11 @@ on:
         required: false
         type: boolean
         default: false
+      skip_quality_gate:
+        description: 'Skip Quality Gate check (Sonar/Qodana)'
+        required: false
+        type: boolean
+        default: false
       run_artifact:
         description: 'Build and push Docker image'
         required: false
@@ -197,6 +202,7 @@ jobs:
       run_coverage: true
       coverage_threshold: ${{ inputs.coverage_threshold }}
       code_analysis: ${{ inputs.code_analysis }}
+      skip_quality_gate: ${{ inputs.skip_quality_gate }}
       run_owasp: ${{ inputs.run_owasp }}
     secrets: inherit
 

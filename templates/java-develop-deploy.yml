@@ -42,7 +42,7 @@ jobs:
     with:
       run_build: true
       run_test: true
-      run_sonar: true
+      code_analysis: 'sonar'
       run_owasp: true
       run_artifact: true
       run_deploy: true
