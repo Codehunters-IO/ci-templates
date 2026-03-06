@@ -14,7 +14,7 @@ on:
 
 jobs:
   build:
-    uses: <org>/ci-templates/.github/workflows/main-pipeline-backend.yml@main
+    uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@main
     with:
       run_build: true
     secrets: inherit

@@ -17,7 +17,7 @@ on:
 
 jobs:
   validate:
-    uses: <org>/ci-templates/.github/workflows/main-pipeline-backend.yml@main
+    uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@main
     with:
       run_commit_lint: true
       run_build: true

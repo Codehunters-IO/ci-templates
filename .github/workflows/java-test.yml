@@ -322,8 +322,7 @@ jobs:
       - name: Run SonarQube analysis
         if: inputs.code_analysis == 'sonar' && env.SONAR_TOKEN != ''
         run: |
-          ./gradlew sonarqube \
-            -Dsonar.host.url="${{ env.SONAR_URL }}" \
+          ./gradlew sonar \
             -Dsonar.login="${{ env.SONAR_TOKEN }}" \
             --no-daemon --build-cache
 
