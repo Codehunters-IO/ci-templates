@@ -15,7 +15,7 @@ on:
         description: 'Node.js version'
         required: false
         type: string
-        default: '20'
+        default: '24'
 
       # Pipeline steps control
       run_build:
