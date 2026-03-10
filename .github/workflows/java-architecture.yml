@@ -1,0 +1,148 @@
+name: Java - Architecture Validation
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      java_version:
+        description: 'Java version'
+        required: false
+        type: string
+        default: '21'
+      java_distribution:
+        description: 'Java distribution'
+        required: false
+        type: string
+        default: 'temurin'
+      run_arch_test:
+        description: 'Run ArchUnit architecture tests'
+        required: false
+        type: boolean
+        default: true
+      run_structurizr:
+        description: 'Run Structurizr C4 diagram export'
+        required: false
+        type: boolean
+        default: true
+      run_class_diagrams:
+        description: 'Run PlantUML class/package diagram generation'
+        required: false
+        type: boolean
+        default: true
+      upload_diagrams:
+        description: 'Upload architecture diagrams as artifact'
+        required: false
+        type: boolean
+        default: true
+      artifact_retention_days:
+        description: 'Days to retain architecture artifacts'
+        required: false
+        type: number
+        default: 30
+
+    outputs:
+      arch_test_result:
+        description: 'Architecture test result (success/failure)'
+        value: ${{ jobs.architecture.outputs.arch_test_result }}
+      diagrams_artifact_name:
+        description: 'Name of uploaded diagrams artifact'
+        value: ${{ jobs.architecture.outputs.diagrams_artifact }}
+
+jobs:
+  architecture:
+    name: Architecture Validation
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 15
+
+    outputs:
+      arch_test_result: ${{ steps.arch-test.outcome }}
+      diagrams_artifact: ${{ steps.diagrams-info.outputs.name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup JDK ${{ inputs.java_version }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: ${{ inputs.java_distribution }}
+          java-version: ${{ inputs.java_version }}
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # ============================================
+      # ARCHUNIT ARCHITECTURE TESTS
+      # ============================================
+      - name: Run architecture tests
+        id: arch-test
+        if: inputs.run_arch_test
+        run: |
+          echo "Running ArchUnit architecture validation..."
+          ./gradlew archTest --no-daemon --build-cache --parallel
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Architecture Tests" >> $GITHUB_STEP_SUMMARY
+          echo "ArchUnit validation passed." >> $GITHUB_STEP_SUMMARY
+
+      # ============================================
+      # STRUCTURIZR C4 DIAGRAMS
+      # ============================================
+      - name: Export Structurizr C4 diagrams
+        id: structurizr
+        if: inputs.run_structurizr
+        run: |
+          if ./gradlew tasks --all --no-daemon 2>/dev/null | grep -q "structurizrExport"; then
+            echo "Running Structurizr C4 export..."
+            ./gradlew structurizrExport --no-daemon --build-cache
+
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Structurizr C4 Diagrams" >> $GITHUB_STEP_SUMMARY
+            echo "C4 diagrams exported to PlantUML and Mermaid formats." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "structurizrExport task not found, skipping."
+          fi
+
+      # ============================================
+      # PLANTUML CLASS/PACKAGE DIAGRAMS
+      # ============================================
+      - name: Generate class and package diagrams
+        id: class-diagrams
+        if: inputs.run_class_diagrams
+        run: |
+          if ./gradlew tasks --all --no-daemon 2>/dev/null | grep -q "classDiagram"; then
+            echo "Generating PlantUML class and package diagrams..."
+            ./gradlew classDiagram packageDiagram --no-daemon --build-cache || true
+
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Class & Package Diagrams" >> $GITHUB_STEP_SUMMARY
+            echo "PlantUML diagrams generated." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "classDiagram task not found, skipping."
+          fi
+
+      # ============================================
+      # UPLOAD ARCHITECTURE ARTIFACTS
+      # ============================================
+      - name: Get diagrams artifact info
+        id: diagrams-info
+        if: inputs.upload_diagrams
+        run: |
+          echo "name=architecture-diagrams-${{ github.run_id }}" >> $GITHUB_OUTPUT
+
+      - name: Upload architecture diagrams
+        if: inputs.upload_diagrams && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.diagrams-info.outputs.name }}
+          path: |
+            architecture/structurizr/export/
+            architecture/diagrams/
+          if-no-files-found: warn
+          retention-days: ${{ inputs.artifact_retention_days }}

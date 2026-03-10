@@ -120,6 +120,28 @@ on:
         type: string
         default: ''
 
+      # Architecture options
+      run_architecture:
+        description: 'Run architecture validation (ArchUnit + diagrams)'
+        required: false
+        type: boolean
+        default: false
+      run_arch_test:
+        description: 'Run ArchUnit architecture tests (requires run_architecture: true)'
+        required: false
+        type: boolean
+        default: true
+      run_structurizr:
+        description: 'Run Structurizr C4 diagram export (requires run_architecture: true)'
+        required: false
+        type: boolean
+        default: true
+      run_class_diagrams:
+        description: 'Run PlantUML class/package diagrams (requires run_architecture: true)'
+        required: false
+        type: boolean
+        default: true
+
       # Release options
       release_target_branch:
         description: 'Target branch for release PR'
@@ -149,6 +171,12 @@ on:
       release_pr_url:
         description: 'Release PR URL'
         value: ${{ jobs.release.outputs.pr_url }}
+      arch_test_result:
+        description: 'Architecture test result'
+        value: ${{ jobs.architecture.outputs.arch_test_result }}
+      diagrams_artifact:
+        description: 'Architecture diagrams artifact name'
+        value: ${{ jobs.architecture.outputs.diagrams_artifact }}
 
 jobs:
   # ============================================
@@ -207,6 +235,23 @@ jobs:
     secrets: inherit
 
   # ============================================
+  # ARCHITECTURE VALIDATION (parallel with test)
+  # ============================================
+  architecture:
+    name: Architecture
+    if: inputs.run_architecture
+    needs: build
+    uses: ./.github/workflows/java-architecture.yml
+    with:
+      runner: ${{ inputs.runner }}
+      java_version: ${{ inputs.java_version }}
+      java_distribution: ${{ inputs.java_distribution }}
+      run_arch_test: ${{ inputs.run_arch_test }}
+      run_structurizr: ${{ inputs.run_structurizr }}
+      run_class_diagrams: ${{ inputs.run_class_diagrams }}
+    secrets: inherit
+
+  # ============================================
   # ARTIFACT - Build Docker & Push to ECR
   # ============================================
   artifact-ecr:
@@ -216,8 +261,9 @@ jobs:
       inputs.artifact_registry == 'ecr' &&
       always() &&
       needs.build.result == 'success' &&
-      (needs.test.result == 'success' || needs.test.result == 'skipped')
-    needs: [build, test]
+      (needs.test.result == 'success' || needs.test.result == 'skipped') &&
+      (needs.architecture.result == 'success' || needs.architecture.result == 'skipped')
+    needs: [build, test, architecture]
     uses: ./.github/workflows/java-artifact-docker-ecr.yml
     with:
       runner: ${{ inputs.runner }}
@@ -239,8 +285,9 @@ jobs:
       inputs.artifact_registry == 'github' &&
       always() &&
       needs.build.result == 'success' &&
-      (needs.test.result == 'success' || needs.test.result == 'skipped')
-    needs: [build, test]
+      (needs.test.result == 'success' || needs.test.result == 'skipped') &&
+      (needs.architecture.result == 'success' || needs.architecture.result == 'skipped')
+    needs: [build, test, architecture]
     uses: ./.github/workflows/java-artifact-docker-github.yml
     with:
       runner: ${{ inputs.runner }}
