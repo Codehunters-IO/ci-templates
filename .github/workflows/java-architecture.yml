@@ -123,8 +123,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.diagrams-info.outputs.name }}
-          path: |
-            architecture/structurizr/export/
-            architecture/diagrams/
+          path: architecture/
           if-no-files-found: warn
           retention-days: ${{ inputs.artifact_retention_days }}
