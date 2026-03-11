@@ -122,25 +122,10 @@ on:
 
       # Architecture options
       run_architecture:
-        description: 'Run architecture validation (ArchUnit + diagrams)'
+        description: 'Run architecture validation (ArchUnit tests + Structurizr C4 + class/package diagrams)'
         required: false
         type: boolean
         default: false
-      run_arch_test:
-        description: 'Run ArchUnit architecture tests (requires run_architecture: true)'
-        required: false
-        type: boolean
-        default: true
-      run_structurizr:
-        description: 'Run Structurizr C4 diagram export (requires run_architecture: true)'
-        required: false
-        type: boolean
-        default: true
-      run_class_diagrams:
-        description: 'Run PlantUML class/package diagrams (requires run_architecture: true)'
-        required: false
-        type: boolean
-        default: true
 
       # Release options
       release_target_branch:
@@ -246,9 +231,6 @@ jobs:
       runner: ${{ inputs.runner }}
       java_version: ${{ inputs.java_version }}
       java_distribution: ${{ inputs.java_distribution }}
-      run_arch_test: ${{ inputs.run_arch_test }}
-      run_structurizr: ${{ inputs.run_structurizr }}
-      run_class_diagrams: ${{ inputs.run_class_diagrams }}
     secrets: inherit
 
   # ============================================

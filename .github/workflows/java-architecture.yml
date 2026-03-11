@@ -18,21 +18,6 @@ on:
         required: false
         type: string
         default: 'temurin'
-      run_arch_test:
-        description: 'Run ArchUnit architecture tests'
-        required: false
-        type: boolean
-        default: true
-      run_structurizr:
-        description: 'Run Structurizr C4 diagram export'
-        required: false
-        type: boolean
-        default: true
-      run_class_diagrams:
-        description: 'Run PlantUML class/package diagram generation'
-        required: false
-        type: boolean
-        default: true
       upload_diagrams:
         description: 'Upload architecture diagrams as artifact'
         required: false
@@ -82,7 +67,6 @@ jobs:
       # ============================================
       - name: Run architecture tests
         id: arch-test
-        if: inputs.run_arch_test
         run: |
           echo "Running ArchUnit architecture validation..."
           ./gradlew archTest --no-daemon --build-cache --parallel
@@ -96,7 +80,6 @@ jobs:
       # ============================================
       - name: Export Structurizr C4 diagrams
         id: structurizr
-        if: inputs.run_structurizr
         run: |
           if ./gradlew tasks --all --no-daemon 2>/dev/null | grep -q "structurizrExport"; then
             echo "Running Structurizr C4 export..."
@@ -114,7 +97,6 @@ jobs:
       # ============================================
       - name: Generate class and package diagrams
         id: class-diagrams
-        if: inputs.run_class_diagrams
         run: |
           if ./gradlew tasks --all --no-daemon 2>/dev/null | grep -q "classDiagram"; then
             echo "Generating PlantUML class and package diagrams..."
