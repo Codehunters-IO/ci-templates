@@ -69,7 +69,7 @@ jobs:
         id: arch-test
         run: |
           echo "Running ArchUnit architecture validation..."
-          ./gradlew test --tests "*.HexagonalArchitectureTest" --no-daemon --build-cache --parallel
+          ./gradlew test --no-daemon --build-cache --parallel
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Architecture Tests" >> $GITHUB_STEP_SUMMARY
