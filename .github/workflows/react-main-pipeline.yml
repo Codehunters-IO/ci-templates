@@ -44,10 +44,15 @@ on:
         type: boolean
         default: false
       run_deploy:
-        description: 'Deploy to S3'
+        description: 'Run deployment'
         required: false
         type: boolean
         default: false
+      deploy_target:
+        description: 'Deploy target: s3 or amplify'
+        required: false
+        type: string
+        default: 's3'
       run_cleanup:
         description: 'Delete merged branch after deploy'
         required: false
@@ -177,17 +182,17 @@ jobs:
     secrets: inherit
 
   # ============================================
-  # DEPLOY - Upload to S3 + CloudFront Invalidation
+  # DEPLOY - S3 or Amplify
   # ============================================
   deploy:
-    name: Deploy S3
+    name: Deploy (${{ inputs.deploy_target }})
     if: |
       inputs.run_deploy &&
       always() &&
       needs.build.result == 'success' &&
       (needs.test.result == 'success' || needs.test.result == 'skipped')
     needs: [build, test]
-    uses: ./.github/workflows/react-deploy-s3.yml
+    uses: ./.github/workflows/react-deploy-${{ inputs.deploy_target }}.yml
     with:
       runner: ${{ inputs.runner }}
       environment: ${{ inputs.environment }}

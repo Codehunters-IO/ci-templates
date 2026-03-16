@@ -4,7 +4,13 @@
 # Triggers on push to main branch (after release merge)
 # Runs: build + deploy (PRODUCTION environment)
 #
-# Required secrets: Same as develop-deploy.yml
+# For S3 deployment:
+#   Required secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, AWS_S3_BUCKET
+#   Optional secrets: AWS_CLOUDFRONT_DISTRIBUTION_ID
+#
+# For Amplify deployment:
+#   Required secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, AWS_AMPLIFY_APP_ID, AWS_AMPLIFY_BRANCH
+#
 # Note: Tests should have passed in release branch, only build and deploy here
 
 name: Deploy to PRODUCTION
@@ -26,5 +32,6 @@ jobs:
       run_build: true
       run_test: false
       run_deploy: true
+      deploy_target: 'amplify'
       environment: 'production'
     secrets: inherit

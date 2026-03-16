@@ -1,0 +1,133 @@
+name: React - Deploy to Amplify
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      environment:
+        description: 'GitHub environment (develop, staging, production)'
+        required: false
+        type: string
+        default: 'develop'
+      build_output_dir:
+        description: 'Build output directory name (must match build artifact)'
+        required: false
+        type: string
+        default: 'build'
+
+    secrets:
+      AWS_ACCESS_KEY_ID:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
+      AWS_REGION:
+        required: true
+      AWS_AMPLIFY_APP_ID:
+        required: true
+      AWS_AMPLIFY_BRANCH:
+        required: true
+
+    outputs:
+      deploy_status:
+        description: 'Deployment status'
+        value: ${{ jobs.deploy.outputs.status }}
+
+jobs:
+  deploy:
+    name: Deploy to Amplify
+    runs-on: ${{ inputs.runner }}
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 15
+
+    outputs:
+      status: ${{ steps.deploy.outputs.status }}
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-output-${{ github.run_id }}
+          path: ${{ inputs.build_output_dir }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Deploy to Amplify
+        id: deploy
+        env:
+          AMPLIFY_APP_ID: ${{ secrets.AWS_AMPLIFY_APP_ID }}
+          AMPLIFY_BRANCH: ${{ secrets.AWS_AMPLIFY_BRANCH }}
+        run: |
+          echo "Deploying to Amplify app: $AMPLIFY_APP_ID (branch: $AMPLIFY_BRANCH)"
+
+          # Create zip of build output
+          cd ${{ inputs.build_output_dir }}
+          zip -r ../build-output.zip .
+          cd ..
+
+          # Create deployment
+          DEPLOYMENT=$(aws amplify create-deployment \
+            --app-id "$AMPLIFY_APP_ID" \
+            --branch-name "$AMPLIFY_BRANCH" \
+            --output json)
+
+          JOB_ID=$(echo "$DEPLOYMENT" | jq -r '.jobId')
+          UPLOAD_URL=$(echo "$DEPLOYMENT" | jq -r '.zipUploadUrl')
+
+          echo "Upload URL received, uploading build artifacts..."
+
+          # Upload build artifacts
+          curl --request PUT \
+            --upload-file build-output.zip \
+            "$UPLOAD_URL"
+
+          # Start deployment
+          aws amplify start-deployment \
+            --app-id "$AMPLIFY_APP_ID" \
+            --branch-name "$AMPLIFY_BRANCH" \
+            --job-id "$JOB_ID"
+
+          echo "Deployment started with job ID: $JOB_ID"
+
+          # Wait for deployment to complete
+          echo "Waiting for deployment to complete..."
+          aws amplify wait job-completed \
+            --app-id "$AMPLIFY_APP_ID" \
+            --branch-name "$AMPLIFY_BRANCH" \
+            --job-id "$JOB_ID" || true
+
+          # Check deployment status
+          JOB_STATUS=$(aws amplify get-job \
+            --app-id "$AMPLIFY_APP_ID" \
+            --branch-name "$AMPLIFY_BRANCH" \
+            --job-id "$JOB_ID" \
+            --query 'job.summary.status' \
+            --output text)
+
+          if [ "$JOB_STATUS" = "SUCCEED" ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "Deployment failed with status: $JOB_STATUS"
+            echo "status=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          # Summary
+          echo "### Amplify Deployment Completed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **App ID** | $AMPLIFY_APP_ID |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Branch** | $AMPLIFY_BRANCH |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Environment** | ${{ inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Job ID** | $JOB_ID |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Status** | $JOB_STATUS |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Source** | ${{ inputs.build_output_dir }} |" >> $GITHUB_STEP_SUMMARY
