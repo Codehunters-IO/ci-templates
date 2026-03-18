@@ -1,0 +1,100 @@
+name: Java - Publish Dependency to GitHub Packages
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      java_version:
+        description: 'Java version'
+        required: false
+        type: string
+        default: '21'
+      java_distribution:
+        description: 'Java distribution'
+        required: false
+        type: string
+        default: 'temurin'
+      publish_task:
+        description: 'Gradle task to publish (e.g., publish, publishToGitHubPackages)'
+        required: false
+        type: string
+        default: 'publish'
+
+    outputs:
+      version:
+        description: 'Published artifact version'
+        value: ${{ jobs.publish.outputs.version }}
+      group:
+        description: 'Published artifact group'
+        value: ${{ jobs.publish.outputs.group }}
+      artifact_name:
+        description: 'Published artifact name'
+        value: ${{ jobs.publish.outputs.artifact_name }}
+
+jobs:
+  publish:
+    name: Publish to GitHub Packages
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 15
+
+    outputs:
+      version: ${{ steps.info.outputs.version }}
+      group: ${{ steps.info.outputs.group }}
+      artifact_name: ${{ steps.info.outputs.artifact_name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK ${{ inputs.java_version }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: ${{ inputs.java_distribution }}
+          java-version: ${{ inputs.java_version }}
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Get artifact info
+        id: info
+        run: |
+          VERSION=$(./gradlew properties --no-daemon -q | grep "^version:" | awk '{print $2}')
+          GROUP=$(./gradlew properties --no-daemon -q | grep "^group:" | awk '{print $2}')
+          NAME=$(./gradlew properties --no-daemon -q | grep "^name:" | awk '{print $2}')
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "group=$GROUP" >> $GITHUB_OUTPUT
+          echo "artifact_name=$NAME" >> $GITHUB_OUTPUT
+
+          echo "Artifact: ${GROUP}:${NAME}:${VERSION}"
+
+      - name: Build
+        run: ./gradlew clean build -x test --no-daemon --build-cache --parallel
+
+      - name: Publish to GitHub Packages
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./gradlew ${{ inputs.publish_task }} --no-daemon --build-cache
+
+      - name: Summary
+        env:
+          VERSION: ${{ steps.info.outputs.version }}
+          GROUP: ${{ steps.info.outputs.group }}
+          ARTIFACT_NAME: ${{ steps.info.outputs.artifact_name }}
+        run: |
+          echo "### Java Dependency Published to GitHub Packages" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Group** | $GROUP |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Artifact** | $ARTIFACT_NAME |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Version** | $VERSION |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Usage (Gradle):**" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`gradle" >> $GITHUB_STEP_SUMMARY
+          echo "implementation '${GROUP}:${ARTIFACT_NAME}:${VERSION}'" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

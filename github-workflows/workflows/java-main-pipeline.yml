@@ -1,0 +1,335 @@
+name: Java - Main Pipeline
+
+on:
+  workflow_call:
+    inputs:
+      # Runner configuration
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+
+      # Java configuration
+      java_version:
+        description: 'Java version'
+        required: false
+        type: string
+        default: '21'
+      java_distribution:
+        description: 'Java distribution'
+        required: false
+        type: string
+        default: 'temurin'
+
+      # Pipeline steps control
+      run_build:
+        description: 'Run build job'
+        required: false
+        type: boolean
+        default: true
+      run_test:
+        description: 'Run test job (includes coverage)'
+        required: false
+        type: boolean
+        default: false
+      code_analysis:
+        description: 'Code analysis tool: none, sonar, qodana (requires run_test: true)'
+        required: false
+        type: string
+        default: 'none'
+      run_owasp:
+        description: 'Run OWASP Dependency Check (requires run_test: true)'
+        required: false
+        type: boolean
+        default: false
+      skip_quality_gate:
+        description: 'Skip Quality Gate check (Sonar/Qodana)'
+        required: false
+        type: boolean
+        default: false
+      run_artifact:
+        description: 'Build and push Docker image'
+        required: false
+        type: boolean
+        default: false
+      artifact_registry:
+        description: 'Container registry to use (ecr, github)'
+        required: false
+        type: string
+        default: 'ecr'
+      run_deploy:
+        description: 'Deploy to EC2'
+        required: false
+        type: boolean
+        default: false
+      run_cleanup:
+        description: 'Delete merged branch after deploy'
+        required: false
+        type: boolean
+        default: false
+      run_release:
+        description: 'Create release PR after deploy'
+        required: false
+        type: boolean
+        default: false
+      run_commit_lint:
+        description: 'Run commit message validation'
+        required: false
+        type: boolean
+        default: false
+
+      # Test options
+      coverage_threshold:
+        description: 'Minimum coverage percentage (0-100)'
+        required: false
+        type: number
+        default: 0
+
+      # Artifact & Deploy options
+      image_tag:
+        description: 'Docker image tag (empty = commit SHA)'
+        required: false
+        type: string
+        default: ''
+      docker_platform:
+        description: 'Docker platform (linux/amd64, linux/arm64)'
+        required: false
+        type: string
+        default: 'linux/arm64'
+
+      # Deploy options
+      environment:
+        description: 'GitHub environment (develop, prod)'
+        required: false
+        type: string
+        default: 'develop'
+      memory_limit:
+        description: 'Container memory limit (e.g., 512m, 1g)'
+        required: false
+        type: string
+        default: '512m'
+      memory_reservation:
+        description: 'Container memory reservation (e.g., 256m, 512m)'
+        required: false
+        type: string
+        default: '256m'
+      spring_profiles:
+        description: 'Additional Spring profiles (e.g., awsparamstore). Environment is always included.'
+        required: false
+        type: string
+        default: ''
+
+      # Architecture options
+      run_architecture:
+        description: 'Run architecture validation (ArchUnit tests + Structurizr C4 + class/package diagrams)'
+        required: false
+        type: boolean
+        default: false
+
+      # Release options
+      release_target_branch:
+        description: 'Target branch for release PR'
+        required: false
+        type: string
+        default: 'main'
+
+    outputs:
+      image_tag:
+        description: 'Docker image tag pushed'
+        value: ${{ jobs.artifact-ecr.outputs.image_tag || jobs.artifact-github.outputs.image_tag }}
+      image_uri:
+        description: 'Full Docker image URI'
+        value: ${{ jobs.artifact-ecr.outputs.image_uri || jobs.artifact-github.outputs.image_uri }}
+      coverage:
+        description: 'Code coverage percentage'
+        value: ${{ jobs.test.outputs.coverage_percentage }}
+      quality_gate:
+        description: 'SonarQube Quality Gate status'
+        value: ${{ jobs.test.outputs.quality_gate_status }}
+      deleted_branch:
+        description: 'Name of deleted branch'
+        value: ${{ jobs.cleanup.outputs.deleted_branch }}
+      release_version:
+        description: 'Release version created'
+        value: ${{ jobs.release.outputs.version }}
+      release_pr_url:
+        description: 'Release PR URL'
+        value: ${{ jobs.release.outputs.pr_url }}
+      arch_test_result:
+        description: 'Architecture test result'
+        value: ${{ jobs.architecture.outputs.arch_test_result }}
+      diagrams_artifact:
+        description: 'Architecture diagrams artifact name'
+        value: ${{ jobs.architecture.outputs.diagrams_artifact }}
+
+jobs:
+  # ============================================
+  # COMMIT LINT
+  # ============================================
+  commit-lint:
+    name: Commit Lint
+    if: inputs.run_commit_lint
+    uses: ./.github/workflows/java-commit-lint.yml
+    with:
+      runner: ${{ inputs.runner }}
+
+  # ============================================
+  # SECURITY
+  # ============================================
+  security:
+    name: Security Scan
+    if: inputs.run_trufflehog
+    uses: ./.github/workflows/security-trufflehog.yml
+    with:
+      runner: ${{ inputs.runner }}
+      only_verified: ${{ inputs.trufflehog_only_verified }}
+      fail_on_findings: ${{ inputs.trufflehog_fail_on_findings }}
+    secrets: inherit
+
+  # ============================================
+  # BUILD
+  # ============================================
+  build:
+    name: Build
+    if: inputs.run_build
+    uses: ./.github/workflows/java-build.yml
+    with:
+      runner: ${{ inputs.runner }}
+      java_version: ${{ inputs.java_version }}
+      java_distribution: ${{ inputs.java_distribution }}
+    secrets: inherit
+
+  # ============================================
+  # TEST & QUALITY (Tests + Coverage + Sonar)
+  # ============================================
+  test:
+    name: Test & Quality
+    if: inputs.run_test
+    needs: build
+    uses: ./.github/workflows/java-test.yml
+    with:
+      runner: ${{ inputs.runner }}
+      java_version: ${{ inputs.java_version }}
+      java_distribution: ${{ inputs.java_distribution }}
+      run_coverage: true
+      coverage_threshold: ${{ inputs.coverage_threshold }}
+      code_analysis: ${{ inputs.code_analysis }}
+      skip_quality_gate: ${{ inputs.skip_quality_gate }}
+      run_owasp: ${{ inputs.run_owasp }}
+    secrets: inherit
+
+  # ============================================
+  # ARCHITECTURE VALIDATION (parallel with test)
+  # ============================================
+  architecture:
+    name: Architecture
+    if: inputs.run_architecture
+    needs: build
+    uses: ./.github/workflows/java-architecture.yml
+    with:
+      runner: ${{ inputs.runner }}
+      java_version: ${{ inputs.java_version }}
+      java_distribution: ${{ inputs.java_distribution }}
+    secrets: inherit
+
+  # ============================================
+  # ARTIFACT - Build Docker & Push to ECR
+  # ============================================
+  artifact-ecr:
+    name: Build & Push ECR
+    if: |
+      inputs.run_artifact &&
+      inputs.artifact_registry == 'ecr' &&
+      always() &&
+      needs.build.result == 'success' &&
+      (needs.test.result == 'success' || needs.test.result == 'skipped') &&
+      (needs.architecture.result == 'success' || needs.architecture.result == 'skipped')
+    needs: [build, test, architecture]
+    uses: ./.github/workflows/java-artifact-docker-ecr.yml
+    with:
+      runner: ${{ inputs.runner }}
+      java_version: ${{ inputs.java_version }}
+      java_distribution: ${{ inputs.java_distribution }}
+      image_tag: ${{ inputs.image_tag }}
+      docker_platform: ${{ inputs.docker_platform }}
+      artifact_name: ${{ needs.test.outputs.artifact_name }}
+      environment: ${{ inputs.environment }}
+    secrets: inherit
+
+  # ============================================
+  # ARTIFACT - Build Docker & Push to GitHub Registry
+  # ============================================
+  artifact-github:
+    name: Build & Push GitHub Registry
+    if: |
+      inputs.run_artifact &&
+      inputs.artifact_registry == 'github' &&
+      always() &&
+      needs.build.result == 'success' &&
+      (needs.test.result == 'success' || needs.test.result == 'skipped') &&
+      (needs.architecture.result == 'success' || needs.architecture.result == 'skipped')
+    needs: [build, test, architecture]
+    uses: ./.github/workflows/java-artifact-docker-github.yml
+    with:
+      runner: ${{ inputs.runner }}
+      java_version: ${{ inputs.java_version }}
+      java_distribution: ${{ inputs.java_distribution }}
+      image_tag: ${{ inputs.image_tag }}
+      docker_platform: ${{ inputs.docker_platform }}
+      artifact_name: ${{ needs.test.outputs.artifact_name }}
+      environment: ${{ inputs.environment }}
+    secrets: inherit
+
+  # ============================================
+  # DEPLOY - Deploy to EC2 via SSH
+  # ============================================
+  deploy:
+    name: Deploy EC2
+    if: |
+      inputs.run_deploy &&
+      always() &&
+      (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success')
+    needs: [artifact-ecr, artifact-github]
+    uses: ./.github/workflows/java-deploy-ec2.yml
+    with:
+      runner: ${{ inputs.runner }}
+      image_tag: ${{ needs.artifact-ecr.outputs.image_tag || needs.artifact-github.outputs.image_tag }}
+      docker_platform: ${{ inputs.docker_platform }}
+      environment: ${{ inputs.environment }}
+      memory_limit: ${{ inputs.memory_limit }}
+      memory_reservation: ${{ inputs.memory_reservation }}
+      spring_profiles: ${{ inputs.spring_profiles }}
+    secrets: inherit
+
+  # ============================================
+  # CLEANUP - Delete merged branch
+  # ============================================
+  cleanup:
+    name: Delete Branch
+    if: |
+      inputs.run_cleanup &&
+      always() &&
+      (needs.deploy.result == 'success' || (needs.deploy.result == 'skipped' &&
+        (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success')))
+    needs: [deploy]
+    uses: ./.github/workflows/java-delete-branch.yml
+    secrets: inherit
+
+  # ============================================
+  # RELEASE - Create release PR
+  # ============================================
+  release:
+    name: Create Release
+    if: |
+      inputs.run_release &&
+      always() &&
+      (needs.deploy.result == 'success' || (needs.deploy.result == 'skipped' &&
+        (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success'))) &&
+      (needs.cleanup.result == 'success' || needs.cleanup.result == 'skipped')
+    needs: [deploy, cleanup]
+    uses: ./.github/workflows/java-release.yml
+    with:
+      base_branch: ${{ inputs.environment }}
+      target_branch: ${{ inputs.release_target_branch }}
+    secrets: inherit

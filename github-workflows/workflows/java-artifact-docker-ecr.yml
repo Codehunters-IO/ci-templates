@@ -1,0 +1,182 @@
+name: Java - Docker Artifact to ECR
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      java_version:
+        description: 'Java version'
+        required: false
+        type: string
+        default: '21'
+      java_distribution:
+        description: 'Java distribution'
+        required: false
+        type: string
+        default: 'temurin'
+      image_tag:
+        description: 'Docker image tag. If empty, uses short commit SHA (7 chars)'
+        required: false
+        type: string
+        default: ''
+      push_latest:
+        description: 'Also push :latest tag'
+        required: false
+        type: boolean
+        default: false
+      dockerfile_path:
+        description: 'Path to Dockerfile'
+        required: false
+        type: string
+        default: '.'
+      docker_platform:
+        description: 'Docker platform (linux/amd64, linux/arm64)'
+        required: false
+        type: string
+        default: 'linux/arm64'
+      artifact_name:
+        description: 'Name of pre-built JAR artifact to download. If empty, builds from source.'
+        required: false
+        type: string
+        default: ''
+      jar_path:
+        description: 'Path where JAR files are expected by the Dockerfile'
+        required: false
+        type: string
+        default: 'bootstrap/build/libs'
+      environment:
+        description: 'GitHub environment (develop, prod)'
+        required: false
+        type: string
+        default: 'develop'
+
+    secrets:
+      AWS_ACCESS_KEY_ID:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
+      AWS_REGION:
+        required: true
+
+    outputs:
+      image_tag:
+        description: 'Docker image tag pushed'
+        value: ${{ jobs.artifact.outputs.image_tag }}
+      image_uri:
+        description: 'Full Docker image URI'
+        value: ${{ jobs.artifact.outputs.image_uri }}
+      commit_sha:
+        description: 'Short commit SHA used'
+        value: ${{ jobs.artifact.outputs.commit_sha }}
+
+jobs:
+  artifact:
+    name: Build and Push to ECR
+    runs-on: ${{ inputs.runner }}
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 20
+
+    outputs:
+      image_tag: ${{ steps.set-tag.outputs.tag }}
+      image_uri: ${{ steps.push-ecr.outputs.image_uri }}
+      commit_sha: ${{ steps.set-tag.outputs.commit_sha }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine image tag
+        id: set-tag
+        run: |
+          COMMIT_SHA="${{ github.sha }}"
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+
+          if [ -n "${{ inputs.image_tag }}" ]; then
+            TAG="${{ inputs.image_tag }}"
+          else
+            TAG="$SHORT_SHA"
+          fi
+
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "commit_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "Using image tag: $TAG"
+
+      # Download pre-built JAR if artifact_name is provided
+      - name: Download build artifact
+        if: inputs.artifact_name != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: ${{ inputs.jar_path }}
+
+      # Build from source if no artifact provided
+      - name: Setup JDK ${{ inputs.java_version }}
+        if: inputs.artifact_name == ''
+        uses: actions/setup-java@v4
+        with:
+          distribution: ${{ inputs.java_distribution }}
+          java-version: ${{ inputs.java_version }}
+
+      - name: Setup Gradle
+        if: inputs.artifact_name == ''
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build JAR
+        if: inputs.artifact_name == ''
+        run: ./gradlew clean build -x test --no-daemon --build-cache --parallel
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push to ECR
+        id: push-ecr
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ github.event.repository.name }}
+          IMAGE_TAG: ${{ steps.set-tag.outputs.tag }}
+        run: |
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+          TAGS="-t $IMAGE_URI"
+          if [ "${{ inputs.push_latest }}" = "true" ]; then
+            TAGS="$TAGS -t $ECR_REGISTRY/$ECR_REPOSITORY:latest"
+          fi
+
+          echo "Building and pushing Docker image: $IMAGE_URI"
+          echo "Platform: ${{ inputs.docker_platform }}"
+          docker buildx build \
+            --platform ${{ inputs.docker_platform }} \
+            --no-cache \
+            $TAGS \
+            --push \
+            ${{ inputs.dockerfile_path }}
+
+          echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
+
+          echo "### Docker Image Pushed to ECR" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Registry** | $ECR_REGISTRY |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Repository** | $ECR_REPOSITORY |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Tag** | $IMAGE_TAG |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Platform** | ${{ inputs.docker_platform }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Full URI** | $IMAGE_URI |" >> $GITHUB_STEP_SUMMARY

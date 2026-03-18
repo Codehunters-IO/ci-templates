@@ -1,0 +1,226 @@
+name: KrakenD - Main Pipeline
+
+on:
+  workflow_call:
+    inputs:
+      # Runner configuration
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+
+      # KrakenD configuration
+      dockerfile_path:
+        description: 'Path to Dockerfile'
+        required: false
+        type: string
+        default: '.'
+      # Pipeline steps control
+      run_build:
+        description: 'Run build job (config validation)'
+        required: false
+        type: boolean
+        default: true
+      run_test:
+        description: 'Run test job (config audit)'
+        required: false
+        type: boolean
+        default: false
+      run_artifact:
+        description: 'Build and push Docker image to ECR'
+        required: false
+        type: boolean
+        default: false
+      run_deploy:
+        description: 'Deploy to EC2'
+        required: false
+        type: boolean
+        default: false
+      run_cleanup:
+        description: 'Delete merged branch after deploy'
+        required: false
+        type: boolean
+        default: false
+      run_release:
+        description: 'Create release PR after deploy'
+        required: false
+        type: boolean
+        default: false
+      run_commit_lint:
+        description: 'Run commit message validation'
+        required: false
+        type: boolean
+        default: false
+
+      # Test options
+      audit_threshold:
+        description: 'Minimum audit score (0-100)'
+        required: false
+        type: number
+        default: 0
+
+      # Artifact & Deploy options
+      image_tag:
+        description: 'Docker image tag (empty = commit SHA)'
+        required: false
+        type: string
+        default: ''
+      docker_platform:
+        description: 'Docker platform (linux/amd64, linux/arm64)'
+        required: false
+        type: string
+        default: 'linux/arm64'
+
+      # Deploy options
+      environment:
+        description: 'GitHub environment (develop, prod)'
+        required: false
+        type: string
+        default: 'develop'
+      memory_limit:
+        description: 'Container memory limit (e.g., 512m, 1g)'
+        required: false
+        type: string
+        default: '512m'
+      memory_reservation:
+        description: 'Container memory reservation (e.g., 256m, 512m)'
+        required: false
+        type: string
+        default: '256m'
+
+      # Release options
+      release_target_branch:
+        description: 'Target branch for release PR'
+        required: false
+        type: string
+        default: 'main'
+
+    outputs:
+      image_tag:
+        description: 'Docker image tag pushed'
+        value: ${{ jobs.artifact.outputs.image_tag }}
+      image_uri:
+        description: 'Full Docker image URI'
+        value: ${{ jobs.artifact.outputs.image_uri }}
+      audit_score:
+        description: 'KrakenD audit score'
+        value: ${{ jobs.test.outputs.audit_score }}
+      deploy_status:
+        description: 'Deployment status'
+        value: ${{ jobs.deploy.outputs.deploy_status }}
+      deleted_branch:
+        description: 'Name of deleted branch'
+        value: ${{ jobs.cleanup.outputs.deleted_branch }}
+      release_version:
+        description: 'Release version created'
+        value: ${{ jobs.release.outputs.version }}
+      release_pr_url:
+        description: 'Release PR URL'
+        value: ${{ jobs.release.outputs.pr_url }}
+
+jobs:
+  # ============================================
+  # COMMIT LINT
+  # ============================================
+  commit-lint:
+    name: Commit Lint
+    if: inputs.run_commit_lint
+    uses: ./.github/workflows/krakend-commit-lint.yml
+    with:
+      runner: ${{ inputs.runner }}
+
+  # ============================================
+  # BUILD (Config Validation)
+  # ============================================
+  build:
+    name: Build
+    if: inputs.run_build
+    uses: ./.github/workflows/krakend-build.yml
+    with:
+      runner: ${{ inputs.runner }}
+      dockerfile_path: ${{ inputs.dockerfile_path }}
+    secrets: inherit
+
+  # ============================================
+  # TEST (Config Audit)
+  # ============================================
+  test:
+    name: Test & Audit
+    if: inputs.run_test
+    needs: build
+    uses: ./.github/workflows/krakend-test.yml
+    with:
+      runner: ${{ inputs.runner }}
+      dockerfile_path: ${{ inputs.dockerfile_path }}
+      audit_threshold: ${{ inputs.audit_threshold }}
+    secrets: inherit
+
+  # ============================================
+  # ARTIFACT - Build Docker & Push to ECR
+  # ============================================
+  artifact:
+    name: Build & Push ECR
+    if: |
+      inputs.run_artifact &&
+      always() &&
+      needs.build.result == 'success' &&
+      (needs.test.result == 'success' || needs.test.result == 'skipped')
+    needs: [build, test]
+    uses: ./.github/workflows/krakend-artifact-docker-ecr.yml
+    with:
+      runner: ${{ inputs.runner }}
+      image_tag: ${{ inputs.image_tag }}
+      docker_platform: ${{ inputs.docker_platform }}
+      environment: ${{ inputs.environment }}
+    secrets: inherit
+
+  # ============================================
+  # DEPLOY - Deploy to EC2 via SSH
+  # ============================================
+  deploy:
+    name: Deploy EC2
+    if: |
+      inputs.run_deploy &&
+      always() &&
+      needs.artifact.result == 'success'
+    needs: [artifact]
+    uses: ./.github/workflows/krakend-deploy-ec2.yml
+    with:
+      runner: ${{ inputs.runner }}
+      image_tag: ${{ needs.artifact.outputs.image_tag }}
+      docker_platform: ${{ inputs.docker_platform }}
+      environment: ${{ inputs.environment }}
+      memory_limit: ${{ inputs.memory_limit }}
+      memory_reservation: ${{ inputs.memory_reservation }}
+    secrets: inherit
+
+  # ============================================
+  # CLEANUP - Delete merged branch
+  # ============================================
+  cleanup:
+    name: Delete Branch
+    if: |
+      inputs.run_cleanup &&
+      always() &&
+      needs.deploy.result == 'success'
+    needs: [deploy]
+    uses: ./.github/workflows/krakend-delete-branch.yml
+    secrets: inherit
+
+  # ============================================
+  # RELEASE - Create release PR
+  # ============================================
+  release:
+    name: Create Release
+    if: |
+      inputs.run_release &&
+      always() &&
+      needs.deploy.result == 'success' &&
+      (needs.cleanup.result == 'success' || needs.cleanup.result == 'skipped')
+    needs: [deploy, cleanup]
+    uses: ./.github/workflows/krakend-release.yml
+    with:
+      base_branch: ${{ inputs.environment }}
+      target_branch: ${{ inputs.release_target_branch }}
+    secrets: inherit

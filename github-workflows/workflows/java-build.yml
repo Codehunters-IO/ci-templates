@@ -1,0 +1,60 @@
+name: Java - Build
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      java_version:
+        description: 'Java version'
+        required: false
+        type: string
+        default: '21'
+      java_distribution:
+        description: 'Java distribution (temurin, corretto, zulu, etc.)'
+        required: false
+        type: string
+        default: 'temurin'
+      run_spotless:
+        description: 'Run Spotless code formatting check'
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    name: Build
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK ${{ inputs.java_version }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: ${{ inputs.java_distribution }}
+          java-version: ${{ inputs.java_version }}
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build (skip tests)
+        run: ./gradlew clean build -x test --no-daemon --build-cache --parallel
+
+      - name: Spotless check
+        if: inputs.run_spotless
+        run: ./gradlew spotlessCheck --no-daemon --build-cache
+
+      # ============================================
+      # CLEANUP
+      # ============================================
+      - name: Cleanup Gradle daemon
+        if: always()
+        run: |
+          rm -rf ~/.gradle/daemon
+          ./gradlew --stop 2>/dev/null || true

@@ -1,0 +1,32 @@
+name: KrakenD - Build & Validate
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      dockerfile_path:
+        description: 'Path to Dockerfile'
+        required: false
+        type: string
+        default: '.'
+
+jobs:
+  build:
+    name: Build & Validate
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build & Validate KrakenD config
+        run: |
+          docker build -t krakend-app:ci ${{ inputs.dockerfile_path }}
+
+          echo "### KrakenD Build & Validation" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** Passed" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,83 @@
+name: KrakenD - Test & Audit
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      dockerfile_path:
+        description: 'Path to Dockerfile'
+        required: false
+        type: string
+        default: '.'
+      audit_threshold:
+        description: 'Minimum audit score (0-100). Set to 0 to disable.'
+        required: false
+        type: number
+        default: 0
+
+    outputs:
+      result:
+        description: 'Audit result (success/failure)'
+        value: ${{ jobs.test.outputs.result }}
+      audit_score:
+        description: 'Audit score (0-100)'
+        value: ${{ jobs.test.outputs.score }}
+
+jobs:
+  test:
+    name: Test & Audit
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 15
+
+    outputs:
+      result: ${{ steps.audit.outputs.result }}
+      score: ${{ steps.audit.outputs.score }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t krakend-app:ci ${{ inputs.dockerfile_path }}
+
+      - name: Run KrakenD audit
+        id: audit
+        run: |
+          # Run audit and capture output
+          AUDIT_OUTPUT=$(docker run --rm \
+            krakend-app:ci \
+            audit -c /etc/krakend/krakend.json 2>&1) || true
+
+          echo "$AUDIT_OUTPUT"
+
+          # Parse audit score from output
+          SCORE=$(echo "$AUDIT_OUTPUT" | grep -oP '\d+/100' | grep -oP '^\d+' || echo "0")
+
+          if [ -z "$SCORE" ]; then
+            SCORE=0
+          fi
+
+          echo "score=$SCORE" >> $GITHUB_OUTPUT
+          echo "result=success" >> $GITHUB_OUTPUT
+
+          # Summary
+          echo "### KrakenD Audit Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Audit Score: ${SCORE}/100**" >> $GITHUB_STEP_SUMMARY
+
+      - name: Check audit threshold
+        if: inputs.audit_threshold > 0
+        run: |
+          SCORE="${{ steps.audit.outputs.score }}"
+          THRESHOLD="${{ inputs.audit_threshold }}"
+
+          if [ "$SCORE" -lt "$THRESHOLD" ]; then
+            echo "::error::Audit score ${SCORE}/100 is below threshold of ${THRESHOLD}/100"
+            exit 1
+          fi
+
+          echo "Audit score ${SCORE}/100 meets threshold of ${THRESHOLD}/100"
