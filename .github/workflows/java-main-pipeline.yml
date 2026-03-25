@@ -54,10 +54,15 @@ on:
         type: boolean
         default: false
       artifact_registry:
-        description: 'Container registry to use (ecr, github)'
+        description: 'Artifact registry to use (ecr, github, packages)'
         required: false
         type: string
         default: 'ecr'
+      publish_task:
+        description: 'Gradle publish task for packages registry (e.g., publish, publishToGitHubPackages)'
+        required: false
+        type: string
+        default: 'publish'
       run_deploy:
         description: 'Deploy to EC2'
         required: false
@@ -162,6 +167,15 @@ on:
       diagrams_artifact:
         description: 'Architecture diagrams artifact name'
         value: ${{ jobs.architecture.outputs.diagrams_artifact }}
+      package_version:
+        description: 'Published package version'
+        value: ${{ jobs.artifact-packages.outputs.version }}
+      package_group:
+        description: 'Published package group'
+        value: ${{ jobs.artifact-packages.outputs.group }}
+      package_artifact_name:
+        description: 'Published package artifact name'
+        value: ${{ jobs.artifact-packages.outputs.artifact_name }}
 
 jobs:
   # ============================================
@@ -282,6 +296,27 @@ jobs:
     secrets: inherit
 
   # ============================================
+  # ARTIFACT - Publish Dependency to GitHub Packages
+  # ============================================
+  artifact-packages:
+    name: Publish to GitHub Packages
+    if: |
+      inputs.run_artifact &&
+      inputs.artifact_registry == 'packages' &&
+      always() &&
+      needs.build.result == 'success' &&
+      (needs.test.result == 'success' || needs.test.result == 'skipped') &&
+      (needs.architecture.result == 'success' || needs.architecture.result == 'skipped')
+    needs: [build, test, architecture]
+    uses: ./.github/workflows/java-artifact-dependency-github.yml
+    with:
+      runner: ${{ inputs.runner }}
+      java_version: ${{ inputs.java_version }}
+      java_distribution: ${{ inputs.java_distribution }}
+      publish_task: ${{ inputs.publish_task }}
+    secrets: inherit
+
+  # ============================================
   # DEPLOY - Deploy to EC2 via SSH
   # ============================================
   deploy:
@@ -289,8 +324,8 @@ jobs:
     if: |
       inputs.run_deploy &&
       always() &&
-      (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success')
-    needs: [artifact-ecr, artifact-github]
+      (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success' || needs.artifact-packages.result == 'success')
+    needs: [artifact-ecr, artifact-github, artifact-packages]
     uses: ./.github/workflows/java-deploy-ec2.yml
     with:
       runner: ${{ inputs.runner }}
@@ -311,7 +346,7 @@ jobs:
       inputs.run_cleanup &&
       always() &&
       (needs.deploy.result == 'success' || (needs.deploy.result == 'skipped' &&
-        (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success')))
+        (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success' || needs.artifact-packages.result == 'success')))
     needs: [deploy]
     uses: ./.github/workflows/java-delete-branch.yml
     secrets: inherit
@@ -325,7 +360,7 @@ jobs:
       inputs.run_release &&
       always() &&
       (needs.deploy.result == 'success' || (needs.deploy.result == 'skipped' &&
-        (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success'))) &&
+        (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success' || needs.artifact-packages.result == 'success'))) &&
       (needs.cleanup.result == 'success' || needs.cleanup.result == 'skipped')
     needs: [deploy, cleanup]
     uses: ./.github/workflows/java-release.yml
