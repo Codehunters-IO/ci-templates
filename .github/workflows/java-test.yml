@@ -150,6 +150,9 @@ jobs:
       # ============================================
       - name: Run tests
         id: test-run
+        env:
+          GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME }}
+          GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
         run: |
           if [ "${{ inputs.run_coverage }}" = "true" ]; then
             ./gradlew clean build test jacocoTestReport --no-daemon --build-cache --parallel || true
@@ -257,6 +260,8 @@ jobs:
         if: inputs.run_owasp
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+          GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME }}
+          GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
         run: |
           echo "Running OWASP Dependency Check..."
 
@@ -326,6 +331,9 @@ jobs:
       # ============================================
       - name: Run SonarQube analysis
         if: inputs.code_analysis == 'sonar' && env.SONAR_TOKEN != ''
+        env:
+          GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME }}
+          GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
         run: |
           ./gradlew sonar \
             -Dsonar.token="${{ env.SONAR_TOKEN }}" \

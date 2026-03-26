@@ -67,6 +67,9 @@ jobs:
       # ============================================
       - name: Run architecture tests
         id: arch-test
+        env:
+          GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME }}
+          GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
         run: |
           echo "Running ArchUnit architecture validation..."
           ./gradlew test --no-daemon --build-cache --parallel

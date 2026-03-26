@@ -44,6 +44,9 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build (skip tests)
+        env:
+          GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME }}
+          GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
         run: ./gradlew clean build -x test --no-daemon --build-cache --parallel
 
       - name: Spotless check

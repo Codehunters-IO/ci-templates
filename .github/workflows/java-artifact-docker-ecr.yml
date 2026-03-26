@@ -127,6 +127,9 @@ jobs:
 
       - name: Build JAR
         if: inputs.artifact_name == ''
+        env:
+          GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME }}
+          GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
         run: ./gradlew clean build -x test --no-daemon --build-cache --parallel
 
       - name: Configure AWS credentials
