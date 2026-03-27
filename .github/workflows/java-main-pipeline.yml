@@ -86,7 +86,17 @@ on:
 
       # Test options
       coverage_threshold:
-        description: 'Minimum coverage percentage (0-100)'
+        description: 'Minimum line coverage percentage (0-100)'
+        required: false
+        type: number
+        default: 0
+      coverage_instruction_threshold:
+        description: 'Minimum instruction coverage percentage (0-100). Requires jacocoLogCodeCoverage task.'
+        required: false
+        type: number
+        default: 0
+      coverage_branch_threshold:
+        description: 'Minimum branch coverage percentage (0-100). Requires jacocoLogCodeCoverage task.'
         required: false
         type: number
         default: 0
@@ -147,8 +157,14 @@ on:
         description: 'Full Docker image URI'
         value: ${{ jobs.artifact-ecr.outputs.image_uri || jobs.artifact-github.outputs.image_uri }}
       coverage:
-        description: 'Code coverage percentage'
+        description: 'Code coverage percentage (line)'
         value: ${{ jobs.test.outputs.coverage_percentage }}
+      coverage_instruction:
+        description: 'Instruction coverage percentage'
+        value: ${{ jobs.test.outputs.coverage_instruction }}
+      coverage_branch:
+        description: 'Branch coverage percentage'
+        value: ${{ jobs.test.outputs.coverage_branch }}
       quality_gate:
         description: 'SonarQube Quality Gate status'
         value: ${{ jobs.test.outputs.quality_gate_status }}
@@ -228,6 +244,8 @@ jobs:
       java_distribution: ${{ inputs.java_distribution }}
       run_coverage: true
       coverage_threshold: ${{ inputs.coverage_threshold }}
+      coverage_instruction_threshold: ${{ inputs.coverage_instruction_threshold }}
+      coverage_branch_threshold: ${{ inputs.coverage_branch_threshold }}
       code_analysis: ${{ inputs.code_analysis }}
       skip_quality_gate: ${{ inputs.skip_quality_gate }}
       run_owasp: ${{ inputs.run_owasp }}

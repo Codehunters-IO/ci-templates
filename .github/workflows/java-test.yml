@@ -24,7 +24,17 @@ on:
         type: boolean
         default: true
       coverage_threshold:
-        description: 'Minimum coverage percentage (0-100). Set to 0 to disable.'
+        description: 'Minimum line coverage percentage (0-100). Set to 0 to disable.'
+        required: false
+        type: number
+        default: 0
+      coverage_instruction_threshold:
+        description: 'Minimum instruction coverage percentage (0-100). Set to 0 to disable. Requires jacocoLogCodeCoverage task.'
+        required: false
+        type: number
+        default: 0
+      coverage_branch_threshold:
+        description: 'Minimum branch coverage percentage (0-100). Set to 0 to disable. Requires jacocoLogCodeCoverage task.'
         required: false
         type: number
         default: 0
@@ -89,8 +99,14 @@ on:
         description: 'Test result (success/failure)'
         value: ${{ jobs.test.outputs.result }}
       coverage_percentage:
-        description: 'Code coverage percentage'
+        description: 'Code coverage percentage (line)'
         value: ${{ jobs.test.outputs.coverage }}
+      coverage_instruction:
+        description: 'Instruction coverage percentage (from jacocoLogCodeCoverage)'
+        value: ${{ jobs.test.outputs.coverage_instruction }}
+      coverage_branch:
+        description: 'Branch coverage percentage (from jacocoLogCodeCoverage)'
+        value: ${{ jobs.test.outputs.coverage_branch }}
       tests_passed:
         description: 'Number of tests passed'
         value: ${{ jobs.test.outputs.passed }}
@@ -123,6 +139,8 @@ jobs:
     outputs:
       result: ${{ steps.test-run.outcome }}
       coverage: ${{ steps.coverage.outputs.percentage }}
+      coverage_instruction: ${{ steps.jacoco-log.outputs.instruction_pct }}
+      coverage_branch: ${{ steps.jacoco-log.outputs.branch_pct }}
       passed: ${{ steps.test-summary.outputs.passed }}
       failed: ${{ steps.test-summary.outputs.failed }}
       skipped: ${{ steps.test-summary.outputs.skipped }}
@@ -170,6 +188,45 @@ jobs:
           min-coverage-changed-files: ${{ inputs.coverage_threshold }}
           title: "Code Coverage Report"
           update-comment: true
+
+      - name: JaCoCo Log Code Coverage
+        id: jacoco-log
+        if: inputs.run_coverage && always()
+        run: |
+          # Check if the jacocoLogCodeCoverage task exists in the project
+          if ./gradlew tasks --all 2>/dev/null | grep -q "jacocoLogCodeCoverage"; then
+            echo "Running jacocoLogCodeCoverage..."
+            LOG_OUTPUT=$(./gradlew jacocoLogCodeCoverage --no-daemon --build-cache 2>&1) || true
+            echo "$LOG_OUTPUT"
+
+            # Parse TOTAL line to extract coverage percentages
+            TOTAL_LINE=$(echo "$LOG_OUTPUT" | grep -E "^\s*TOTAL" | head -1)
+            if [ -n "$TOTAL_LINE" ]; then
+              INSTRUCTION_PCT=$(echo "$TOTAL_LINE" | awk '{print $2}' | sed 's/%//')
+              BRANCH_PCT=$(echo "$TOTAL_LINE" | awk '{print $3}' | sed 's/%//')
+              LINE_PCT=$(echo "$TOTAL_LINE" | awk '{print $4}' | sed 's/%//')
+
+              echo "instruction_pct=$INSTRUCTION_PCT" >> $GITHUB_OUTPUT
+              echo "branch_pct=$BRANCH_PCT" >> $GITHUB_OUTPUT
+              echo "line_pct=$LINE_PCT" >> $GITHUB_OUTPUT
+              echo "has_log=true" >> $GITHUB_OUTPUT
+
+              # Write coverage summary to job summary
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "### JaCoCo Code Coverage Summary" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+
+              # Extract module lines (between header separator and TOTAL separator)
+              echo "| Module | Instruction% | Branch% | Line% |" >> $GITHUB_STEP_SUMMARY
+              echo "|--------|-------------|---------|-------|" >> $GITHUB_STEP_SUMMARY
+              echo "$LOG_OUTPUT" | awk '/JaCoCo Code Coverage Summary/{found=1; next} found && /^[[:space:]]*-+/{count++; next} found && count>=2 && !/^[[:space:]]*-+/ && !/^[[:space:]]*Module/ && NF>=4 {printf "| %s | %s | %s | %s |\n", $1, $2, $3, $4}' >> $GITHUB_STEP_SUMMARY
+            else
+              echo "has_log=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "jacocoLogCodeCoverage task not found, skipping."
+            echo "has_log=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Parse test results
         id: test-summary
@@ -233,13 +290,42 @@ jobs:
           echo "**Line Coverage: ${COVERAGE}%**" >> $GITHUB_STEP_SUMMARY
 
       - name: Check coverage threshold
-        if: inputs.run_coverage && inputs.coverage_threshold > 0
+        if: inputs.run_coverage && (inputs.coverage_threshold > 0 || inputs.coverage_instruction_threshold > 0 || inputs.coverage_branch_threshold > 0)
         run: |
-          COVERAGE="${{ steps.coverage.outputs.percentage }}"
-          THRESHOLD="${{ inputs.coverage_threshold }}"
+          FAILED=false
 
-          if [ "$(echo "$COVERAGE < $THRESHOLD" | bc -l)" -eq 1 ]; then
-            echo "::error::Coverage ${COVERAGE}% is below threshold of ${THRESHOLD}%"
+          # Check line coverage threshold
+          if [ "${{ inputs.coverage_threshold }}" -gt 0 ]; then
+            COVERAGE="${{ steps.coverage.outputs.percentage }}"
+            THRESHOLD="${{ inputs.coverage_threshold }}"
+            if [ "$(echo "$COVERAGE < $THRESHOLD" | bc -l)" -eq 1 ]; then
+              echo "::error::Line coverage ${COVERAGE}% is below threshold of ${THRESHOLD}%"
+              FAILED=true
+            fi
+          fi
+
+          # Check instruction coverage threshold (from jacocoLogCodeCoverage)
+          if [ "${{ inputs.coverage_instruction_threshold }}" -gt 0 ] && [ "${{ steps.jacoco-log.outputs.has_log }}" = "true" ]; then
+            INSTR="${{ steps.jacoco-log.outputs.instruction_pct }}"
+            INSTR_THRESHOLD="${{ inputs.coverage_instruction_threshold }}"
+            if [ "$(echo "$INSTR < $INSTR_THRESHOLD" | bc -l)" -eq 1 ]; then
+              echo "::error::Instruction coverage ${INSTR}% is below threshold of ${INSTR_THRESHOLD}%"
+              FAILED=true
+            fi
+          fi
+
+          # Check branch coverage threshold (from jacocoLogCodeCoverage)
+          if [ "${{ inputs.coverage_branch_threshold }}" -gt 0 ] && [ "${{ steps.jacoco-log.outputs.has_log }}" = "true" ]; then
+            BRANCH="${{ steps.jacoco-log.outputs.branch_pct }}"
+            BRANCH_THRESHOLD="${{ inputs.coverage_branch_threshold }}"
+            if [ "$(echo "$BRANCH < $BRANCH_THRESHOLD" | bc -l)" -eq 1 ]; then
+              echo "::error::Branch coverage ${BRANCH}% is below threshold of ${BRANCH_THRESHOLD}%"
+              FAILED=true
+            fi
+          fi
+
+          if [ "$FAILED" = "true" ]; then
+            echo "::error::Coverage quality gate failed. See details above."
             exit 1
           fi
 
