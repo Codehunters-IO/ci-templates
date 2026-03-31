@@ -16,7 +16,38 @@ on:
         required: false
         type: string
         default: '.'
+
       # Pipeline steps control
+      run_commit_lint:
+        description: 'Run commit message validation'
+        required: false
+        type: boolean
+        default: false
+      run_trufflehog:
+        description: 'Run TruffleHog secret scanning'
+        required: false
+        type: boolean
+        default: false
+      trufflehog_only_verified:
+        description: 'Only report verified secrets'
+        required: false
+        type: boolean
+        default: true
+      trufflehog_fail_on_findings:
+        description: 'Fail the workflow if secrets are found'
+        required: false
+        type: boolean
+        default: true
+      run_dependency_review:
+        description: 'Run dependency review (PR only)'
+        required: false
+        type: boolean
+        default: false
+      dependency_review_severity:
+        description: 'Minimum severity to fail: low, moderate, high, critical'
+        required: false
+        type: string
+        default: 'high'
       run_build:
         description: 'Run build job (config validation)'
         required: false
@@ -33,10 +64,15 @@ on:
         type: boolean
         default: false
       run_deploy:
-        description: 'Deploy to EC2'
+        description: 'Deploy after artifact build'
         required: false
         type: boolean
         default: false
+      deploy_target:
+        description: 'Deploy target: ec2 or eks'
+        required: false
+        type: string
+        default: 'ec2'
       run_cleanup:
         description: 'Delete merged branch after deploy'
         required: false
@@ -44,11 +80,6 @@ on:
         default: false
       run_release:
         description: 'Create release PR after deploy'
-        required: false
-        type: boolean
-        default: false
-      run_commit_lint:
-        description: 'Run commit message validation'
         required: false
         type: boolean
         default: false
@@ -79,15 +110,42 @@ on:
         type: string
         default: 'develop'
       memory_limit:
-        description: 'Container memory limit (e.g., 512m, 1g)'
+        description: 'Container memory limit (e.g., 512m/512Mi)'
         required: false
         type: string
         default: '512m'
       memory_reservation:
-        description: 'Container memory reservation (e.g., 256m, 512m)'
+        description: 'Container memory reservation (e.g., 256m/256Mi)'
         required: false
         type: string
         default: '256m'
+
+      # EKS-specific options
+      eks_cluster_name:
+        description: 'EKS cluster name (required when deploy_target: eks)'
+        required: false
+        type: string
+        default: ''
+      eks_namespace:
+        description: 'Kubernetes namespace'
+        required: false
+        type: string
+        default: 'default'
+      eks_use_helm:
+        description: 'Use Helm for EKS deployment'
+        required: false
+        type: boolean
+        default: false
+      eks_helm_chart_path:
+        description: 'Path to Helm chart'
+        required: false
+        type: string
+        default: './helm'
+      eks_replicas:
+        description: 'Number of EKS replicas'
+        required: false
+        type: number
+        default: 1
 
       # Release options
       release_target_branch:
@@ -108,7 +166,7 @@ on:
         value: ${{ jobs.test.outputs.audit_score }}
       deploy_status:
         description: 'Deployment status'
-        value: ${{ jobs.deploy.outputs.deploy_status }}
+        value: ${{ jobs.deploy-ec2.outputs.deploy_status || jobs.deploy-eks.outputs.deploy_status }}
       deleted_branch:
         description: 'Name of deleted branch'
         value: ${{ jobs.cleanup.outputs.deleted_branch }}
@@ -121,14 +179,39 @@ on:
 
 jobs:
   # ============================================
-  # COMMIT LINT
+  # COMMIT LINT (parallel, no deps)
   # ============================================
   commit-lint:
     name: Commit Lint
     if: inputs.run_commit_lint
-    uses: ./.github/workflows/krakend-commit-lint.yml
+    uses: ./.github/workflows/shared-commit-lint.yml
     with:
       runner: ${{ inputs.runner }}
+
+  # ============================================
+  # SECURITY - TruffleHog (parallel, no deps)
+  # ============================================
+  security:
+    name: Security Scan
+    if: inputs.run_trufflehog
+    uses: ./.github/workflows/security-trufflehog.yml
+    with:
+      runner: ${{ inputs.runner }}
+      only_verified: ${{ inputs.trufflehog_only_verified }}
+      fail_on_findings: ${{ inputs.trufflehog_fail_on_findings }}
+    secrets: inherit
+
+  # ============================================
+  # SECURITY - Dependency Review (parallel, no deps)
+  # ============================================
+  dependency-review:
+    name: Dependency Review
+    if: inputs.run_dependency_review
+    uses: ./.github/workflows/security-dependency-review.yml
+    with:
+      runner: ${{ inputs.runner }}
+      fail_on_severity: ${{ inputs.dependency_review_severity }}
+    secrets: inherit
 
   # ============================================
   # BUILD (Config Validation)
@@ -167,25 +250,28 @@ jobs:
       needs.build.result == 'success' &&
       (needs.test.result == 'success' || needs.test.result == 'skipped')
     needs: [build, test]
-    uses: ./.github/workflows/krakend-artifact-docker-ecr.yml
+    uses: ./.github/workflows/shared-artifact-docker-ecr.yml
     with:
       runner: ${{ inputs.runner }}
       image_tag: ${{ inputs.image_tag }}
       docker_platform: ${{ inputs.docker_platform }}
+      dockerfile_path: ${{ inputs.dockerfile_path }}
       environment: ${{ inputs.environment }}
+      build_from_source: false
     secrets: inherit
 
   # ============================================
-  # DEPLOY - Deploy to EC2 via SSH
+  # DEPLOY - EC2
   # ============================================
-  deploy:
+  deploy-ec2:
     name: Deploy EC2
     if: |
       inputs.run_deploy &&
+      inputs.deploy_target == 'ec2' &&
       always() &&
       needs.artifact.result == 'success'
     needs: [artifact]
-    uses: ./.github/workflows/krakend-deploy-ec2.yml
+    uses: ./.github/workflows/shared-deploy-ec2.yml
     with:
       runner: ${{ inputs.runner }}
       image_tag: ${{ needs.artifact.outputs.image_tag }}
@@ -193,6 +279,33 @@ jobs:
       environment: ${{ inputs.environment }}
       memory_limit: ${{ inputs.memory_limit }}
       memory_reservation: ${{ inputs.memory_reservation }}
+      container_port: '8080'
+    secrets: inherit
+
+  # ============================================
+  # DEPLOY - EKS
+  # ============================================
+  deploy-eks:
+    name: Deploy EKS
+    if: |
+      inputs.run_deploy &&
+      inputs.deploy_target == 'eks' &&
+      always() &&
+      needs.artifact.result == 'success'
+    needs: [artifact]
+    uses: ./.github/workflows/shared-deploy-eks.yml
+    with:
+      runner: ${{ inputs.runner }}
+      image_tag: ${{ needs.artifact.outputs.image_tag }}
+      environment: ${{ inputs.environment }}
+      cluster_name: ${{ inputs.eks_cluster_name }}
+      namespace: ${{ inputs.eks_namespace }}
+      replicas: ${{ inputs.eks_replicas }}
+      use_helm: ${{ inputs.eks_use_helm }}
+      helm_chart_path: ${{ inputs.eks_helm_chart_path }}
+      memory_limit: ${{ inputs.memory_limit }}
+      memory_request: ${{ inputs.memory_reservation }}
+      health_check_path: '/__health'
     secrets: inherit
 
   # ============================================
@@ -203,9 +316,9 @@ jobs:
     if: |
       inputs.run_cleanup &&
       always() &&
-      needs.deploy.result == 'success'
-    needs: [deploy]
-    uses: ./.github/workflows/krakend-delete-branch.yml
+      (needs.deploy-ec2.result == 'success' || needs.deploy-eks.result == 'success')
+    needs: [deploy-ec2, deploy-eks]
+    uses: ./.github/workflows/shared-delete-branch.yml
     secrets: inherit
 
   # ============================================
@@ -216,10 +329,10 @@ jobs:
     if: |
       inputs.run_release &&
       always() &&
-      needs.deploy.result == 'success' &&
+      (needs.deploy-ec2.result == 'success' || needs.deploy-eks.result == 'success') &&
       (needs.cleanup.result == 'success' || needs.cleanup.result == 'skipped')
-    needs: [deploy, cleanup]
-    uses: ./.github/workflows/krakend-release.yml
+    needs: [deploy-ec2, deploy-eks, cleanup]
+    uses: ./.github/workflows/shared-release.yml
     with:
       base_branch: ${{ inputs.environment }}
       target_branch: ${{ inputs.release_target_branch }}

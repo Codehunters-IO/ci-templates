@@ -1,0 +1,129 @@
+name: Java - Coverage (JaCoCo)
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      java_version:
+        description: 'Java version'
+        required: false
+        type: string
+        default: '21'
+      java_distribution:
+        description: 'Java distribution'
+        required: false
+        type: string
+        default: 'temurin'
+      coverage_threshold:
+        description: 'Minimum coverage percentage (0-100). Set to 0 to disable.'
+        required: false
+        type: number
+        default: 0
+      build_tool:
+        description: 'Build tool: gradle or maven'
+        required: false
+        type: string
+        default: 'gradle'
+
+    outputs:
+      coverage_percentage:
+        description: 'Code coverage percentage'
+        value: ${{ jobs.coverage.outputs.percentage }}
+
+jobs:
+  coverage:
+    name: JaCoCo Coverage
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 30
+
+    outputs:
+      percentage: ${{ steps.coverage.outputs.percentage }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup JDK ${{ inputs.java_version }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: ${{ inputs.java_distribution }}
+          java-version: ${{ inputs.java_version }}
+          cache: ${{ inputs.build_tool }}
+
+      - name: Setup Gradle
+        if: inputs.build_tool == 'gradle'
+        uses: gradle/actions/setup-gradle@v4
+
+      # ============================================
+      # RUN TESTS + JACOCO REPORT
+      # ============================================
+      - name: Run tests with coverage (Gradle)
+        if: inputs.build_tool == 'gradle'
+        env:
+          GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME }}
+          GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
+        run: ./gradlew clean build test jacocoTestReport --no-daemon --build-cache --parallel
+
+      - name: Run tests with coverage (Maven)
+        if: inputs.build_tool == 'maven'
+        env:
+          GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME }}
+          GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
+        run: mvn clean verify jacoco:report -B
+
+      # ============================================
+      # PUBLISH & PARSE COVERAGE
+      # ============================================
+      - name: Publish JaCoCo Report
+        if: always()
+        uses: madrapps/jacoco-report@v1.7.1
+        with:
+          paths: ${{ github.workspace }}/**/build/reports/jacoco/test/jacocoTestReport.xml
+          token: ${{ secrets.GITHUB_TOKEN }}
+          min-coverage-overall: ${{ inputs.coverage_threshold }}
+          min-coverage-changed-files: ${{ inputs.coverage_threshold }}
+          title: "Code Coverage Report"
+          update-comment: true
+
+      - name: Parse coverage report
+        id: coverage
+        if: always()
+        run: |
+          COVERAGE=0
+
+          # Try Gradle path first, then Maven path
+          CSV_FILE="build/reports/jacoco/test/jacocoTestReport.csv"
+          if [ ! -f "$CSV_FILE" ]; then
+            CSV_FILE=$(find . -path "*/jacoco/*.csv" -name "*.csv" | head -1)
+          fi
+
+          if [ -n "$CSV_FILE" ] && [ -f "$CSV_FILE" ]; then
+            MISSED=$(awk -F',' 'NR>1 {sum+=$8} END {print sum}' "$CSV_FILE" 2>/dev/null || echo "0")
+            COVERED=$(awk -F',' 'NR>1 {sum+=$9} END {print sum}' "$CSV_FILE" 2>/dev/null || echo "0")
+
+            if [ "$((MISSED + COVERED))" -gt 0 ]; then
+              COVERAGE=$(awk "BEGIN {printf \"%.1f\", ($COVERED / ($MISSED + $COVERED)) * 100}")
+            fi
+          fi
+
+          echo "percentage=$COVERAGE" >> $GITHUB_OUTPUT
+
+          echo "### Code Coverage" >> $GITHUB_STEP_SUMMARY
+          echo "**Line Coverage: ${COVERAGE}%**" >> $GITHUB_STEP_SUMMARY
+
+      - name: Check coverage threshold
+        if: inputs.coverage_threshold > 0
+        run: |
+          COVERAGE="${{ steps.coverage.outputs.percentage }}"
+          THRESHOLD="${{ inputs.coverage_threshold }}"
+
+          if [ "$(echo "$COVERAGE < $THRESHOLD" | bc -l)" -eq 1 ]; then
+            echo "::error::Coverage ${COVERAGE}% is below threshold of ${THRESHOLD}%"
+            exit 1
+          fi

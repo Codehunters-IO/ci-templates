@@ -1,0 +1,121 @@
+name: Shared - Semantic Versioning
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      update_changelog:
+        description: 'Generate and commit CHANGELOG.md'
+        required: false
+        type: boolean
+        default: false
+      tag_prefix:
+        description: 'Prefix for version tags'
+        required: false
+        type: string
+        default: 'v'
+      major_pattern:
+        description: 'Regex pattern for major version bump'
+        required: false
+        type: string
+        default: '(MAJOR|BREAKING CHANGE)'
+      minor_pattern:
+        description: 'Regex pattern for minor version bump'
+        required: false
+        type: string
+        default: '(feat)'
+
+    outputs:
+      version:
+        description: 'Semantic version (e.g. 1.2.3)'
+        value: ${{ jobs.semver.outputs.version }}
+      version_tag:
+        description: 'Semantic version tag (e.g. v1.2.3)'
+        value: ${{ jobs.semver.outputs.version_tag }}
+
+jobs:
+  semver:
+    name: Semantic Version
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 10
+
+    outputs:
+      version: ${{ steps.semver.outputs.version }}
+      version_tag: ${{ steps.semver.outputs.version_tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Calculate semantic version
+        id: semver
+        uses: PaulHatch/semantic-version@v5.4.0
+        with:
+          tag_prefix: ${{ inputs.tag_prefix }}
+          major_pattern: ${{ inputs.major_pattern }}
+          minor_pattern: ${{ inputs.minor_pattern }}
+          format: "${major}.${minor}.${patch}"
+          namespace: ""
+          change_path: ""
+          bump_each_commit: false
+
+      - name: Export version
+        run: |
+          echo "VERSION=${{ steps.semver.outputs.version_tag }}" >> $GITHUB_ENV
+          echo "### Version: ${{ steps.semver.outputs.version_tag }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Update CHANGELOG.md
+        if: inputs.update_changelog
+        run: |
+          set -e
+          TODAY="$(date +%Y-%m-%d)"
+          VERSION_LINE="## ${VERSION} - ${TODAY}"
+
+          if git describe --tags --abbrev=0 >/dev/null 2>&1; then
+            PREV_TAG="$(git describe --tags --abbrev=0)"
+            RANGE="${PREV_TAG}..HEAD"
+          else
+            RANGE="$(git rev-list --max-parents=0 HEAD)^..HEAD"
+          fi
+
+          COMMITS="$(git log --pretty=format:'- %s (%h)' ${RANGE})"
+          echo "Preparing CHANGELOG for ${VERSION}"
+
+          if [ -f CHANGELOG.md ]; then
+            tail -n +1 CHANGELOG.md > /tmp/CHANGELOG_OLD.md
+          else
+            touch /tmp/CHANGELOG_OLD.md
+          fi
+
+          {
+            echo "${VERSION_LINE}"
+            echo ""
+            if [ -n "${COMMITS}" ]; then
+              echo "${COMMITS}"
+            else
+              echo "- No changes recorded."
+            fi
+            echo ""
+            cat /tmp/CHANGELOG_OLD.md
+          } > CHANGELOG.md
+
+      - name: Commit and push CHANGELOG
+        if: inputs.update_changelog
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(release): ${VERSION} - update CHANGELOG [skip ci]"
+            git push
+          else
+            echo "No CHANGELOG changes to commit."
+          fi

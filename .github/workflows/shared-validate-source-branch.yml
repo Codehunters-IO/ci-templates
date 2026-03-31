@@ -1,0 +1,66 @@
+name: Shared - Validate Source Branch
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      target_branch:
+        description: 'Target branch being merged into (develop or main)'
+        required: true
+        type: string
+      allowed_prefixes:
+        description: 'Comma-separated allowed branch prefixes (e.g., feature/,fix/,chore/)'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  validate:
+    name: Validate Source Branch
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - name: Get source branch
+        id: branch
+        run: |
+          SOURCE_BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}"
+          echo "source=$SOURCE_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "Source branch: $SOURCE_BRANCH"
+          echo "Target branch: ${{ inputs.target_branch }}"
+
+      - name: Validate branch naming convention
+        run: |
+          SOURCE="${{ steps.branch.outputs.source }}"
+          TARGET="${{ inputs.target_branch }}"
+          CUSTOM_PREFIXES="${{ inputs.allowed_prefixes }}"
+
+          if [ "$TARGET" = "main" ] || [ "$TARGET" = "master" ]; then
+            ALLOWED_PATTERN="^(develop|release\/|hotfix\/)"
+            ALLOWED_DESC="develop, release/*, hotfix/*"
+          else
+            ALLOWED_PATTERN="^(feature\/|fix\/|bugfix\/|chore\/|refactor\/|docs\/|test\/|ci\/|style\/|perf\/|hotfix\/|release\/)"
+            ALLOWED_DESC="feature/*, fix/*, bugfix/*, chore/*, refactor/*, docs/*, test/*, ci/*, style/*, perf/*, hotfix/*, release/*"
+          fi
+
+          if [ -n "$CUSTOM_PREFIXES" ]; then
+            CUSTOM_PATTERN=$(echo "$CUSTOM_PREFIXES" | sed 's/,/\\\|/g' | sed 's/\//\\\//g')
+            ALLOWED_PATTERN="^($CUSTOM_PATTERN)"
+            ALLOWED_DESC="$CUSTOM_PREFIXES"
+          fi
+
+          if echo "$SOURCE" | grep -qE "$ALLOWED_PATTERN"; then
+            echo "Branch '$SOURCE' follows naming convention."
+          else
+            echo "::error::Branch '$SOURCE' does not follow naming convention."
+            echo ""
+            echo "Allowed patterns for target '$TARGET': $ALLOWED_DESC"
+            echo ""
+            echo "Examples:"
+            echo "  feature/add-user-endpoint"
+            echo "  fix/null-pointer-on-login"
+            echo "  chore/update-dependencies"
+            exit 1
+          fi

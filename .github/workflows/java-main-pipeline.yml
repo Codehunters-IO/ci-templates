@@ -21,45 +21,102 @@ on:
         required: false
         type: string
         default: 'temurin'
+      build_tool:
+        description: 'Build tool: gradle or maven'
+        required: false
+        type: string
+        default: 'gradle'
 
       # Pipeline steps control
+      run_commit_lint:
+        description: 'Run commit message validation'
+        required: false
+        type: boolean
+        default: false
+      run_trufflehog:
+        description: 'Run TruffleHog secret scanning'
+        required: false
+        type: boolean
+        default: false
+      trufflehog_only_verified:
+        description: 'Only report verified secrets'
+        required: false
+        type: boolean
+        default: true
+      trufflehog_fail_on_findings:
+        description: 'Fail the workflow if secrets are found'
+        required: false
+        type: boolean
+        default: true
+      run_dependency_review:
+        description: 'Run dependency review (PR only)'
+        required: false
+        type: boolean
+        default: false
+      dependency_review_severity:
+        description: 'Minimum severity to fail: low, moderate, high, critical'
+        required: false
+        type: string
+        default: 'high'
       run_build:
         description: 'Run build job'
         required: false
         type: boolean
         default: true
       run_test:
-        description: 'Run test job (includes coverage)'
+        description: 'Run test job'
         required: false
         type: boolean
         default: false
+      run_coverage:
+        description: 'Run JaCoCo coverage report'
+        required: false
+        type: boolean
+        default: false
+      coverage_threshold:
+        description: 'Minimum coverage percentage (0-100)'
+        required: false
+        type: number
+        default: 0
       code_analysis:
-        description: 'Code analysis tool: none, sonar, qodana (requires run_test: true)'
+        description: 'Code analysis tool: none, sonar, qodana'
         required: false
         type: string
         default: 'none'
-      run_owasp:
-        description: 'Run OWASP Dependency Check (requires run_test: true)'
-        required: false
-        type: boolean
-        default: false
       skip_quality_gate:
         description: 'Skip Quality Gate check (Sonar/Qodana)'
         required: false
         type: boolean
         default: false
+      run_owasp:
+        description: 'Run OWASP Dependency Check'
+        required: false
+        type: boolean
+        default: false
+      owasp_fail_on_cvss:
+        description: 'CVSS score threshold to fail (7 = HIGH+CRITICAL, 9 = CRITICAL only)'
+        required: false
+        type: number
+        default: 7
+      run_architecture:
+        description: 'Run architecture validation (ArchUnit + diagrams)'
+        required: false
+        type: boolean
+        default: false
+
+      # Artifact options
       run_artifact:
         description: 'Build and push Docker image'
         required: false
         type: boolean
         default: false
       artifact_registry:
-        description: 'Artifact registry to use (ecr, github, packages)'
+        description: 'Artifact registry: ecr, github, packages'
         required: false
         type: string
         default: 'ecr'
       publish_task:
-        description: 'Gradle publish task for packages registry (e.g., publish, publishToGitHubPackages)'
+        description: 'Gradle publish task for packages registry'
         required: false
         type: string
         default: 'publish'
@@ -114,35 +171,75 @@ on:
         default: 'linux/arm64'
 
       # Deploy options
+      run_deploy:
+        description: 'Deploy after artifact build'
+        required: false
+        type: boolean
+        default: false
+      deploy_target:
+        description: 'Deploy target: ec2 or eks'
+        required: false
+        type: string
+        default: 'ec2'
       environment:
         description: 'GitHub environment (develop, prod)'
         required: false
         type: string
         default: 'develop'
       memory_limit:
-        description: 'Container memory limit (e.g., 512m, 1g)'
+        description: 'Container memory limit (e.g., 512m/512Mi)'
         required: false
         type: string
         default: '512m'
       memory_reservation:
-        description: 'Container memory reservation (e.g., 256m, 512m)'
+        description: 'Container memory reservation (e.g., 256m/256Mi)'
         required: false
         type: string
         default: '256m'
       spring_profiles:
-        description: 'Additional Spring profiles (e.g., awsparamstore). Environment is always included.'
+        description: 'Additional Spring profiles (e.g., awsparamstore)'
         required: false
         type: string
         default: ''
 
-      # Architecture options
-      run_architecture:
-        description: 'Run architecture validation (ArchUnit tests + Structurizr C4 + class/package diagrams)'
+      # EKS-specific options
+      eks_cluster_name:
+        description: 'EKS cluster name (required when deploy_target: eks)'
+        required: false
+        type: string
+        default: ''
+      eks_namespace:
+        description: 'Kubernetes namespace'
+        required: false
+        type: string
+        default: 'default'
+      eks_use_helm:
+        description: 'Use Helm for EKS deployment'
         required: false
         type: boolean
         default: false
+      eks_helm_chart_path:
+        description: 'Path to Helm chart'
+        required: false
+        type: string
+        default: './helm'
+      eks_replicas:
+        description: 'Number of EKS replicas'
+        required: false
+        type: number
+        default: 1
 
-      # Release options
+      # Cleanup & Release
+      run_cleanup:
+        description: 'Delete merged branch after deploy'
+        required: false
+        type: boolean
+        default: false
+      run_release:
+        description: 'Create release PR after deploy'
+        required: false
+        type: boolean
+        default: false
       release_target_branch:
         description: 'Target branch for release PR'
         required: false
@@ -167,7 +264,10 @@ on:
         value: ${{ jobs.test.outputs.coverage_branch }}
       quality_gate:
         description: 'SonarQube Quality Gate status'
-        value: ${{ jobs.test.outputs.quality_gate_status }}
+        value: ${{ jobs.sonar.outputs.quality_gate_status }}
+      owasp_vulnerabilities:
+        description: 'Number of OWASP vulnerabilities found'
+        value: ${{ jobs.owasp.outputs.vulnerabilities }}
       deleted_branch:
         description: 'Name of deleted branch'
         value: ${{ jobs.cleanup.outputs.deleted_branch }}
@@ -195,17 +295,17 @@ on:
 
 jobs:
   # ============================================
-  # COMMIT LINT
+  # COMMIT LINT (parallel, no deps)
   # ============================================
   commit-lint:
     name: Commit Lint
     if: inputs.run_commit_lint
-    uses: ./.github/workflows/java-commit-lint.yml
+    uses: ./.github/workflows/shared-commit-lint.yml
     with:
       runner: ${{ inputs.runner }}
 
   # ============================================
-  # SECURITY
+  # SECURITY - TruffleHog (parallel, no deps)
   # ============================================
   security:
     name: Security Scan
@@ -215,6 +315,18 @@ jobs:
       runner: ${{ inputs.runner }}
       only_verified: ${{ inputs.trufflehog_only_verified }}
       fail_on_findings: ${{ inputs.trufflehog_fail_on_findings }}
+    secrets: inherit
+
+  # ============================================
+  # SECURITY - Dependency Review (parallel, no deps)
+  # ============================================
+  dependency-review:
+    name: Dependency Review
+    if: inputs.run_dependency_review
+    uses: ./.github/workflows/security-dependency-review.yml
+    with:
+      runner: ${{ inputs.runner }}
+      fail_on_severity: ${{ inputs.dependency_review_severity }}
     secrets: inherit
 
   # ============================================
@@ -228,13 +340,14 @@ jobs:
       runner: ${{ inputs.runner }}
       java_version: ${{ inputs.java_version }}
       java_distribution: ${{ inputs.java_distribution }}
+      build_tool: ${{ inputs.build_tool }}
     secrets: inherit
 
   # ============================================
-  # TEST & QUALITY (Tests + Coverage + Sonar)
+  # TEST (needs: build)
   # ============================================
   test:
-    name: Test & Quality
+    name: Test
     if: inputs.run_test
     needs: build
     uses: ./.github/workflows/java-test.yml
@@ -252,7 +365,67 @@ jobs:
     secrets: inherit
 
   # ============================================
-  # ARCHITECTURE VALIDATION (parallel with test)
+  # COVERAGE - JaCoCo (parallel with test, needs: build)
+  # ============================================
+  coverage:
+    name: Coverage
+    if: inputs.run_coverage
+    needs: build
+    uses: ./.github/workflows/java-coverage.yml
+    with:
+      runner: ${{ inputs.runner }}
+      java_version: ${{ inputs.java_version }}
+      java_distribution: ${{ inputs.java_distribution }}
+      coverage_threshold: ${{ inputs.coverage_threshold }}
+      build_tool: ${{ inputs.build_tool }}
+    secrets: inherit
+
+  # ============================================
+  # SONAR (parallel with test, needs: build)
+  # ============================================
+  sonar:
+    name: SonarQube
+    if: inputs.code_analysis == 'sonar'
+    needs: build
+    uses: ./.github/workflows/java-sonar.yml
+    with:
+      runner: ${{ inputs.runner }}
+      java_version: ${{ inputs.java_version }}
+      java_distribution: ${{ inputs.java_distribution }}
+      skip_quality_gate: ${{ inputs.skip_quality_gate }}
+      build_tool: ${{ inputs.build_tool }}
+    secrets: inherit
+
+  # ============================================
+  # QODANA (parallel with test, needs: build)
+  # ============================================
+  qodana:
+    name: Qodana
+    if: inputs.code_analysis == 'qodana'
+    needs: build
+    uses: ./.github/workflows/java-qodana.yml
+    with:
+      runner: ${{ inputs.runner }}
+    secrets: inherit
+
+  # ============================================
+  # OWASP (parallel with test, needs: build)
+  # ============================================
+  owasp:
+    name: OWASP
+    if: inputs.run_owasp
+    needs: build
+    uses: ./.github/workflows/java-owasp.yml
+    with:
+      runner: ${{ inputs.runner }}
+      java_version: ${{ inputs.java_version }}
+      java_distribution: ${{ inputs.java_distribution }}
+      owasp_fail_on_cvss: ${{ inputs.owasp_fail_on_cvss }}
+      build_tool: ${{ inputs.build_tool }}
+    secrets: inherit
+
+  # ============================================
+  # ARCHITECTURE (parallel with test, needs: build)
   # ============================================
   architecture:
     name: Architecture
@@ -266,7 +439,7 @@ jobs:
     secrets: inherit
 
   # ============================================
-  # ARTIFACT - Build Docker & Push to ECR
+  # ARTIFACT - ECR
   # ============================================
   artifact-ecr:
     name: Build & Push ECR
@@ -276,21 +449,26 @@ jobs:
       always() &&
       needs.build.result == 'success' &&
       (needs.test.result == 'success' || needs.test.result == 'skipped') &&
+      (needs.coverage.result == 'success' || needs.coverage.result == 'skipped') &&
+      (needs.sonar.result == 'success' || needs.sonar.result == 'skipped') &&
+      (needs.qodana.result == 'success' || needs.qodana.result == 'skipped') &&
+      (needs.owasp.result == 'success' || needs.owasp.result == 'skipped') &&
       (needs.architecture.result == 'success' || needs.architecture.result == 'skipped')
-    needs: [build, test, architecture]
-    uses: ./.github/workflows/java-artifact-docker-ecr.yml
+    needs: [build, test, coverage, sonar, qodana, owasp, architecture]
+    uses: ./.github/workflows/shared-artifact-docker-ecr.yml
     with:
       runner: ${{ inputs.runner }}
-      java_version: ${{ inputs.java_version }}
-      java_distribution: ${{ inputs.java_distribution }}
       image_tag: ${{ inputs.image_tag }}
       docker_platform: ${{ inputs.docker_platform }}
-      artifact_name: ${{ needs.test.outputs.artifact_name }}
       environment: ${{ inputs.environment }}
+      build_from_source: true
+      java_version: ${{ inputs.java_version }}
+      java_distribution: ${{ inputs.java_distribution }}
+      build_tool: ${{ inputs.build_tool }}
     secrets: inherit
 
   # ============================================
-  # ARTIFACT - Build Docker & Push to GitHub Registry
+  # ARTIFACT - GitHub Registry
   # ============================================
   artifact-github:
     name: Build & Push GitHub Registry
@@ -314,7 +492,7 @@ jobs:
     secrets: inherit
 
   # ============================================
-  # ARTIFACT - Publish Dependency to GitHub Packages
+  # ARTIFACT - GitHub Packages
   # ============================================
   artifact-packages:
     name: Publish to GitHub Packages
@@ -335,16 +513,17 @@ jobs:
     secrets: inherit
 
   # ============================================
-  # DEPLOY - Deploy to EC2 via SSH
+  # DEPLOY - EC2
   # ============================================
-  deploy:
+  deploy-ec2:
     name: Deploy EC2
     if: |
       inputs.run_deploy &&
+      inputs.deploy_target == 'ec2' &&
       always() &&
       (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success' || needs.artifact-packages.result == 'success')
     needs: [artifact-ecr, artifact-github, artifact-packages]
-    uses: ./.github/workflows/java-deploy-ec2.yml
+    uses: ./.github/workflows/shared-deploy-ec2.yml
     with:
       runner: ${{ inputs.runner }}
       image_tag: ${{ needs.artifact-ecr.outputs.image_tag || needs.artifact-github.outputs.image_tag }}
@@ -352,7 +531,39 @@ jobs:
       environment: ${{ inputs.environment }}
       memory_limit: ${{ inputs.memory_limit }}
       memory_reservation: ${{ inputs.memory_reservation }}
-      spring_profiles: ${{ inputs.spring_profiles }}
+      container_port: '8080'
+      container_env_vars: |
+        SERVER_PORT=${{ inputs.spring_profiles != '' && '8080' || '8080' }}
+        SPRING_PROFILES_ACTIVE=${{ inputs.spring_profiles != '' && format('{0},{1}', inputs.spring_profiles, inputs.environment) || inputs.environment }}
+        SERVER_CONTEXT_PATH=/${{ github.event.repository.name }}
+    secrets: inherit
+
+  # ============================================
+  # DEPLOY - EKS
+  # ============================================
+  deploy-eks:
+    name: Deploy EKS
+    if: |
+      inputs.run_deploy &&
+      inputs.deploy_target == 'eks' &&
+      always() &&
+      (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success')
+    needs: [artifact-ecr, artifact-github, artifact-packages]
+    uses: ./.github/workflows/shared-deploy-eks.yml
+    with:
+      runner: ${{ inputs.runner }}
+      image_tag: ${{ needs.artifact-ecr.outputs.image_tag || needs.artifact-github.outputs.image_tag }}
+      environment: ${{ inputs.environment }}
+      cluster_name: ${{ inputs.eks_cluster_name }}
+      namespace: ${{ inputs.eks_namespace }}
+      replicas: ${{ inputs.eks_replicas }}
+      use_helm: ${{ inputs.eks_use_helm }}
+      helm_chart_path: ${{ inputs.eks_helm_chart_path }}
+      memory_limit: ${{ inputs.memory_limit }}
+      memory_request: ${{ inputs.memory_reservation }}
+      container_env_vars: |
+        SPRING_PROFILES_ACTIVE=${{ inputs.spring_profiles != '' && format('{0},{1}', inputs.spring_profiles, inputs.environment) || inputs.environment }}
+        SERVER_CONTEXT_PATH=/${{ github.event.repository.name }}
     secrets: inherit
 
   # ============================================
@@ -363,10 +574,11 @@ jobs:
     if: |
       inputs.run_cleanup &&
       always() &&
-      (needs.deploy.result == 'success' || (needs.deploy.result == 'skipped' &&
+      (needs.deploy-ec2.result == 'success' || needs.deploy-eks.result == 'success' ||
+       (needs.deploy-ec2.result == 'skipped' && needs.deploy-eks.result == 'skipped' &&
         (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success' || needs.artifact-packages.result == 'success')))
-    needs: [deploy]
-    uses: ./.github/workflows/java-delete-branch.yml
+    needs: [deploy-ec2, deploy-eks]
+    uses: ./.github/workflows/shared-delete-branch.yml
     secrets: inherit
 
   # ============================================
@@ -377,11 +589,12 @@ jobs:
     if: |
       inputs.run_release &&
       always() &&
-      (needs.deploy.result == 'success' || (needs.deploy.result == 'skipped' &&
+      (needs.deploy-ec2.result == 'success' || needs.deploy-eks.result == 'success' ||
+       (needs.deploy-ec2.result == 'skipped' && needs.deploy-eks.result == 'skipped' &&
         (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success' || needs.artifact-packages.result == 'success'))) &&
       (needs.cleanup.result == 'success' || needs.cleanup.result == 'skipped')
-    needs: [deploy, cleanup]
-    uses: ./.github/workflows/java-release.yml
+    needs: [deploy-ec2, deploy-eks, cleanup]
+    uses: ./.github/workflows/shared-release.yml
     with:
       base_branch: ${{ inputs.environment }}
       target_branch: ${{ inputs.release_target_branch }}

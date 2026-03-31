@@ -1,0 +1,70 @@
+name: Security - Dependency Review
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      fail_on_severity:
+        description: 'Minimum severity to fail: low, moderate, high, critical'
+        required: false
+        type: string
+        default: 'high'
+      allow_licenses:
+        description: 'Comma-separated list of allowed SPDX licenses (empty = allow all)'
+        required: false
+        type: string
+        default: ''
+      deny_licenses:
+        description: 'Comma-separated list of denied SPDX licenses'
+        required: false
+        type: string
+        default: ''
+
+    outputs:
+      result:
+        description: 'Scan result (success/failure)'
+        value: ${{ jobs.dependency-review.outputs.result }}
+
+jobs:
+  dependency-review:
+    name: Dependency Review
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 10
+
+    outputs:
+      result: ${{ steps.review.outcome }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Dependency Review
+        id: review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: ${{ inputs.fail_on_severity }}
+          allow-licenses: ${{ inputs.allow_licenses }}
+          deny-licenses: ${{ inputs.deny_licenses }}
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ "${{ steps.review.outcome }}" == "failure" ]; then
+            echo "### Security - Dependency Review" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Status | Result |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Scan | :x: **Vulnerable dependencies found** |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "> Review the scan output above for details." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### Security - Dependency Review" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Status | Result |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Scan | :white_check_mark: **No vulnerable dependencies** |" >> $GITHUB_STEP_SUMMARY
+          fi

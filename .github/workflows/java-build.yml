@@ -23,6 +23,11 @@ on:
         required: false
         type: boolean
         default: true
+      build_tool:
+        description: 'Build tool: gradle or maven'
+        required: false
+        type: string
+        default: 'gradle'
 
 jobs:
   build:
@@ -39,25 +44,35 @@ jobs:
         with:
           distribution: ${{ inputs.java_distribution }}
           java-version: ${{ inputs.java_version }}
+          cache: ${{ inputs.build_tool }}
 
       - name: Setup Gradle
+        if: inputs.build_tool == 'gradle'
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build (skip tests)
+      - name: Build (Gradle)
+        if: inputs.build_tool == 'gradle'
         env:
           GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME }}
           GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
         run: ./gradlew clean build -x test --no-daemon --build-cache --parallel
 
+      - name: Build (Maven)
+        if: inputs.build_tool == 'maven'
+        env:
+          GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME }}
+          GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
+        run: mvn clean package -DskipTests -B
+
       - name: Spotless check
-        if: inputs.run_spotless
+        if: inputs.run_spotless && inputs.build_tool == 'gradle'
         run: ./gradlew spotlessCheck --no-daemon --build-cache
 
       # ============================================
       # CLEANUP
       # ============================================
       - name: Cleanup Gradle daemon
-        if: always()
+        if: inputs.build_tool == 'gradle' && always()
         run: |
           rm -rf ~/.gradle/daemon
           ./gradlew --stop 2>/dev/null || true

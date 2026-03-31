@@ -1,0 +1,121 @@
+name: Java - SonarQube Analysis
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      java_version:
+        description: 'Java version'
+        required: false
+        type: string
+        default: '21'
+      java_distribution:
+        description: 'Java distribution'
+        required: false
+        type: string
+        default: 'temurin'
+      skip_quality_gate:
+        description: 'Skip Quality Gate check'
+        required: false
+        type: boolean
+        default: false
+      build_tool:
+        description: 'Build tool: gradle or maven'
+        required: false
+        type: string
+        default: 'gradle'
+
+    secrets:
+      SONAR_URL:
+        required: true
+      SONAR_TOKEN:
+        required: true
+
+    outputs:
+      quality_gate_status:
+        description: 'Quality Gate status (PASSED/FAILED)'
+        value: ${{ jobs.sonar.outputs.quality_gate }}
+
+jobs:
+  sonar:
+    name: SonarQube Analysis
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 20
+
+    env:
+      SONAR_URL: ${{ secrets.SONAR_URL }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+    outputs:
+      quality_gate: ${{ steps.quality-gate.outputs.quality-gate-status }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup JDK ${{ inputs.java_version }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: ${{ inputs.java_distribution }}
+          java-version: ${{ inputs.java_version }}
+          cache: ${{ inputs.build_tool }}
+
+      - name: Setup Gradle
+        if: inputs.build_tool == 'gradle'
+        uses: gradle/actions/setup-gradle@v4
+
+      # ============================================
+      # BUILD + SONAR ANALYSIS
+      # ============================================
+      - name: Build and run SonarQube (Gradle)
+        if: inputs.build_tool == 'gradle'
+        env:
+          GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME }}
+          GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
+        run: |
+          ./gradlew clean build test jacocoTestReport sonar \
+            -Dsonar.token="${{ env.SONAR_TOKEN }}" \
+            --no-daemon --build-cache
+
+      - name: Build and run SonarQube (Maven)
+        if: inputs.build_tool == 'maven'
+        env:
+          GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME }}
+          GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
+        run: |
+          mvn clean verify sonar:sonar \
+            -Dsonar.token="${{ env.SONAR_TOKEN }}" \
+            -B
+
+      - name: SonarQube Summary
+        run: |
+          echo "### SonarQube" >> $GITHUB_STEP_SUMMARY
+          echo "Analysis completed. Check Quality Gate below." >> $GITHUB_STEP_SUMMARY
+
+      # ============================================
+      # QUALITY GATE
+      # ============================================
+      - name: SonarQube Quality Gate
+        id: quality-gate
+        if: "!inputs.skip_quality_gate"
+        uses: SonarSource/sonarqube-quality-gate-action@v1
+        timeout-minutes: 5
+        env:
+          SONAR_HOST_URL: ${{ env.SONAR_URL }}
+
+      - name: Quality Gate Summary
+        if: "!inputs.skip_quality_gate"
+        run: |
+          STATUS="${{ steps.quality-gate.outputs.quality-gate-status }}"
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Quality Gate: ${STATUS}**" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$STATUS" != "PASSED" ]; then
+            echo "::warning::Quality Gate status: $STATUS"
+          fi

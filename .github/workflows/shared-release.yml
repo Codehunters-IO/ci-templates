@@ -1,0 +1,136 @@
+name: Shared - Create Release
+
+on:
+  workflow_call:
+    inputs:
+      base_branch:
+        description: 'Branch to create release from'
+        required: false
+        type: string
+        default: 'develop'
+      target_branch:
+        description: 'Target branch for PR'
+        required: false
+        type: string
+        default: 'main'
+
+    outputs:
+      version:
+        description: 'Release version'
+        value: ${{ jobs.release.outputs.version }}
+      release_branch:
+        description: 'Release branch name'
+        value: ${{ jobs.release.outputs.branch }}
+      pr_number:
+        description: 'Pull request number'
+        value: ${{ jobs.release.outputs.pr_number }}
+      pr_url:
+        description: 'Pull request URL'
+        value: ${{ jobs.release.outputs.pr_url }}
+
+jobs:
+  release:
+    name: Create Release PR
+    runs-on: ubuntu-latest
+
+    outputs:
+      version: ${{ steps.semver.outputs.version }}
+      branch: ${{ steps.create-branch.outputs.branch }}
+      pr_number: ${{ steps.create-pr.outputs.pr_number }}
+      pr_url: ${{ steps.create-pr.outputs.pr_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.base_branch }}
+          fetch-depth: 0
+
+      - name: Calculate semantic version
+        id: semver
+        uses: PaulHatch/semantic-version@v5.4.0
+        with:
+          tag_prefix: "v"
+          major_pattern: "(MAJOR|BREAKING CHANGE)"
+          minor_pattern: "(feat)"
+          format: "${major}.${minor}.${patch}"
+
+      - name: Create release branch
+        id: create-branch
+        env:
+          VERSION: ${{ steps.semver.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RELEASE_BRANCH="release/${VERSION}"
+
+          echo "Creating release branch: $RELEASE_BRANCH"
+
+          # Check if branch already exists
+          if git ls-remote --heads origin "$RELEASE_BRANCH" | grep -q .; then
+            echo "Branch $RELEASE_BRANCH already exists, skipping creation"
+            echo "branch=$RELEASE_BRANCH" >> $GITHUB_OUTPUT
+            echo "created=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Create and push release branch
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b "$RELEASE_BRANCH"
+          git push origin "$RELEASE_BRANCH"
+
+          echo "branch=$RELEASE_BRANCH" >> $GITHUB_OUTPUT
+          echo "created=true" >> $GITHUB_OUTPUT
+
+      - name: Create Pull Request
+        id: create-pr
+        env:
+          VERSION: ${{ steps.semver.outputs.version }}
+          RELEASE_BRANCH: ${{ steps.create-branch.outputs.branch }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Check if PR already exists
+          EXISTING_PR=$(gh pr list --head "$RELEASE_BRANCH" --base "$TARGET_BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo "")
+
+          if [ -n "$EXISTING_PR" ]; then
+            echo "PR #$EXISTING_PR already exists for this release"
+            PR_URL=$(gh pr view "$EXISTING_PR" --json url --jq '.url')
+            echo "pr_number=$EXISTING_PR" >> $GITHUB_OUTPUT
+            echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Create PR
+          PR_BODY="## Release v${VERSION}
+
+          This PR was automatically created after successful deployment to develop.
+
+          ### Changes
+          $(git log origin/${TARGET_BRANCH}..HEAD --pretty=format:'- %s (%h)' | head -20)
+
+          ### Checklist
+          - [ ] Review changes
+          - [ ] Approve and merge to deploy to production
+          "
+
+          PR_URL=$(gh pr create \
+            --title "Release v${VERSION}" \
+            --body "$PR_BODY" \
+            --base "$TARGET_BRANCH" \
+            --head "$RELEASE_BRANCH")
+
+          PR_NUMBER=$(echo "$PR_URL" | grep -oP '\d+$')
+
+          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
+
+          echo "### Release Created" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Version** | v${VERSION} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Branch** | ${RELEASE_BRANCH} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **PR** | #${PR_NUMBER} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **URL** | ${PR_URL} |" >> $GITHUB_STEP_SUMMARY

@@ -1,4 +1,5 @@
-name: Java - Deploy to EC2
+# DEPRECATED: Use shared-deploy-ec2.yml instead
+name: "[DEPRECATED] Java - Deploy to EC2"
 
 on:
   workflow_call:
@@ -59,213 +60,24 @@ on:
     outputs:
       deploy_status:
         description: 'Deployment status'
-        value: ${{ jobs.deploy.outputs.status }}
+        value: ${{ jobs.deploy.outputs.deploy_status }}
       deployed_image:
         description: 'Deployed image tag'
-        value: ${{ jobs.deploy.outputs.image }}
+        value: ${{ jobs.deploy.outputs.deployed_image }}
 
 jobs:
   deploy:
-    name: Deploy to EC2
-    runs-on: ${{ inputs.runner }}
-    environment: ${{ inputs.environment }}
-    timeout-minutes: 15
-
-    outputs:
-      status: ${{ steps.deploy.outputs.status }}
-      image: ${{ inputs.image_tag }}
-
-    steps:
-      - name: Set repository name
-        id: repo
-        run: |
-          REPO_NAME="${{ github.repository }}"
-          # Extract only repo name (without org)
-          REPO_NAME="${REPO_NAME##*/}"
-          echo "name=$REPO_NAME" >> $GITHUB_OUTPUT
-          echo "Repository name: $REPO_NAME"
-
-      - name: Deploy via SSH
-        id: deploy
-        env:
-          EC2_HOST: ${{ secrets.AWS_EC2_HOST }}
-          EC2_USER: ${{ secrets.AWS_EC2_USER }}
-          EC2_SSH_KEY: ${{ secrets.AWS_EC2_SSH_KEY }}
-          AWS_ECR_URL: ${{ secrets.AWS_ECR_URL }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-          IMAGE_TAG: ${{ inputs.image_tag }}
-          APP_PORT: ${{ secrets.AWS_APP_PORT }}
-          REPO_NAME: ${{ steps.repo.outputs.name }}
-          ENVIRONMENT: ${{ inputs.environment }}
-          DOCKER_PLATFORM: ${{ inputs.docker_platform }}
-          MEMORY_LIMIT: ${{ inputs.memory_limit }}
-          MEMORY_RESERVATION: ${{ inputs.memory_reservation }}
-          SPRING_PROFILES: ${{ inputs.spring_profiles }}
-        run: |
-          # Setup SSH
-          mkdir -p ~/.ssh
-          echo "$EC2_SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts 2>/dev/null
-
-          # Create deployment script
-          cat > /tmp/deploy.sh << 'DEPLOY_SCRIPT'
-          #!/bin/bash
-          set -e
-
-          DEPLOY_DIR="/opt/docker/${REPO_NAME}"
-
-          echo "=========================================="
-          echo "Deploying ${REPO_NAME}"
-          echo "Image tag: ${IMAGE_TAG}"
-          echo "Environment: ${ENVIRONMENT}"
-          echo "=========================================="
-
-          # Create directory if not exists
-          if [ ! -d "$DEPLOY_DIR" ]; then
-            echo "Creating directory: $DEPLOY_DIR"
-            sudo mkdir -p "$DEPLOY_DIR"
-            sudo chown ${USER}:${USER} "$DEPLOY_DIR"
-          fi
-          cd "$DEPLOY_DIR"
-
-          # Build Spring profiles: environment is always included
-          if [ -n "${SPRING_PROFILES}" ]; then
-            SPRING_PROFILES_ACTIVE="${SPRING_PROFILES},${ENVIRONMENT}"
-          else
-            SPRING_PROFILES_ACTIVE="${ENVIRONMENT}"
-          fi
-          echo "Spring profiles: ${SPRING_PROFILES_ACTIVE}"
-
-          # Login to ECR
-          echo "Logging in to ECR..."
-          aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ECR_URL}
-
-          # Create docker-compose.yml
-          echo "Creating docker-compose.yml..."
-          cat > docker-compose.yml << EOF
-          services:
-            ${REPO_NAME}:
-              image: ${AWS_ECR_URL}/${REPO_NAME}:${IMAGE_TAG}
-              platform: ${DOCKER_PLATFORM}
-              container_name: ${REPO_NAME}
-              restart: unless-stopped
-              environment:
-                - SERVER_PORT=${APP_PORT}
-                - APP_NAME=${REPO_NAME}
-                - SPRING_PROFILES_ACTIVE=${SPRING_PROFILES_ACTIVE}
-                - SERVER_CONTEXT_PATH=/${REPO_NAME}
-                - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-                - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-                - AWS_REGION=${AWS_REGION}
-              ports:
-                - "${APP_PORT}:${APP_PORT}"
-              mem_limit: ${MEMORY_LIMIT}
-              mem_reservation: ${MEMORY_RESERVATION}
-              networks:
-                - soldife_net
-              logging:
-                driver: "json-file"
-                options:
-                  max-size: "10m"
-                  max-file: "3"
-
-          networks:
-            soldife_net:
-              external: true
-          EOF
-
-          # Create start.sh if not exists
-          if [ ! -f "start.sh" ]; then
-            echo "Creating start.sh..."
-            cat > start.sh << 'STARTEOF'
-          #!/usr/bin/env bash
-          set -euo pipefail
-
-          COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
-          PROJECT_NAME="${PROJECT_NAME:-${REPO_NAME}}"
-
-          echo "==> Starting stack (project: ${PROJECT_NAME}) using ${COMPOSE_FILE}"
-          docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" up -d
-
-          echo "==> Current status:"
-          docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" ps
-
-          echo "==> App logs (last 50 lines):"
-          docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" logs --tail=50
-          STARTEOF
-            chmod +x start.sh
-          fi
-
-          # Create stop.sh if not exists
-          if [ ! -f "stop.sh" ]; then
-            echo "Creating stop.sh..."
-            cat > stop.sh << 'STOPEOF'
-          #!/usr/bin/env bash
-          set -euo pipefail
-
-          COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
-          PROJECT_NAME="${REPO_NAME:-$(basename $(pwd))}"
-
-          echo "==> Stopping stack (project: ${PROJECT_NAME})"
-          docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" down
-
-          echo "==> Done."
-          echo "Tip: if you ALSO want to remove volumes (DATA LOSS), run:"
-          echo "  docker compose -p \"${PROJECT_NAME}\" -f \"${COMPOSE_FILE}\" down -v"
-          STOPEOF
-            chmod +x stop.sh
-          fi
-
-          # Pull latest image from ECR
-          echo "Pulling latest image..."
-          docker pull ${AWS_ECR_URL}/${REPO_NAME}:${IMAGE_TAG}
-
-          # Stop existing container if running
-          if docker ps -q -f name=${REPO_NAME} 2>/dev/null | grep -q .; then
-            echo "Stopping existing container..."
-            ./stop.sh || true
-          fi
-
-          # Start new container
-          echo "Starting new container..."
-          ./start.sh
-
-          echo "Deployment completed successfully!"
-          DEPLOY_SCRIPT
-
-          # Copy and execute script on EC2
-          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no /tmp/deploy.sh ${EC2_USER}@${EC2_HOST}:/tmp/deploy.sh
-
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=10 ${EC2_USER}@${EC2_HOST} "
-            chmod +x /tmp/deploy.sh && \
-            REPO_NAME='${REPO_NAME}' \
-            IMAGE_TAG='${IMAGE_TAG}' \
-            AWS_ECR_URL='${AWS_ECR_URL}' \
-            AWS_ACCESS_KEY_ID='${AWS_ACCESS_KEY_ID}' \
-            AWS_SECRET_ACCESS_KEY='${AWS_SECRET_ACCESS_KEY}' \
-            AWS_REGION='${AWS_REGION}' \
-            APP_PORT='${APP_PORT}' \
-            ENVIRONMENT='${ENVIRONMENT}' \
-            DOCKER_PLATFORM='${DOCKER_PLATFORM}' \
-            MEMORY_LIMIT='${MEMORY_LIMIT}' \
-            MEMORY_RESERVATION='${MEMORY_RESERVATION}' \
-            SPRING_PROFILES='${SPRING_PROFILES}' \
-            /tmp/deploy.sh
-          "
-
-          echo "status=success" >> $GITHUB_OUTPUT
-
-          # Summary
-          echo "### Deployment Completed" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| **Server** | $EC2_HOST |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Application** | $REPO_NAME |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Image Tag** | $IMAGE_TAG |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Environment** | $ENVIRONMENT |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Port** | $APP_PORT |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Directory** | /opt/docker/$REPO_NAME |" >> $GITHUB_STEP_SUMMARY
+    uses: ./.github/workflows/shared-deploy-ec2.yml
+    with:
+      runner: ${{ inputs.runner }}
+      image_tag: ${{ inputs.image_tag }}
+      environment: ${{ inputs.environment }}
+      docker_platform: ${{ inputs.docker_platform }}
+      memory_limit: ${{ inputs.memory_limit }}
+      memory_reservation: ${{ inputs.memory_reservation }}
+      container_port: '8080'
+      container_env_vars: |
+        SERVER_PORT=8080
+        SPRING_PROFILES_ACTIVE=${{ inputs.spring_profiles != '' && format('{0},{1}', inputs.spring_profiles, inputs.environment) || inputs.environment }}
+        SERVER_CONTEXT_PATH=/${{ github.event.repository.name }}
+    secrets: inherit

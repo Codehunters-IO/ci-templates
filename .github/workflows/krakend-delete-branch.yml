@@ -1,4 +1,5 @@
-name: Delete Merged Branch
+# DEPRECATED: Use shared-delete-branch.yml instead
+name: "[DEPRECATED] KrakenD - Delete Merged Branch"
 
 on:
   workflow_call:
@@ -17,102 +18,15 @@ on:
     outputs:
       deleted_branch:
         description: 'Name of deleted branch (empty if not deleted)'
-        value: ${{ jobs.delete.outputs.branch }}
+        value: ${{ jobs.delete.outputs.deleted_branch }}
       status:
         description: 'Status: deleted, skipped, protected, not_found'
         value: ${{ jobs.delete.outputs.status }}
 
 jobs:
   delete:
-    name: Delete Branch
-    runs-on: ubuntu-latest
-
-    outputs:
-      branch: ${{ steps.delete.outputs.branch }}
-      status: ${{ steps.delete.outputs.status }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Detect and delete branch
-        id: delete
-        env:
-          GH_TOKEN: ${{ github.token }}
-          INPUT_BRANCH: ${{ inputs.branch_name }}
-          DRY_RUN: ${{ inputs.dry_run }}
-        run: |
-          # Protected branches - never delete
-          PROTECTED_BRANCHES="main master develop release"
-
-          # Determine branch to delete
-          if [ -n "$INPUT_BRANCH" ]; then
-            BRANCH="$INPUT_BRANCH"
-          else
-            # Try to detect from merge commit message
-            # Format: "Merge pull request #N from org/branch-name"
-            # Or: "Merge branch 'branch-name' into develop"
-            COMMIT_MSG=$(git log -1 --pretty=%B)
-
-            if echo "$COMMIT_MSG" | grep -q "Merge pull request"; then
-              BRANCH=$(echo "$COMMIT_MSG" | grep -oP "from [^/]+/\K[^\s]+" | head -1)
-            elif echo "$COMMIT_MSG" | grep -q "Merge branch"; then
-              BRANCH=$(echo "$COMMIT_MSG" | grep -oP "Merge branch '\K[^']+" | head -1)
-            else
-              echo "Could not detect branch from commit message"
-              echo "status=not_found" >> $GITHUB_OUTPUT
-              echo "branch=" >> $GITHUB_OUTPUT
-              exit 0
-            fi
-          fi
-
-          echo "Detected branch: $BRANCH"
-
-          # Check if branch is protected
-          for protected in $PROTECTED_BRANCHES; do
-            if [ "$BRANCH" = "$protected" ]; then
-              echo "Branch '$BRANCH' is protected, skipping"
-              echo "status=protected" >> $GITHUB_OUTPUT
-              echo "branch=$BRANCH" >> $GITHUB_OUTPUT
-              exit 0
-            fi
-          done
-
-          # Check if starts with release/
-          if echo "$BRANCH" | grep -q "^release/"; then
-            echo "Branch '$BRANCH' is a release branch, skipping"
-            echo "status=protected" >> $GITHUB_OUTPUT
-            echo "branch=$BRANCH" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          # Check if branch exists
-          if ! git ls-remote --heads origin "$BRANCH" | grep -q .; then
-            echo "Branch '$BRANCH' does not exist on remote"
-            echo "status=not_found" >> $GITHUB_OUTPUT
-            echo "branch=$BRANCH" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          # Delete branch
-          if [ "$DRY_RUN" = "true" ]; then
-            echo "[DRY RUN] Would delete branch: $BRANCH"
-            echo "status=skipped" >> $GITHUB_OUTPUT
-          else
-            echo "Deleting branch: $BRANCH"
-            gh api -X DELETE "repos/${{ github.repository }}/git/refs/heads/$BRANCH" || true
-            echo "status=deleted" >> $GITHUB_OUTPUT
-          fi
-
-          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
-
-          # Summary
-          echo "### Branch Cleanup" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [ "$DRY_RUN" = "true" ]; then
-            echo "**[DRY RUN]** Would delete: \`$BRANCH\`" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "Deleted branch: \`$BRANCH\`" >> $GITHUB_STEP_SUMMARY
-          fi
+    uses: ./.github/workflows/shared-delete-branch.yml
+    with:
+      branch_name: ${{ inputs.branch_name }}
+      dry_run: ${{ inputs.dry_run }}
+    secrets: inherit

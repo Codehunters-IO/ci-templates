@@ -1,4 +1,5 @@
-name: Commit Lint
+# DEPRECATED: Use shared-commit-lint.yml instead
+name: "[DEPRECATED] KrakenD - Commit Lint"
 
 on:
   workflow_call:
@@ -10,23 +11,7 @@ on:
         default: 'ubuntu-latest'
 
 jobs:
-  commitlint:
-    name: Lint Commit Messages
-    runs-on: ${{ inputs.runner }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Install commitlint
-        run: |
-          npm install --save-dev @commitlint/config-conventional @commitlint/cli
-
-      - name: Validate PR commits
-        if: github.event_name == 'pull_request'
-        run: npx commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
-
-      - name: Validate last commit
-        if: github.event_name != 'pull_request'
-        run: npx commitlint --from HEAD~1 --to HEAD --verbose
+  lint:
+    uses: ./.github/workflows/shared-commit-lint.yml
+    with:
+      runner: ${{ inputs.runner }}

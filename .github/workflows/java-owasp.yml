@@ -1,0 +1,170 @@
+name: Java - OWASP Dependency Check
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      java_version:
+        description: 'Java version'
+        required: false
+        type: string
+        default: '21'
+      java_distribution:
+        description: 'Java distribution'
+        required: false
+        type: string
+        default: 'temurin'
+      owasp_fail_on_cvss:
+        description: 'CVSS score threshold to fail build (7 = HIGH+CRITICAL, 9 = CRITICAL only)'
+        required: false
+        type: number
+        default: 7
+      build_tool:
+        description: 'Build tool: gradle or maven'
+        required: false
+        type: string
+        default: 'gradle'
+
+    secrets:
+      NVD_API_KEY:
+        required: false
+
+    outputs:
+      vulnerabilities:
+        description: 'Total number of vulnerabilities found'
+        value: ${{ jobs.owasp.outputs.vulns }}
+      critical:
+        description: 'Number of CRITICAL vulnerabilities'
+        value: ${{ jobs.owasp.outputs.critical }}
+      high:
+        description: 'Number of HIGH vulnerabilities'
+        value: ${{ jobs.owasp.outputs.high }}
+
+jobs:
+  owasp:
+    name: OWASP Dependency Check
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 30
+
+    outputs:
+      vulns: ${{ steps.owasp-check.outputs.vulnerabilities }}
+      critical: ${{ steps.owasp-check.outputs.critical }}
+      high: ${{ steps.owasp-check.outputs.high }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK ${{ inputs.java_version }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: ${{ inputs.java_distribution }}
+          java-version: ${{ inputs.java_version }}
+          cache: ${{ inputs.build_tool }}
+
+      - name: Setup Gradle
+        if: inputs.build_tool == 'gradle'
+        uses: gradle/actions/setup-gradle@v4
+
+      # ============================================
+      # RUN OWASP DEPENDENCY CHECK
+      # ============================================
+      - name: Run OWASP Dependency Check (Gradle)
+        id: owasp-check
+        if: inputs.build_tool == 'gradle'
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+          GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME }}
+          GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
+        run: |
+          echo "Running OWASP Dependency Check..."
+
+          OWASP_CMD="./gradlew dependencyCheckAnalyze --no-daemon --build-cache"
+          if [ -n "$NVD_API_KEY" ]; then
+            OWASP_CMD="$OWASP_CMD -DnvdApiKey=$NVD_API_KEY"
+          fi
+
+          $OWASP_CMD || true
+
+          # Parse the report
+          REPORT_FILE="build/reports/dependency-check-report.json"
+          VULNS=0; CRITICAL=0; HIGH=0; MEDIUM=0; LOW=0
+
+          if [ -f "$REPORT_FILE" ]; then
+            CRITICAL=$(jq '[.dependencies[]?.vulnerabilities[]? | select(.severity == "CRITICAL")] | length' "$REPORT_FILE" 2>/dev/null || echo "0")
+            HIGH=$(jq '[.dependencies[]?.vulnerabilities[]? | select(.severity == "HIGH")] | length' "$REPORT_FILE" 2>/dev/null || echo "0")
+            MEDIUM=$(jq '[.dependencies[]?.vulnerabilities[]? | select(.severity == "MEDIUM")] | length' "$REPORT_FILE" 2>/dev/null || echo "0")
+            LOW=$(jq '[.dependencies[]?.vulnerabilities[]? | select(.severity == "LOW")] | length' "$REPORT_FILE" 2>/dev/null || echo "0")
+            VULNS=$((CRITICAL + HIGH + MEDIUM + LOW))
+          fi
+
+          echo "vulnerabilities=$VULNS" >> $GITHUB_OUTPUT
+          echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
+          echo "high=$HIGH" >> $GITHUB_OUTPUT
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### OWASP Dependency Check" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Severity | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| CRITICAL | $CRITICAL |" >> $GITHUB_STEP_SUMMARY
+          echo "| HIGH | $HIGH |" >> $GITHUB_STEP_SUMMARY
+          echo "| MEDIUM | $MEDIUM |" >> $GITHUB_STEP_SUMMARY
+          echo "| LOW | $LOW |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Total** | **$VULNS** |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Run OWASP Dependency Check (Maven)
+        id: owasp-check-maven
+        if: inputs.build_tool == 'maven'
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: |
+          echo "Running OWASP Dependency Check..."
+
+          MVN_CMD="mvn org.owasp:dependency-check-maven:check -B"
+          if [ -n "$NVD_API_KEY" ]; then
+            MVN_CMD="$MVN_CMD -DnvdApiKey=$NVD_API_KEY"
+          fi
+
+          $MVN_CMD || true
+
+          REPORT_FILE=$(find . -path "*/dependency-check-report.json" | head -1)
+          VULNS=0; CRITICAL=0; HIGH=0
+
+          if [ -n "$REPORT_FILE" ] && [ -f "$REPORT_FILE" ]; then
+            CRITICAL=$(jq '[.dependencies[]?.vulnerabilities[]? | select(.severity == "CRITICAL")] | length' "$REPORT_FILE" 2>/dev/null || echo "0")
+            HIGH=$(jq '[.dependencies[]?.vulnerabilities[]? | select(.severity == "HIGH")] | length' "$REPORT_FILE" 2>/dev/null || echo "0")
+            VULNS=$((CRITICAL + HIGH))
+          fi
+
+          echo "vulnerabilities=$VULNS" >> $GITHUB_OUTPUT
+          echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
+          echo "high=$HIGH" >> $GITHUB_OUTPUT
+
+      # ============================================
+      # CHECK THRESHOLDS
+      # ============================================
+      - name: Check OWASP vulnerabilities
+        run: |
+          CRITICAL="${{ steps.owasp-check.outputs.critical || steps.owasp-check-maven.outputs.critical }}"
+          HIGH="${{ steps.owasp-check.outputs.high || steps.owasp-check-maven.outputs.high }}"
+          THRESHOLD="${{ inputs.owasp_fail_on_cvss }}"
+
+          CRITICAL="${CRITICAL:-0}"
+          HIGH="${HIGH:-0}"
+
+          if [ "$CRITICAL" -gt 0 ]; then
+            echo "::error::Found $CRITICAL CRITICAL vulnerabilities"
+            exit 1
+          fi
+
+          if [ "$THRESHOLD" -le 7 ] && [ "$HIGH" -gt 0 ]; then
+            echo "::error::Found $HIGH HIGH vulnerabilities"
+            exit 1
+          fi
+
+          echo "No blocking vulnerabilities found"

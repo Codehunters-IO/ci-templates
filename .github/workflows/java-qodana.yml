@@ -1,0 +1,38 @@
+name: Java - Qodana Analysis
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+
+    secrets:
+      QODANA_TOKEN:
+        required: true
+
+jobs:
+  qodana:
+    name: Qodana Analysis
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Qodana analysis
+        uses: JetBrains/qodana-action@v2024.3
+        with:
+          args: --apply-fixes
+        env:
+          QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
+
+      - name: Qodana Summary
+        run: |
+          echo "### Qodana Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "Analysis completed. Check [Qodana Cloud](https://qodana.cloud) for details." >> $GITHUB_STEP_SUMMARY

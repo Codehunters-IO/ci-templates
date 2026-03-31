@@ -23,6 +23,36 @@ on:
         default: 'yarn'
 
       # Pipeline steps control
+      run_commit_lint:
+        description: 'Run commit message validation'
+        required: false
+        type: boolean
+        default: false
+      run_trufflehog:
+        description: 'Run TruffleHog secret scanning'
+        required: false
+        type: boolean
+        default: false
+      trufflehog_only_verified:
+        description: 'Only report verified secrets'
+        required: false
+        type: boolean
+        default: true
+      trufflehog_fail_on_findings:
+        description: 'Fail the workflow if secrets are found'
+        required: false
+        type: boolean
+        default: true
+      run_dependency_review:
+        description: 'Run dependency review (PR only)'
+        required: false
+        type: boolean
+        default: false
+      dependency_review_severity:
+        description: 'Minimum severity to fail: low, moderate, high, critical'
+        required: false
+        type: string
+        default: 'high'
       run_build:
         description: 'Run build job'
         required: false
@@ -60,11 +90,6 @@ on:
         default: false
       run_release:
         description: 'Create release PR after deploy'
-        required: false
-        type: boolean
-        default: false
-      run_commit_lint:
-        description: 'Run commit message validation'
         required: false
         type: boolean
         default: false
@@ -136,14 +161,39 @@ on:
 
 jobs:
   # ============================================
-  # COMMIT LINT
+  # COMMIT LINT (parallel, no deps)
   # ============================================
   commit-lint:
     name: Commit Lint
     if: inputs.run_commit_lint
-    uses: ./.github/workflows/react-commit-lint.yml
+    uses: ./.github/workflows/shared-commit-lint.yml
     with:
       runner: ${{ inputs.runner }}
+
+  # ============================================
+  # SECURITY - TruffleHog (parallel, no deps)
+  # ============================================
+  security:
+    name: Security Scan
+    if: inputs.run_trufflehog
+    uses: ./.github/workflows/security-trufflehog.yml
+    with:
+      runner: ${{ inputs.runner }}
+      only_verified: ${{ inputs.trufflehog_only_verified }}
+      fail_on_findings: ${{ inputs.trufflehog_fail_on_findings }}
+    secrets: inherit
+
+  # ============================================
+  # SECURITY - Dependency Review (parallel, no deps)
+  # ============================================
+  dependency-review:
+    name: Dependency Review
+    if: inputs.run_dependency_review
+    uses: ./.github/workflows/security-dependency-review.yml
+    with:
+      runner: ${{ inputs.runner }}
+      fail_on_severity: ${{ inputs.dependency_review_severity }}
+    secrets: inherit
 
   # ============================================
   # BUILD
@@ -209,7 +259,7 @@ jobs:
       always() &&
       needs.deploy.result == 'success'
     needs: [deploy]
-    uses: ./.github/workflows/react-delete-branch.yml
+    uses: ./.github/workflows/shared-delete-branch.yml
     secrets: inherit
 
   # ============================================
@@ -223,7 +273,7 @@ jobs:
       needs.deploy.result == 'success' &&
       (needs.cleanup.result == 'success' || needs.cleanup.result == 'skipped')
     needs: [deploy, cleanup]
-    uses: ./.github/workflows/react-release.yml
+    uses: ./.github/workflows/shared-release.yml
     with:
       base_branch: ${{ inputs.environment }}
       target_branch: ${{ inputs.release_target_branch }}
