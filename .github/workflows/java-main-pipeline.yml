@@ -120,33 +120,8 @@ on:
         required: false
         type: string
         default: 'publish'
-      run_deploy:
-        description: 'Deploy to EC2'
-        required: false
-        type: boolean
-        default: false
-      run_cleanup:
-        description: 'Delete merged branch after deploy'
-        required: false
-        type: boolean
-        default: false
-      run_release:
-        description: 'Create release PR after deploy'
-        required: false
-        type: boolean
-        default: false
-      run_commit_lint:
-        description: 'Run commit message validation'
-        required: false
-        type: boolean
-        default: false
 
       # Test options
-      coverage_threshold:
-        description: 'Minimum line coverage percentage (0-100)'
-        required: false
-        type: number
-        default: 0
       coverage_instruction_threshold:
         description: 'Minimum instruction coverage percentage (0-100). Requires jacocoLogCodeCoverage task.'
         required: false
