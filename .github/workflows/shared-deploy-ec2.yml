@@ -115,6 +115,9 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts 2>/dev/null
 
+          # Encode multiline env vars to preserve newlines over SSH
+          CONTAINER_ENV_VARS_B64=$(echo "$CONTAINER_ENV_VARS" | base64 | tr -d '\n')
+
           # Create deployment script
           cat > /tmp/deploy.sh << 'DEPLOY_SCRIPT'
           #!/bin/bash
@@ -139,6 +142,9 @@ jobs:
           # Login to ECR
           echo "Logging in to ECR..."
           aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ECR_URL}
+
+          # Decode env vars from base64
+          CONTAINER_ENV_VARS=$(echo "${CONTAINER_ENV_VARS_B64}" | base64 -d)
 
           # Build environment block for docker-compose
           ENV_BLOCK=""
@@ -255,7 +261,7 @@ jobs:
             DOCKER_PLATFORM='${DOCKER_PLATFORM}' \
             MEMORY_LIMIT='${MEMORY_LIMIT}' \
             MEMORY_RESERVATION='${MEMORY_RESERVATION}' \
-            CONTAINER_ENV_VARS='${CONTAINER_ENV_VARS}' \
+            CONTAINER_ENV_VARS_B64='${CONTAINER_ENV_VARS_B64}' \
             /tmp/deploy.sh
           "
 
