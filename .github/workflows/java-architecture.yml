@@ -22,7 +22,7 @@ on:
         description: 'Upload architecture diagrams as artifact'
         required: false
         type: boolean
-        default: true
+        default: false
       artifact_retention_days:
         description: 'Days to retain architecture artifacts'
         required: false
