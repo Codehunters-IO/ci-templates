@@ -168,16 +168,11 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Get ECR registry URL
-        id: ecr-url
-        run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          REGION=$(aws configure get region)
-          echo "registry=${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com" >> $GITHUB_OUTPUT
-
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
+        with:
+          mask-aws-account-id: 'false'
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -188,7 +183,7 @@ jobs:
       - name: Build and push to ECR
         id: push-ecr
         env:
-          ECR_REGISTRY: ${{ steps.ecr-url.outputs.registry }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ github.event.repository.name }}
           IMAGE_TAG: ${{ steps.set-tag.outputs.tag }}
         run: |

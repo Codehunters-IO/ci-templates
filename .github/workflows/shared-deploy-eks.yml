@@ -107,6 +107,8 @@ on:
         default: ''
 
     secrets:
+      AWS_ECR_URL:
+        required: true
       AWS_ACCESS_KEY_ID:
         required: true
       AWS_SECRET_ACCESS_KEY:
@@ -146,11 +148,9 @@ jobs:
 
       - name: Setup deployment vars
         id: setup
+        env:
+          AWS_ECR_URL: ${{ secrets.AWS_ECR_URL }}
         run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          REGION=$(aws configure get region)
-          ECR_URL="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
-
           REPO_NAME="${{ github.repository }}"
           REPO_NAME="${REPO_NAME##*/}"
 
@@ -164,7 +164,7 @@ jobs:
             CTR_NAME="$REPO_NAME"
           fi
 
-          IMAGE_URI="${ECR_URL}/${REPO_NAME}:${{ inputs.image_tag }}"
+          IMAGE_URI="${AWS_ECR_URL}/${REPO_NAME}:${{ inputs.image_tag }}"
 
           echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
           echo "deploy_name=$DEPLOY_NAME" >> $GITHUB_OUTPUT
