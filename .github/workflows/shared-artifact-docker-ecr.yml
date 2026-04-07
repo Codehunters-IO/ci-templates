@@ -168,6 +168,13 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      - name: Get ECR registry URL
+        id: ecr-url
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          REGION=$(aws configure get region)
+          echo "registry=${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com" >> $GITHUB_OUTPUT
+
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
@@ -177,13 +184,6 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-      - name: Get ECR registry URL
-        id: ecr-url
-        run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          REGION=$(aws configure get region)
-          echo "registry=${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com" >> $GITHUB_OUTPUT
 
       - name: Build and push to ECR
         id: push-ecr
