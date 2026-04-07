@@ -146,44 +146,40 @@ jobs:
           # Decode env vars from base64
           CONTAINER_ENV_VARS=$(echo "${CONTAINER_ENV_VARS_B64}" | base64 -d)
 
-          # Build environment block for docker-compose
-          ENV_BLOCK=""
-          if [ -n "${CONTAINER_ENV_VARS}" ]; then
-            while IFS= read -r line; do
-              if [ -n "$line" ]; then
-                ENV_BLOCK="${ENV_BLOCK}            - ${line}\n"
-              fi
-            done <<< "${CONTAINER_ENV_VARS}"
-          fi
-
           # Create docker-compose.yml
           echo "Creating docker-compose.yml..."
-          cat > docker-compose.yml << EOF
-          services:
-            ${REPO_NAME}:
-              image: ${AWS_ECR_URL}/${REPO_NAME}:${IMAGE_TAG}
-              platform: ${DOCKER_PLATFORM}
-              container_name: ${REPO_NAME}
-              restart: unless-stopped
-              environment:
-                - APP_NAME=${REPO_NAME}
-          $(if [ -n "${ENV_BLOCK}" ]; then echo -e "${ENV_BLOCK}"; fi)
-              ports:
-                - "${APP_PORT}:${CONTAINER_PORT}"
-              mem_limit: ${MEMORY_LIMIT}
-              mem_reservation: ${MEMORY_RESERVATION}
-              networks:
-                - soldife_net
-              logging:
-                driver: "json-file"
-                options:
-                  max-size: "10m"
-                  max-file: "3"
-
-          networks:
-            soldife_net:
-              external: true
-          EOF
+          {
+            echo "services:"
+            echo "  ${REPO_NAME}:"
+            echo "    image: ${AWS_ECR_URL}/${REPO_NAME}:${IMAGE_TAG}"
+            echo "    platform: ${DOCKER_PLATFORM}"
+            echo "    container_name: ${REPO_NAME}"
+            echo "    restart: unless-stopped"
+            echo "    environment:"
+            echo "      - APP_NAME=${REPO_NAME}"
+            if [ -n "${CONTAINER_ENV_VARS}" ]; then
+              while IFS= read -r line; do
+                if [ -n "$line" ]; then
+                  echo "      - ${line}"
+                fi
+              done <<< "${CONTAINER_ENV_VARS}"
+            fi
+            echo "    ports:"
+            echo "      - \"${APP_PORT}:${CONTAINER_PORT}\""
+            echo "    mem_limit: ${MEMORY_LIMIT}"
+            echo "    mem_reservation: ${MEMORY_RESERVATION}"
+            echo "    networks:"
+            echo "      - soldife_net"
+            echo "    logging:"
+            echo "      driver: \"json-file\""
+            echo "      options:"
+            echo "        max-size: \"10m\""
+            echo "        max-file: \"3\""
+            echo ""
+            echo "networks:"
+            echo "  soldife_net:"
+            echo "    external: true"
+          } > docker-compose.yml
 
           # Create start.sh if not exists
           if [ ! -f "start.sh" ]; then
