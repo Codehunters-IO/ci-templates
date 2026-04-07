@@ -157,6 +157,9 @@ jobs:
             echo "    restart: unless-stopped"
             echo "    environment:"
             echo "      - APP_NAME=${REPO_NAME}"
+            echo "      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
+            echo "      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
+            echo "      - AWS_REGION=${AWS_REGION}"
             if [ -n "${CONTAINER_ENV_VARS}" ]; then
               while IFS= read -r line; do
                 if [ -n "$line" ]; then
