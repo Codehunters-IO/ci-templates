@@ -155,7 +155,7 @@ jobs:
             echo "    restart: unless-stopped"
             echo "    environment:"
             echo "      - APP_NAME=${REPO_NAME}"
-            echo "      - LOG_PATH=/app/log/${REPO_NAME}"
+            echo "      - PATH_LOGS=/app/log/${REPO_NAME}"
             echo "      - SERVER_PORT=${APP_PORT}"
             echo "      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
             echo "      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
