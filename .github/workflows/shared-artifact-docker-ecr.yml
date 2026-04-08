@@ -197,28 +197,22 @@ jobs:
 
           echo "Building and pushing Docker image: $IMAGE_URI"
           echo "Platform: ${{ inputs.docker_platform }}"
-          # Build labels
-          LABELS=""
-          LABELS="$LABELS --label org.opencontainers.image.source=https://github.com/${{ github.repository }}"
-          LABELS="$LABELS --label org.opencontainers.image.revision=${{ github.sha }}"
-          LABELS="$LABELS --label org.opencontainers.image.created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          LABELS="$LABELS --label org.opencontainers.image.title=$ECR_REPOSITORY"
-          LABELS="$LABELS --label org.opencontainers.image.version=$IMAGE_TAG"
-          LABELS="$LABELS --label org.opencontainers.image.vendor=soldife"
-          LABELS="$LABELS --label build.github.run-id=${{ github.run_id }}"
-          LABELS="$LABELS --label build.github.workflow=${{ github.workflow }}"
-          LABELS="$LABELS --label build.environment=${{ inputs.environment }}"
-
-          # Observability labels (Alloy/Loki/Prometheus discovery)
-          LABELS="$LABELS --label observability.service=$ECR_REPOSITORY"
-          LABELS="$LABELS --label observability.environment=${{ inputs.environment }}"
-          LABELS="$LABELS --label observability.domain=${ECR_REPOSITORY%%-*}"
-
           docker buildx build \
             --platform ${{ inputs.docker_platform }} \
             --no-cache \
             $TAGS \
-            $LABELS \
+            --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            --label "org.opencontainers.image.created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+            --label "org.opencontainers.image.title=$ECR_REPOSITORY" \
+            --label "org.opencontainers.image.version=$IMAGE_TAG" \
+            --label "org.opencontainers.image.vendor=soldife" \
+            --label "build.github.run-id=${{ github.run_id }}" \
+            --label "build.github.workflow=${{ github.workflow }}" \
+            --label "build.environment=${{ inputs.environment }}" \
+            --label "observability.service=$ECR_REPOSITORY" \
+            --label "observability.environment=${{ inputs.environment }}" \
+            --label "observability.domain=${ECR_REPOSITORY%%-*}" \
             --push \
             ${{ inputs.dockerfile_path }}
 
