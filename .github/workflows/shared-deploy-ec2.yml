@@ -125,13 +125,17 @@ jobs:
           echo "Environment: ${ENVIRONMENT}"
           echo "=========================================="
 
-          # Create directory if not exists
+          # Create directories if not exists
           if [ ! -d "$DEPLOY_DIR" ]; then
             echo "Creating directory: $DEPLOY_DIR"
             sudo mkdir -p "$DEPLOY_DIR"
             sudo chown ${USER}:${USER} "$DEPLOY_DIR"
           fi
+
           cd "$DEPLOY_DIR"
+
+          # Create shared_logs volume if not exists
+          docker volume inspect shared_logs >/dev/null 2>&1 || docker volume create shared_logs
 
           # Login to ECR
           echo "Logging in to ECR..."
@@ -164,6 +168,12 @@ jobs:
             fi
             echo "    ports:"
             echo "      - \"${APP_PORT}:${APP_PORT}\""
+            echo "    volumes:"
+            echo "      - type: volume"
+            echo "        source: shared_logs"
+            echo "        target: /app/log"
+            echo "        volume:"
+            echo "          subpath: ${REPO_NAME}"
             echo "    mem_limit: ${MEMORY_LIMIT}"
             echo "    mem_reservation: ${MEMORY_RESERVATION}"
             echo "    networks:"
@@ -173,6 +183,10 @@ jobs:
             echo "      options:"
             echo "        max-size: \"10m\""
             echo "        max-file: \"3\""
+            echo ""
+            echo "volumes:"
+            echo "  shared_logs:"
+            echo "    external: true"
             echo ""
             echo "networks:"
             echo "  soldife_net:"
