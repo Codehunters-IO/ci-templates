@@ -70,5 +70,4 @@ jobs:
       docker_platform: ${{ inputs.docker_platform }}
       memory_limit: ${{ inputs.memory_limit }}
       memory_reservation: ${{ inputs.memory_reservation }}
-      container_port: '8080'
     secrets: inherit

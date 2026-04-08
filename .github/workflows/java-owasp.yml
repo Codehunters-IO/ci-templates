@@ -64,11 +64,12 @@ jobs:
         with:
           distribution: ${{ inputs.java_distribution }}
           java-version: ${{ inputs.java_version }}
-          cache: ${{ inputs.build_tool }}
 
       - name: Setup Gradle
         if: inputs.build_tool == 'gradle'
         uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' }}
 
       # ============================================
       # RUN OWASP DEPENDENCY CHECK

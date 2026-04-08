@@ -32,11 +32,6 @@ on:
         required: false
         type: string
         default: '256m'
-      container_port:
-        description: 'Port inside the container (e.g., 8080 for Spring, 8080 for KrakenD)'
-        required: false
-        type: string
-        default: '8080'
       container_env_vars:
         description: 'Additional environment variables block for docker-compose (one per line: KEY=VALUE)'
         required: false
@@ -106,7 +101,6 @@ jobs:
           DOCKER_PLATFORM: ${{ inputs.docker_platform }}
           MEMORY_LIMIT: ${{ inputs.memory_limit }}
           MEMORY_RESERVATION: ${{ inputs.memory_reservation }}
-          CONTAINER_PORT: ${{ inputs.container_port }}
           CONTAINER_ENV_VARS: ${{ inputs.container_env_vars }}
         run: |
           # Setup SSH
@@ -157,6 +151,7 @@ jobs:
             echo "    restart: unless-stopped"
             echo "    environment:"
             echo "      - APP_NAME=${REPO_NAME}"
+            echo "      - SERVER_PORT=${APP_PORT}"
             echo "      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
             echo "      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
             echo "      - AWS_REGION=${AWS_REGION}"
@@ -168,7 +163,7 @@ jobs:
               done <<< "${CONTAINER_ENV_VARS}"
             fi
             echo "    ports:"
-            echo "      - \"${APP_PORT}:${CONTAINER_PORT}\""
+            echo "      - \"${APP_PORT}:${APP_PORT}\""
             echo "    mem_limit: ${MEMORY_LIMIT}"
             echo "    mem_reservation: ${MEMORY_RESERVATION}"
             echo "    networks:"
@@ -255,7 +250,6 @@ jobs:
             AWS_SECRET_ACCESS_KEY='${AWS_SECRET_ACCESS_KEY}' \
             AWS_REGION='${AWS_REGION}' \
             APP_PORT='${APP_PORT}' \
-            CONTAINER_PORT='${CONTAINER_PORT}' \
             ENVIRONMENT='${ENVIRONMENT}' \
             DOCKER_PLATFORM='${DOCKER_PLATFORM}' \
             MEMORY_LIMIT='${MEMORY_LIMIT}' \
@@ -275,5 +269,5 @@ jobs:
           echo "| **Application** | $REPO_NAME |" >> $GITHUB_STEP_SUMMARY
           echo "| **Image Tag** | $IMAGE_TAG |" >> $GITHUB_STEP_SUMMARY
           echo "| **Environment** | $ENVIRONMENT |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Port** | $APP_PORT:$CONTAINER_PORT |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Port** | $APP_PORT |" >> $GITHUB_STEP_SUMMARY
           echo "| **Directory** | /opt/docker/$REPO_NAME |" >> $GITHUB_STEP_SUMMARY

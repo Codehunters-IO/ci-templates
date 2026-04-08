@@ -506,9 +506,7 @@ jobs:
       environment: ${{ inputs.environment }}
       memory_limit: ${{ inputs.memory_limit }}
       memory_reservation: ${{ inputs.memory_reservation }}
-      container_port: '8080'
       container_env_vars: |
-        SERVER_PORT=${{ inputs.spring_profiles != '' && '8080' || '8080' }}
         SPRING_PROFILES_ACTIVE=${{ inputs.spring_profiles != '' && format('{0},{1}', inputs.spring_profiles, inputs.environment) || inputs.environment }}
         SERVER_CONTEXT_PATH=/${{ github.event.repository.name }}
     secrets: inherit
