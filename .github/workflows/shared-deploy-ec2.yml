@@ -156,7 +156,6 @@ jobs:
             echo "    environment:"
             echo "      - APP_NAME=${REPO_NAME}"
             echo "      - PATH_LOGS=/app/log/${REPO_NAME}"
-            echo "      - SERVER_PORT=8080"
             echo "      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
             echo "      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
             echo "      - AWS_REGION=${AWS_REGION}"
