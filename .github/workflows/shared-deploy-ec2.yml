@@ -156,7 +156,7 @@ jobs:
             echo "    environment:"
             echo "      - APP_NAME=${REPO_NAME}"
             echo "      - PATH_LOGS=/app/log/${REPO_NAME}"
-            echo "      - SERVER_PORT=${APP_PORT}"
+            echo "      - SERVER_PORT=8080"
             echo "      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
             echo "      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
             echo "      - AWS_REGION=${AWS_REGION}"
@@ -168,7 +168,7 @@ jobs:
               done <<< "${CONTAINER_ENV_VARS}"
             fi
             echo "    ports:"
-            echo "      - \"${APP_PORT}:${APP_PORT}\""
+            echo "      - \"${APP_PORT}:8080\""
             echo "    volumes:"
             echo "      - shared_logs:/app/log"
             echo "    mem_limit: ${MEMORY_LIMIT}"
