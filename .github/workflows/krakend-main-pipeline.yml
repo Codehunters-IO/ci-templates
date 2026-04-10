@@ -69,7 +69,7 @@ on:
         type: boolean
         default: false
       deploy_target:
-        description: 'Deploy target: ec2 or eks'
+        description: 'Deploy target: ec2, ec2-vpn, or eks'
         required: false
         type: string
         default: 'ec2'
@@ -166,7 +166,7 @@ on:
         value: ${{ jobs.test.outputs.audit_score }}
       deploy_status:
         description: 'Deployment status'
-        value: ${{ jobs.deploy-ec2.outputs.deploy_status || jobs.deploy-eks.outputs.deploy_status }}
+        value: ${{ jobs.deploy-ec2.outputs.deploy_status || jobs.deploy-ec2-vpn.outputs.deploy_status || jobs.deploy-eks.outputs.deploy_status }}
       deleted_branch:
         description: 'Name of deleted branch'
         value: ${{ jobs.cleanup.outputs.deleted_branch }}
@@ -282,6 +282,27 @@ jobs:
     secrets: inherit
 
   # ============================================
+  # DEPLOY - EC2 via WireGuard VPN
+  # ============================================
+  deploy-ec2-vpn:
+    name: Deploy EC2 (VPN)
+    if: |
+      inputs.run_deploy &&
+      inputs.deploy_target == 'ec2-vpn' &&
+      always() &&
+      needs.artifact.result == 'success'
+    needs: [artifact]
+    uses: ./.github/workflows/shared-deploy-ec2-vpn.yml
+    with:
+      runner: ${{ inputs.runner }}
+      image_tag: ${{ needs.artifact.outputs.image_tag }}
+      docker_platform: ${{ inputs.docker_platform }}
+      environment: ${{ inputs.environment }}
+      memory_limit: ${{ inputs.memory_limit }}
+      memory_reservation: ${{ inputs.memory_reservation }}
+    secrets: inherit
+
+  # ============================================
   # DEPLOY - EKS
   # ============================================
   deploy-eks:
@@ -315,8 +336,8 @@ jobs:
     if: |
       inputs.run_cleanup &&
       always() &&
-      (needs.deploy-ec2.result == 'success' || needs.deploy-eks.result == 'success')
-    needs: [deploy-ec2, deploy-eks]
+      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success')
+    needs: [deploy-ec2, deploy-ec2-vpn, deploy-eks]
     uses: ./.github/workflows/shared-delete-branch.yml
     secrets: inherit
 
@@ -328,9 +349,9 @@ jobs:
     if: |
       inputs.run_release &&
       always() &&
-      (needs.deploy-ec2.result == 'success' || needs.deploy-eks.result == 'success') &&
+      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success') &&
       (needs.cleanup.result == 'success' || needs.cleanup.result == 'skipped')
-    needs: [deploy-ec2, deploy-eks, cleanup]
+    needs: [deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup]
     uses: ./.github/workflows/shared-release.yml
     with:
       base_branch: ${{ inputs.environment }}

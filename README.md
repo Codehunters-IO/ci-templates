@@ -1,172 +1,140 @@
-# CI Templates for Java Projects
+# CI Templates
 
-Reusable GitHub Actions workflows for Java projects following GitFlow branching strategy.
+Reusable GitHub Actions workflows for Java, Krakend and React projects following a GitFlow branching strategy.
 
-## Architecture
+## Stacks
+
+| Stack | Main pipeline | Templates |
+|-------|--------------|-----------|
+| Java (Spring Boot) | `.github/workflows/java-main-pipeline.yml` | `templates/java-*.yml` |
+| Krakend | `.github/workflows/krakend-main-pipeline.yml` | `templates/krakend-*.yml` |
+| React | `.github/workflows/react-main-pipeline.yml` | `templates/react-*.yml` |
+
+## GitFlow
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           GITFLOW CI/CD                                 │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  feature/* ──┬──► [build]                                               │
-│  bugfix/*  ──┘                                                          │
-│       │                                                                 │
-│       ▼ (PR to develop)                                                 │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │ build → test → sonar                                             │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-│       │                                                                 │
-│       ▼ (merge to develop)                                              │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │ build → test → semver → artifact (ECR) → deploy (DEV)            │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-│       │                                                                 │
-│       ▼ (create release/*)                                              │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │ build → test → artifact (ECR) → deploy (STAGING)                 │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-│       │                                                                 │
-│       ▼ (merge to main)                                                 │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │ build → artifact (ECR) → deploy (PRODUCTION)                     │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
+feature/* ──► build
+     │
+     ▼ (PR to develop)      build → test → sonar/qodana → owasp → architecture
+     │
+     ▼ (merge to develop)   build → test → artifact (ECR) → deploy (DEV) → release PR
+     │
+     ▼ (release/*)          build → test → artifact (ECR) → deploy (STAGING)
+     │
+     ▼ (merge to main)      build → artifact (ECR) → deploy (PRODUCTION)
 ```
 
 ## Quick Start
 
-### 1. Copy Templates
+1. Copy the templates for your stack from `templates/` into your repo's `.github/workflows/`:
+   ```bash
+   cp templates/java-feature-build.yml   .github/workflows/
+   cp templates/java-pr-develop.yml      .github/workflows/
+   cp templates/java-develop-deploy.yml  .github/workflows/
+   cp templates/java-release-deploy.yml  .github/workflows/
+   cp templates/java-main-deploy.yml     .github/workflows/
+   ```
 
-Copy the templates from `/templates/` to your repository's `.github/workflows/`:
+2. Replace `<org>` with your GitHub organization in each template:
+   ```yaml
+   uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@main
+   ```
 
-```bash
-# Feature/Bugfix build
-cp templates/java-feature-build.yml .github/workflows/
+3. Configure the required secrets (see below).
 
-# PR validation
-cp templates/java-pr-develop.yml .github/workflows/
+## Deploy Targets
 
-# Deploy to DEV (develop branch)
-cp templates/java-develop-deploy.yml .github/workflows/
+The main pipelines accept a `deploy_target` input:
 
-# Deploy to STAGING (release branches)
-cp templates/java-release-deploy.yml .github/workflows/
+| Value | Description | Shared workflow |
+|-------|-------------|-----------------|
+| `ec2` | SSH deploy to an EC2 with public/private IP reachable from the runner | `shared-deploy-ec2.yml` |
+| `ec2-vpn` | SSH deploy to an EC2 with private IP reachable **only via WireGuard VPN**. The runner brings up a `wg0` tunnel, deploys, and tears it down. | `shared-deploy-ec2-vpn.yml` |
+| `eks` | Deploy to an EKS cluster (plain manifests or Helm) | `shared-deploy-eks.yml` |
 
-# Deploy to PRODUCTION (main branch)
-cp templates/java-main-deploy.yml .github/workflows/
-```
-
-### 2. Update Organization Name
-
-Replace `<org>` with your GitHub organization in each template:
-
-```yaml
-uses: <org>/ci-templates/.github/workflows/main-pipeline-backend.yml@main
-# Change to:
-uses: your-org/ci-templates/.github/workflows/main-pipeline-backend.yml@main
-```
-
-### 3. Configure Secrets
-
-See [Configuration Guide](docs/CONFIGURATION.md) for required secrets.
-
-## Reusable Workflows
-
-| Workflow | Purpose |
-|----------|---------|
-| `main-pipeline-backend.yml` | Main orchestrator - controls all steps |
-| `java-build.yml` | Gradle build + Spotless check |
-| `java-test.yml` | Run tests |
-| `java-semver.yml` | Semantic versioning + CHANGELOG |
-| `java-sonarqube.yml` | SonarQube analysis |
-| `java-artifact-ecr.yml` | Build Docker + push to ECR |
-| `java-deploy-ec2.yml` | Deploy to EC2 via SSH |
-| `java-commit-lint.yml` | Validate commit message format |
-
-## Main Pipeline Inputs
+Example:
 
 ```yaml
-uses: org/ci-templates/.github/workflows/main-pipeline-backend.yml@main
-with:
-  # Java configuration
-  java_version: '21'           # Java version (default: 21)
-  java_distribution: 'temurin' # JDK distribution (default: temurin)
-
-  # Pipeline steps
-  run_build: true              # Run build (default: true)
-  run_test: false              # Run tests (default: false)
-  run_sonar: false             # Run SonarQube (default: false)
-  run_semver: false            # Calculate version (default: false)
-  run_artifact: false          # Build/push Docker (default: false)
-  run_deploy: false            # Deploy to EC2 (default: false)
-  run_commit_lint: false       # Validate commits (default: false)
-
-  # Semver options
-  update_changelog: false      # Update CHANGELOG.md (default: false)
-
-  # Deploy options
-  spring_profile: 'production' # Spring profile (default: production)
-  health_check_path: ''        # Health check endpoint (default: empty)
+jobs:
+  pipeline:
+    uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@main
+    with:
+      run_build: true
+      run_test: true
+      run_artifact: true
+      run_deploy: true
+      deploy_target: 'ec2-vpn'   # ec2 | ec2-vpn | eks
+      environment: 'develop'
+    secrets: inherit
 ```
 
-## Pipeline Outputs
+## Required Secrets
 
-```yaml
-outputs:
-  version:      # Semantic version (e.g., 1.2.3)
-  version_tag:  # Version tag (e.g., v1.2.3)
-  image_tag:    # Docker image tag pushed to ECR
-```
+Configure in **Settings → Secrets and variables → Actions**.
 
-## Semantic Versioning
+### AWS / ECR (for build & push)
 
-Commit message patterns:
+| Secret | Description |
+|--------|-------------|
+| `AWS_ACCESS_KEY_ID` | AWS access key for ECR push and runtime (injected into the container) |
+| `AWS_SECRET_ACCESS_KEY` | AWS secret key |
+| `AWS_REGION` | AWS region (e.g. `us-east-1`) |
+| `AWS_ECR_URL` | ECR registry URL (e.g. `123456789.dkr.ecr.us-east-1.amazonaws.com`) |
 
-| Pattern | Version Bump | Example |
-|---------|--------------|---------|
-| `MAJOR:` or `BREAKING CHANGE:` | Major | `MAJOR: remove deprecated API` |
-| `feat:` | Minor | `feat: add user authentication` |
-| (any other) | Patch | `fix: resolve null pointer` |
+### EC2 (`deploy_target: ec2` or `ec2-vpn`)
+
+| Secret | Description |
+|--------|-------------|
+| `AWS_EC2_HOST` | EC2 IP or hostname (private IP when using `ec2-vpn`) |
+| `AWS_EC2_USER` | SSH username (`ubuntu`, `ec2-user`, …) |
+| `AWS_EC2_SSH_KEY` | SSH private key (PEM) |
+| `AWS_APP_PORT` | External port exposed by the container |
+
+### WireGuard VPN (`deploy_target: ec2-vpn` only)
+
+| Secret | Description |
+|--------|-------------|
+| `WIREGUARD_CONFIG` | Full contents of the WireGuard `.conf` file (`[Interface]` + `[Peer]` blocks). The runner writes it to `/etc/wireguard/wg0.conf` and runs `wg-quick up wg0`. |
+
+### SonarQube (`code_analysis: 'sonar'`)
+
+| Secret | Description |
+|--------|-------------|
+| `SONAR_HOST_URL` | SonarQube server URL |
+| `SONAR_TOKEN` | SonarQube authentication token |
+
+### Optional
+
+| Secret | Used by |
+|--------|---------|
+| `NVD_API_KEY` | OWASP Dependency Check (`run_owasp: true`) |
+| `QODANA_TOKEN` | Qodana (`code_analysis: 'qodana'`) |
 
 ## Directory Structure
 
 ```
 ci-templates/
-├── .github/workflows/           # Reusable workflows
-│   ├── main-pipeline-backend.yml
-│   ├── java-build.yml
-│   ├── java-test.yml
-│   ├── java-semver.yml
-│   ├── java-sonarqube.yml
-│   ├── java-artifact-ecr.yml
-│   └── java-deploy-ec2.yml
-├── templates/                   # Copy these to your repo
-│   ├── java-feature-build.yml
-│   ├── java-pr-develop.yml
-│   ├── java-develop-deploy.yml
-│   ├── java-release-deploy.yml
-│   └── java-main-deploy.yml
-├── docs/
-│   └── CONFIGURATION.md
+├── .github/workflows/            # Reusable workflows
+│   ├── java-main-pipeline.yml
+│   ├── krakend-main-pipeline.yml
+│   ├── react-main-pipeline.yml
+│   ├── shared-deploy-ec2.yml
+│   ├── shared-deploy-ec2-vpn.yml
+│   ├── shared-deploy-eks.yml
+│   └── ...
+├── templates/                    # Copy these to your repo
+│   ├── java-*.yml
+│   ├── krakend-*.yml
+│   └── react-*.yml
 └── README.md
 ```
 
-## Requirements
+## Requirements on the EC2 host
 
-### EC2 Server
-
-- Docker
-- Docker Compose V2
-- AWS CLI
-- SSH access configured
-
-### Repository
-
-- Dockerfile in root
-- Gradle wrapper (`gradlew`)
-- Spring Boot application (for default profiles)
+- Docker + Docker Compose V2
+- AWS CLI (for ECR login)
+- External Docker network `soldife_net` and volume `shared_logs` (auto-created if missing)
+- SSH access for the configured `AWS_EC2_USER`
 
 ## License
 
