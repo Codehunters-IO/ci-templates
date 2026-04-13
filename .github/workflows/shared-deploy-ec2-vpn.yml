@@ -103,7 +103,7 @@ jobs:
 
           echo "Writing WireGuard config to ${WG_CONF_PATH}"
           sudo mkdir -p /etc/wireguard
-          echo "$WIREGUARD_CONFIG" | sed 's/^[[:space:]]*//' | sudo tee "$WG_CONF_PATH" > /dev/null
+          echo "$WIREGUARD_CONFIG" | sed 's/^[ \t]*//' | sudo tee "$WG_CONF_PATH" > /dev/null
           sudo chmod 600 "$WG_CONF_PATH"
 
           echo "Bringing up WireGuard interface ${WG_IFACE}..."
