@@ -1,12 +1,17 @@
-# Template: PR to develop validation
+# Template: PR validation
 # Copy to: .github/workflows/pr-develop.yml
 #
 # Triggers on pull requests targeting develop branch
-# Runs: build + test + coverage + sonar + quality gate
+# Runs: build + test + coverage + sonar + owasp + architecture
+# Uses the PR pipeline (wrapper over main pipeline, quality gates only)
 #
-# Required secrets for SonarQube (optional):
+# Required secrets:
+#   SonarQube (if code_analysis: 'sonar'):
 #   - SONAR_HOST_URL: SonarQube server URL
 #   - SONAR_TOKEN: SonarQube authentication token
+#
+#   OWASP (if run_owasp: true):
+#   - NVD_API_KEY: NVD API key
 
 name: PR Validation
 
@@ -17,11 +22,13 @@ on:
 
 jobs:
   validate:
-    uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@main
+    uses: <org>/ci-templates/.github/workflows/java-pr-pipeline.yml@main
     with:
       run_commit_lint: true
-      run_build: true
       run_test: true
-      code_analysis: 'sonar'
+      run_coverage: true
       coverage_threshold: 0
+      code_analysis: 'sonar'
+      run_owasp: true
+      run_architecture: true
     secrets: inherit

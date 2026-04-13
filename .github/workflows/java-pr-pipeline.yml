@@ -1,0 +1,167 @@
+name: Java - Pull Request Pipeline
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      java_version:
+        description: 'Java version'
+        required: false
+        type: string
+        default: '21'
+      java_distribution:
+        description: 'Java distribution'
+        required: false
+        type: string
+        default: 'temurin'
+      build_tool:
+        description: 'Build tool: gradle or maven'
+        required: false
+        type: string
+        default: 'gradle'
+
+      # Security
+      run_commit_lint:
+        description: 'Run commit message validation'
+        required: false
+        type: boolean
+        default: false
+      run_trufflehog:
+        description: 'Run TruffleHog secret scanning'
+        required: false
+        type: boolean
+        default: false
+      trufflehog_only_verified:
+        description: 'Only report verified secrets'
+        required: false
+        type: boolean
+        default: true
+      trufflehog_fail_on_findings:
+        description: 'Fail the workflow if secrets are found'
+        required: false
+        type: boolean
+        default: true
+      run_dependency_review:
+        description: 'Run dependency review'
+        required: false
+        type: boolean
+        default: false
+      dependency_review_severity:
+        description: 'Minimum severity to fail: low, moderate, high, critical'
+        required: false
+        type: string
+        default: 'high'
+
+      # Quality gates
+      run_test:
+        description: 'Run test job'
+        required: false
+        type: boolean
+        default: true
+      run_coverage:
+        description: 'Run JaCoCo coverage report'
+        required: false
+        type: boolean
+        default: true
+      coverage_threshold:
+        description: 'Minimum coverage percentage (0-100)'
+        required: false
+        type: number
+        default: 0
+      coverage_instruction_threshold:
+        description: 'Minimum instruction coverage percentage (0-100)'
+        required: false
+        type: number
+        default: 0
+      coverage_branch_threshold:
+        description: 'Minimum branch coverage percentage (0-100)'
+        required: false
+        type: number
+        default: 0
+      code_analysis:
+        description: 'Code analysis tool: none, sonar, qodana'
+        required: false
+        type: string
+        default: 'none'
+      skip_quality_gate:
+        description: 'Skip Quality Gate check (Sonar/Qodana)'
+        required: false
+        type: boolean
+        default: false
+      run_owasp:
+        description: 'Run OWASP Dependency Check'
+        required: false
+        type: boolean
+        default: false
+      owasp_fail_on_cvss:
+        description: 'CVSS score threshold to fail (7 = HIGH+CRITICAL, 9 = CRITICAL only)'
+        required: false
+        type: number
+        default: 7
+      run_architecture:
+        description: 'Run architecture validation (ArchUnit + diagrams)'
+        required: false
+        type: boolean
+        default: false
+
+    outputs:
+      coverage:
+        description: 'Code coverage percentage (line)'
+        value: ${{ jobs.pipeline.outputs.coverage }}
+      coverage_instruction:
+        description: 'Instruction coverage percentage'
+        value: ${{ jobs.pipeline.outputs.coverage_instruction }}
+      coverage_branch:
+        description: 'Branch coverage percentage'
+        value: ${{ jobs.pipeline.outputs.coverage_branch }}
+      quality_gate:
+        description: 'SonarQube Quality Gate status'
+        value: ${{ jobs.pipeline.outputs.quality_gate }}
+      owasp_vulnerabilities:
+        description: 'Number of OWASP vulnerabilities found'
+        value: ${{ jobs.pipeline.outputs.owasp_vulnerabilities }}
+      arch_test_result:
+        description: 'Architecture test result'
+        value: ${{ jobs.pipeline.outputs.arch_test_result }}
+
+jobs:
+  pipeline:
+    name: PR Quality Gates
+    uses: ./.github/workflows/java-main-pipeline.yml
+    with:
+      runner: ${{ inputs.runner }}
+      java_version: ${{ inputs.java_version }}
+      java_distribution: ${{ inputs.java_distribution }}
+      build_tool: ${{ inputs.build_tool }}
+
+      # Security
+      run_commit_lint: ${{ inputs.run_commit_lint }}
+      run_trufflehog: ${{ inputs.run_trufflehog }}
+      trufflehog_only_verified: ${{ inputs.trufflehog_only_verified }}
+      trufflehog_fail_on_findings: ${{ inputs.trufflehog_fail_on_findings }}
+      run_dependency_review: ${{ inputs.run_dependency_review }}
+      dependency_review_severity: ${{ inputs.dependency_review_severity }}
+
+      # Quality gates
+      run_build: true
+      run_test: ${{ inputs.run_test }}
+      run_coverage: ${{ inputs.run_coverage }}
+      coverage_threshold: ${{ inputs.coverage_threshold }}
+      coverage_instruction_threshold: ${{ inputs.coverage_instruction_threshold }}
+      coverage_branch_threshold: ${{ inputs.coverage_branch_threshold }}
+      code_analysis: ${{ inputs.code_analysis }}
+      skip_quality_gate: ${{ inputs.skip_quality_gate }}
+      run_owasp: ${{ inputs.run_owasp }}
+      owasp_fail_on_cvss: ${{ inputs.owasp_fail_on_cvss }}
+      run_architecture: ${{ inputs.run_architecture }}
+
+      # Disabled for PRs
+      run_artifact: false
+      run_deploy: false
+      run_cleanup: false
+      run_release: false
+    secrets: inherit

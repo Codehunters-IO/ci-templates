@@ -2,25 +2,29 @@
 # Copy to: .github/workflows/develop-deploy.yml
 #
 # Triggers on push to develop branch (after PR merge)
-# Flow: build → test → artifact → deploy → delete branch → create release PR
+# Flow: build -> test -> artifact (ECR) -> deploy -> delete branch -> release PR
 # Image tag: commit SHA (7 chars)
 #
 # Required secrets:
-#   AWS:
-#   - AWS_ROLE_TO_ASSUME: ARN of AWS IAM role (for ECR push from GitHub)
+#   AWS / ECR:
+#   - AWS_ACCESS_KEY_ID: AWS access key
+#   - AWS_SECRET_ACCESS_KEY: AWS secret key
 #   - AWS_REGION: AWS region (e.g., us-east-1)
-#   - ECR_REPOSITORY: ECR repository name
+#   - AWS_ECR_URL: ECR registry URL
 #
-#   EC2:
-#   - EC2_HOST: Server IP or hostname
-#   - EC2_USER: SSH username (e.g., ubuntu, ec2-user)
-#   - EC2_SSH_KEY: SSH private key
-#   - APP_PORT: External port for the application
+#   EC2 (deploy_target: ec2 or ec2-vpn):
+#   - AWS_EC2_HOST: Server IP or hostname
+#   - AWS_EC2_USER: SSH username (e.g., ubuntu)
+#   - AWS_EC2_SSH_KEY: SSH private key (PEM)
+#   - AWS_APP_PORT: External port for the application
+#
+#   WireGuard (deploy_target: ec2-vpn only):
+#   - WG_PRIVATE_KEY, WG_ADDRESS, WG_PEER_PUBLIC_KEY, WG_PEER_ALLOWED_IPS, WG_PEER_ENDPOINT
+#   - WG_DNS (optional)
 #
 #   Optional:
-#   - SONAR_HOST_URL: SonarQube server URL
-#   - SONAR_TOKEN: SonarQube token
-#   - NVD_API_KEY: NVD API key for OWASP
+#   - SONAR_HOST_URL / SONAR_TOKEN: SonarQube
+#   - NVD_API_KEY: OWASP Dependency Check
 
 name: Deploy to Develop
 
@@ -42,13 +46,16 @@ jobs:
     with:
       run_build: true
       run_test: true
+      run_coverage: true
       code_analysis: 'sonar'
       run_owasp: true
+      run_architecture: true
       run_artifact: true
+      artifact_registry: 'ecr'
       run_deploy: true
+      deploy_target: 'ec2-vpn'
+      environment: 'develop'
       run_cleanup: true
       run_release: true
-      environment: 'develop'
       release_target_branch: 'main'
-      health_check_path: '/actuator/health'
     secrets: inherit

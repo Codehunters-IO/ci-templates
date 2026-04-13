@@ -5,9 +5,8 @@
 # Runs: build + test + artifact + deploy (STAGING environment)
 #
 # Required secrets: Same as develop-deploy.yml
-# Note: Semver is NOT run on release branches (version comes from branch name)
 
-name: Deploy to STAGING
+name: Deploy to Staging
 
 on:
   push:
@@ -19,15 +18,16 @@ permissions:
   id-token: write
 
 jobs:
-  deploy:
+  pipeline:
     if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
     uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@main
     with:
       run_build: true
       run_test: true
-      run_semver: false
       run_artifact: true
+      artifact_registry: 'ecr'
       run_deploy: true
-      spring_profile: 'staging'
-      health_check_path: '/actuator/health'
+      deploy_target: 'ec2-vpn'
+      environment: 'staging'
+      spring_profiles: 'staging'
     secrets: inherit

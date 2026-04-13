@@ -4,20 +4,23 @@ Reusable GitHub Actions workflows for Java, Krakend and React projects following
 
 ## Stacks
 
-| Stack | Main pipeline | Templates |
-|-------|--------------|-----------|
-| Java (Spring Boot) | `.github/workflows/java-main-pipeline.yml` | `templates/java-*.yml` |
-| Krakend | `.github/workflows/krakend-main-pipeline.yml` | `templates/krakend-*.yml` |
-| React | `.github/workflows/react-main-pipeline.yml` | `templates/react-*.yml` |
+| Stack | Pipelines | Templates |
+|-------|-----------|-----------|
+| Java (Spring Boot) | `java-main-pipeline.yml` · `java-pr-pipeline.yml` | `templates/java-*.yml` |
+| Krakend | `krakend-main-pipeline.yml` | `templates/krakend-*.yml` |
+| React | `react-main-pipeline.yml` | `templates/react-*.yml` |
 
 ## GitFlow
 
 ```
 feature/* ──► build
      │
-     ▼ (PR to develop)      build → test → sonar/qodana → owasp → architecture
+     ▼ (PR to develop)      build → test → coverage → sonar → owasp → architecture
+     │                       └── uses java-pr-pipeline.yml (quality gates only)
      │
-     ▼ (merge to develop)   build → test → artifact (ECR) → deploy (DEV) → release PR
+     ▼ (merge to develop)   build → test → coverage → sonar → owasp → architecture
+     │                              → artifact (ECR) → deploy (DEV) → cleanup → release PR
+     │                       └── uses java-main-pipeline.yml
      │
      ▼ (release/*)          build → test → artifact (ECR) → deploy (STAGING)
      │
@@ -121,6 +124,7 @@ Configure in **Settings → Secrets and variables → Actions**.
 ci-templates/
 ├── .github/workflows/            # Reusable workflows
 │   ├── java-main-pipeline.yml
+│   ├── java-pr-pipeline.yml
 │   ├── krakend-main-pipeline.yml
 │   ├── react-main-pipeline.yml
 │   ├── shared-deploy-ec2.yml
