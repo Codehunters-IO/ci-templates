@@ -92,9 +92,14 @@ Configure in **Settings → Secrets and variables → Actions**.
 
 ### WireGuard VPN (`deploy_target: ec2-vpn` only)
 
-| Secret | Description |
-|--------|-------------|
-| `WIREGUARD_CONFIG` | Full contents of the WireGuard `.conf` file (`[Interface]` + `[Peer]` blocks). The runner writes it to `/etc/wireguard/wg0.conf` and runs `wg-quick up wg0`. |
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `WG_PRIVATE_KEY` | Yes | WireGuard client private key |
+| `WG_ADDRESS` | Yes | Client tunnel address (e.g., `10.0.0.3/24`) |
+| `WG_DNS` | No | DNS server for the tunnel (e.g., `1.1.1.1`) |
+| `WG_PEER_PUBLIC_KEY` | Yes | WireGuard server public key |
+| `WG_PEER_ALLOWED_IPS` | Yes | Allowed IPs routed through the tunnel (e.g., `10.0.0.0/16`) |
+| `WG_PEER_ENDPOINT` | Yes | Server endpoint `host:port` (e.g., `44.209.64.95:51820`) |
 
 ### SonarQube (`code_analysis: 'sonar'`)
 

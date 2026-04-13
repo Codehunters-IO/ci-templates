@@ -17,6 +17,11 @@ on:
         required: false
         type: string
         default: 'develop'
+      verify_vpn_connectivity:
+        description: 'Run ping check to EC2 host before deploying'
+        required: false
+        type: boolean
+        default: false
       docker_platform:
         description: 'Docker platform for the container (linux/amd64, linux/arm64)'
         required: false
@@ -143,6 +148,7 @@ jobs:
           echo "started=true" >> $GITHUB_OUTPUT
 
       - name: Verify VPN connectivity to EC2
+        if: inputs.verify_vpn_connectivity
         env:
           EC2_HOST: ${{ secrets.AWS_EC2_HOST }}
         run: |
