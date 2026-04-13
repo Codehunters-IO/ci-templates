@@ -55,7 +55,17 @@ on:
         required: true
       AWS_APP_PORT:
         required: true
-      WIREGUARD_CONFIG:
+      WG_PRIVATE_KEY:
+        required: true
+      WG_ADDRESS:
+        required: true
+      WG_DNS:
+        required: false
+      WG_PEER_PUBLIC_KEY:
+        required: true
+      WG_PEER_ALLOWED_IPS:
+        required: true
+      WG_PEER_ENDPOINT:
         required: true
 
     outputs:
@@ -96,14 +106,32 @@ jobs:
         id: wg
         env:
           WG_IFACE: wg0
-          WIREGUARD_CONFIG: ${{ secrets.WIREGUARD_CONFIG }}
+          WG_PRIVATE_KEY: ${{ secrets.WG_PRIVATE_KEY }}
+          WG_ADDRESS: ${{ secrets.WG_ADDRESS }}
+          WG_DNS: ${{ secrets.WG_DNS }}
+          WG_PEER_PUBLIC_KEY: ${{ secrets.WG_PEER_PUBLIC_KEY }}
+          WG_PEER_ALLOWED_IPS: ${{ secrets.WG_PEER_ALLOWED_IPS }}
+          WG_PEER_ENDPOINT: ${{ secrets.WG_PEER_ENDPOINT }}
         run: |
           set -e
           WG_CONF_PATH="/etc/wireguard/${WG_IFACE}.conf"
 
           echo "Writing WireGuard config to ${WG_CONF_PATH}"
           sudo mkdir -p /etc/wireguard
-          echo "$WIREGUARD_CONFIG" | sed 's/^[ \t]*//' | sudo tee "$WG_CONF_PATH" > /dev/null
+          {
+            echo "[Interface]"
+            echo "PrivateKey = ${WG_PRIVATE_KEY}"
+            echo "Address = ${WG_ADDRESS}"
+            if [ -n "${WG_DNS}" ]; then
+              echo "DNS = ${WG_DNS}"
+            fi
+            echo ""
+            echo "[Peer]"
+            echo "PublicKey = ${WG_PEER_PUBLIC_KEY}"
+            echo "AllowedIPs = ${WG_PEER_ALLOWED_IPS}"
+            echo "Endpoint = ${WG_PEER_ENDPOINT}"
+            echo "PersistentKeepalive = 25"
+          } | sudo tee "$WG_CONF_PATH" > /dev/null
           sudo chmod 600 "$WG_CONF_PATH"
 
           echo "Bringing up WireGuard interface ${WG_IFACE}..."
