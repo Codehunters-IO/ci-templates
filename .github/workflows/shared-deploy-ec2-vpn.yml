@@ -150,11 +150,11 @@ jobs:
       - name: Verify VPN connectivity to EC2
         if: inputs.verify_vpn_connectivity
         env:
-          EC2_HOST: ${{ secrets.AWS_EC2_HOST }}
+          AWS_EC2_HOST: ${{ secrets.AWS_EC2_HOST }}
         run: |
-          echo "Testing connectivity to ${EC2_HOST} over VPN..."
+          echo "Testing connectivity to ${AWS_EC2_HOST} over VPN..."
           for i in 1 2 3 4 5; do
-            if ping -c 1 -W 3 "${EC2_HOST}" >/dev/null 2>&1; then
+            if ping -c 1 -W 3 "${AWS_EC2_HOST}" >/dev/null 2>&1; then
               echo "VPN connectivity OK (attempt $i)"
               exit 0
             fi
@@ -166,9 +166,9 @@ jobs:
       - name: Deploy via SSH
         id: deploy
         env:
-          EC2_HOST: ${{ secrets.AWS_EC2_HOST }}
-          EC2_USER: ${{ secrets.AWS_EC2_USER }}
-          EC2_SSH_KEY: ${{ secrets.AWS_EC2_SSH_KEY }}
+          AWS_EC2_HOST: ${{ secrets.AWS_EC2_HOST }}
+          AWS_EC2_USER: ${{ secrets.AWS_EC2_USER }}
+          AWS_EC2_SSH_KEY: ${{ secrets.AWS_EC2_SSH_KEY }}
           AWS_ECR_URL: ${{ secrets.AWS_ECR_URL }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -184,9 +184,9 @@ jobs:
         run: |
           # Setup SSH
           mkdir -p ~/.ssh
-          echo "$EC2_SSH_KEY" > ~/.ssh/deploy_key
+          echo "$AWS_EC2_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -H $AWS_EC2_HOST >> ~/.ssh/known_hosts 2>/dev/null
 
           # Encode multiline env vars to preserve newlines over SSH
           CONTAINER_ENV_VARS_B64=$(echo "$CONTAINER_ENV_VARS" | base64 | tr -d '\n')
@@ -328,9 +328,9 @@ jobs:
           DEPLOY_SCRIPT
 
           # Copy and execute script on EC2
-          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no /tmp/deploy.sh ${EC2_USER}@${EC2_HOST}:/tmp/deploy.sh
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no /tmp/deploy.sh ${AWS_EC2_USER}@${AWS_EC2_HOST}:/tmp/deploy.sh
 
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=10 ${EC2_USER}@${EC2_HOST} "
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=10 ${AWS_EC2_USER}@${AWS_EC2_HOST} "
             chmod +x /tmp/deploy.sh && \
             REPO_NAME='${REPO_NAME}' \
             IMAGE_TAG='${IMAGE_TAG}' \
@@ -354,7 +354,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| **Server** | $EC2_HOST |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Server** | $AWS_EC2_HOST |" >> $GITHUB_STEP_SUMMARY
           echo "| **VPN** | WireGuard (wg0) |" >> $GITHUB_STEP_SUMMARY
           echo "| **Application** | $REPO_NAME |" >> $GITHUB_STEP_SUMMARY
           echo "| **Image Tag** | $IMAGE_TAG |" >> $GITHUB_STEP_SUMMARY
