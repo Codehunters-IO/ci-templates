@@ -327,11 +327,11 @@ jobs:
           echo "Deployment completed successfully!"
           DEPLOY_SCRIPT
 
-          # Copy and execute script on EC2
-          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no /tmp/deploy.sh ${AWS_EC2_USER}@${AWS_EC2_HOST}:/tmp/deploy.sh
+          # Copy and execute script on EC2 (use ~ to avoid /tmp permission conflicts)
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no /tmp/deploy.sh ${AWS_EC2_USER}@${AWS_EC2_HOST}:~/deploy.sh
 
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=10 ${AWS_EC2_USER}@${AWS_EC2_HOST} "
-            chmod +x /tmp/deploy.sh && \
+            chmod +x ~/deploy.sh && \
             REPO_NAME='${REPO_NAME}' \
             IMAGE_TAG='${IMAGE_TAG}' \
             AWS_ECR_URL='${AWS_ECR_URL}' \
@@ -344,7 +344,8 @@ jobs:
             MEMORY_LIMIT='${MEMORY_LIMIT}' \
             MEMORY_RESERVATION='${MEMORY_RESERVATION}' \
             CONTAINER_ENV_VARS_B64='${CONTAINER_ENV_VARS_B64}' \
-            /tmp/deploy.sh
+            ~/deploy.sh && \
+            rm -f ~/deploy.sh
           "
 
           echo "status=success" >> $GITHUB_OUTPUT
