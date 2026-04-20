@@ -322,7 +322,7 @@ jobs:
 
           # Clean up unused Docker resources (old images, stopped containers, networks)
           echo "Pruning unused Docker resources..."
-          docker system prune -af --volumes 2>/dev/null || true
+          docker system prune -af > /dev/null || true
 
           # Start new container
           echo "Starting new container..."
