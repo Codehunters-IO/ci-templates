@@ -111,6 +111,50 @@ Configure in **Settings → Secrets and variables → Actions**.
 | `SONAR_HOST_URL` | SonarQube server URL |
 | `SONAR_TOKEN` | SonarQube authentication token |
 
+### Notifications (`run_notifications: true`)
+
+Supports multiple providers via `notify_providers` (comma-separated). Default: `slack`.
+
+| Provider | Secrets Required | Notes |
+|----------|-----------------|-------|
+| `slack` | `SLACK_WEBHOOK_URL` | Block Kit message with status, changelog, and action button |
+| `teams` | `TEAMS_WEBHOOK_URL` | MessageCard with facts, changelog, and action button |
+
+Notifications include: status, environment, branch, actor, link to the workflow run, and release changelog when available.
+
+| Input | Description | Default |
+|-------|-------------|---------|
+| `run_notifications` | Enable notifications | `false` |
+| `notify_providers` | Providers to use (comma-separated) | `slack` |
+| `notify_mention_on_failure` | Mention on failure (e.g., `@channel`) | `''` |
+
+Example — Slack notification:
+```yaml
+with:
+  run_notifications: true
+  notify_providers: 'slack'
+  notify_mention_on_failure: '@channel'
+secrets: inherit
+```
+
+### Issue Tracking
+
+Automatically creates a GitHub issue when the pipeline fails, assigned to the commit actor. Uses the built-in `GITHUB_TOKEN` — no additional secrets required.
+
+| Input | Description | Default |
+|-------|-------------|---------|
+| `run_create_issue_on_failure` | Create GitHub issue on failure | `false` |
+| `issue_labels` | Labels for the issue (comma-separated) | `bug,pipeline-failure` |
+
+Example:
+```yaml
+with:
+  run_create_issue_on_failure: true
+  issue_labels: 'bug,pipeline-failure,urgent'
+```
+
+> **Tip:** Set notification secrets as organization-level secrets so all repos inherit them.
+
 ### Optional
 
 | Secret | Used by |
@@ -130,6 +174,8 @@ ci-templates/
 │   ├── shared-deploy-ec2.yml
 │   ├── shared-deploy-ec2-vpn.yml
 │   ├── shared-deploy-eks.yml
+│   ├── shared-notifications.yml
+│   ├── shared-slack-notify.yml
 │   └── ...
 ├── templates/                    # Copy these to your repo
 │   ├── java-*.yml

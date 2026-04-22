@@ -5,7 +5,7 @@
 # Runs: build + artifact + deploy (PRODUCTION environment)
 # Tests should have passed in release branch, only build and deploy here
 #
-# Required secrets: Same as develop-deploy.yml
+# Required secrets: Same as develop-deploy.yml (including SLACK_WEBHOOK_URL if run_slack_notify: true)
 
 name: Deploy to Production
 
@@ -31,4 +31,6 @@ jobs:
       deploy_target: 'ec2-vpn'
       environment: 'prod'
       spring_profiles: 'production'
+      run_notifications: true
+      notify_mention_on_failure: '@channel'
     secrets: inherit

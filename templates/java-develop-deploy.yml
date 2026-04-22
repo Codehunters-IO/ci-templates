@@ -22,6 +22,10 @@
 #   - WG_PRIVATE_KEY, WG_ADDRESS, WG_PEER_PUBLIC_KEY, WG_PEER_ALLOWED_IPS, WG_PEER_ENDPOINT
 #   - WG_DNS (optional)
 #
+#   Notifications (run_notifications: true):
+#   - SLACK_WEBHOOK_URL: Slack incoming webhook URL (default provider)
+#   - TEAMS_WEBHOOK_URL: Teams incoming webhook URL (notify_providers: 'slack,teams')
+#
 #   Optional:
 #   - SONAR_HOST_URL / SONAR_TOKEN: SonarQube
 #   - NVD_API_KEY: OWASP Dependency Check
@@ -58,4 +62,5 @@ jobs:
       run_cleanup: true
       run_release: true
       release_target_branch: 'main'
+      run_notifications: true
     secrets: inherit

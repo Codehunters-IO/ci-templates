@@ -73,6 +73,31 @@ on:
         required: false
         type: string
         default: 'ec2'
+      run_create_issue_on_failure:
+        description: 'Create GitHub issue on pipeline failure'
+        required: false
+        type: boolean
+        default: false
+      issue_labels:
+        description: 'Labels for the failure issue (comma-separated)'
+        required: false
+        type: string
+        default: 'bug,pipeline-failure'
+      run_notifications:
+        description: 'Send notifications after pipeline completes'
+        required: false
+        type: boolean
+        default: false
+      notify_providers:
+        description: 'Notification providers (comma-separated: slack, teams)'
+        required: false
+        type: string
+        default: 'slack'
+      notify_mention_on_failure:
+        description: 'Mention on failure (Slack: @channel, Teams: @General)'
+        required: false
+        type: string
+        default: ''
       run_cleanup:
         description: 'Delete merged branch after deploy'
         required: false
@@ -176,6 +201,9 @@ on:
       release_pr_url:
         description: 'Release PR URL'
         value: ${{ jobs.release.outputs.pr_url }}
+      release_changelog:
+        description: 'Release changelog'
+        value: ${{ jobs.release.outputs.changelog }}
 
 jobs:
   # ============================================
@@ -357,3 +385,39 @@ jobs:
       base_branch: ${{ inputs.environment }}
       target_branch: ${{ inputs.release_target_branch }}
     secrets: inherit
+
+  # ============================================
+  # NOTIFY - Notifications (runs last, always)
+  # ============================================
+  notify:
+    name: Notify
+    if: |
+      inputs.run_notifications &&
+      always()
+    needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release]
+    uses: ./.github/workflows/shared-notifications.yml
+    with:
+      providers: ${{ inputs.notify_providers }}
+      status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.artifact.result == 'failure' || needs.deploy-ec2.result == 'failure' || needs.deploy-ec2-vpn.result == 'failure' || needs.deploy-eks.result == 'failure') && 'failure' || (needs.build.result == 'cancelled') && 'cancelled' || 'success' }}
+      environment: ${{ inputs.environment }}
+      version: ${{ needs.release.outputs.version }}
+      changelog: ${{ needs.release.outputs.changelog }}
+      mention_on_failure: ${{ inputs.notify_mention_on_failure }}
+    secrets: inherit
+
+  # ============================================
+  # CREATE ISSUE - On failure (runs last, always)
+  # ============================================
+  create-issue:
+    name: Create Issue
+    if: |
+      inputs.run_create_issue_on_failure &&
+      always()
+    needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release]
+    uses: ./.github/workflows/shared-create-issue-on-failure.yml
+    with:
+      status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.artifact.result == 'failure' || needs.deploy-ec2.result == 'failure' || needs.deploy-ec2-vpn.result == 'failure' || needs.deploy-eks.result == 'failure') && 'failure' || 'success' }}
+      environment: ${{ inputs.environment }}
+      version: ${{ needs.release.outputs.version }}
+      changelog: ${{ needs.release.outputs.changelog }}
+      labels: ${{ inputs.issue_labels }}
