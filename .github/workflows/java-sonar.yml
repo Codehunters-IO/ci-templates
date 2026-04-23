@@ -102,6 +102,21 @@ jobs:
       # ============================================
       # QUALITY GATE
       # ============================================
+      - name: Find SonarQube report
+        id: find-report
+        if: "!inputs.skip_quality_gate"
+        run: |
+          REPORT_FILE=$(find . -name "report-task.txt" -path "*/.scannerwork/*" | head -1)
+
+          if [ -z "$REPORT_FILE" ]; then
+            echo "::error::No report-task.txt found. Verify sonar plugin is applied."
+            exit 1
+          fi
+
+          REPORT_DIR=$(dirname "$REPORT_FILE")
+          echo "scannerwork=$REPORT_DIR" >> $GITHUB_OUTPUT
+          echo "Found SonarQube report: $REPORT_FILE"
+
       - name: SonarQube Quality Gate
         id: quality-gate
         if: "!inputs.skip_quality_gate"
@@ -109,6 +124,7 @@ jobs:
         timeout-minutes: 5
         env:
           SONAR_HOST_URL: ${{ env.SONAR_URL }}
+          SONAR_SCANNER_WORK_DIR: ${{ steps.find-report.outputs.scannerwork }}
 
       - name: Quality Gate Summary
         if: "!inputs.skip_quality_gate"
