@@ -37,7 +37,7 @@ on:
 
     outputs:
       quality_gate_status:
-        description: 'Quality Gate status (PASSED/FAILED)'
+        description: 'Quality Gate status (OK/ERROR)'
         value: ${{ jobs.sonar.outputs.quality_gate }}
 
 jobs:
@@ -100,39 +100,77 @@ jobs:
           echo "Analysis completed. Check Quality Gate below." >> $GITHUB_STEP_SUMMARY
 
       # ============================================
-      # QUALITY GATE
+      # QUALITY GATE (API via report-task.txt)
       # ============================================
-      - name: Find SonarQube report
-        id: find-report
-        if: "!inputs.skip_quality_gate"
-        run: |
-          REPORT_FILE=$(find . -name "report-task.txt" -path "*/.scannerwork/*" | head -1)
-
-          if [ -z "$REPORT_FILE" ]; then
-            echo "::error::No report-task.txt found. Verify sonar plugin is applied."
-            exit 1
-          fi
-
-          REPORT_DIR=$(dirname "$REPORT_FILE")
-          echo "scannerwork=$REPORT_DIR" >> $GITHUB_OUTPUT
-          echo "Found SonarQube report: $REPORT_FILE"
-
       - name: SonarQube Quality Gate
         id: quality-gate
         if: "!inputs.skip_quality_gate"
-        uses: SonarSource/sonarqube-quality-gate-action@v1
-        timeout-minutes: 5
-        env:
-          SONAR_HOST_URL: ${{ env.SONAR_URL }}
-          SONAR_SCANNER_WORK_DIR: ${{ steps.find-report.outputs.scannerwork }}
-
-      - name: Quality Gate Summary
-        if: "!inputs.skip_quality_gate"
         run: |
-          STATUS="${{ steps.quality-gate.outputs.quality-gate-status }}"
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Quality Gate: ${STATUS}**" >> $GITHUB_STEP_SUMMARY
+          # Gradle: build/sonar/ | Maven/CLI: .scannerwork/
+          REPORT_FILE=$(find . -name "report-task.txt" \( -path "*/build/sonar/*" -o -path "*/.scannerwork/*" \) 2>/dev/null | head -1)
 
-          if [ "$STATUS" != "PASSED" ]; then
-            echo "::warning::Quality Gate status: $STATUS"
+          if [ -z "$REPORT_FILE" ]; then
+            echo "::warning::No report-task.txt found, listing build directories for debug:"
+            find . -type d -name "sonar" -o -type d -name ".scannerwork" 2>/dev/null || true
+            echo "::error::Cannot check Quality Gate without report-task.txt"
+            exit 1
+          fi
+
+          echo "Found report: $REPORT_FILE"
+          cat "$REPORT_FILE"
+
+          # Extract ceTaskId and server URL from report
+          CE_TASK_ID=$(grep "ceTaskId=" "$REPORT_FILE" | cut -d'=' -f2)
+          SERVER_URL=$(grep "serverUrl=" "$REPORT_FILE" | cut -d'=' -f2)
+
+          if [ -z "$CE_TASK_ID" ]; then
+            echo "::error::ceTaskId not found in report-task.txt"
+            exit 1
+          fi
+
+          echo "Waiting for analysis task $CE_TASK_ID to complete..."
+
+          # Poll CE task status (max 5 min)
+          for i in $(seq 1 30); do
+            TASK_STATUS=$(curl -s -u "${{ env.SONAR_TOKEN }}:" \
+              "${SERVER_URL}/api/ce/task?id=${CE_TASK_ID}" \
+              | jq -r '.task.status // empty')
+
+            echo "  Attempt $i/30 - task status: $TASK_STATUS"
+
+            if [ "$TASK_STATUS" = "SUCCESS" ]; then
+              break
+            elif [ "$TASK_STATUS" = "FAILED" ] || [ "$TASK_STATUS" = "CANCELED" ]; then
+              echo "::error::SonarQube analysis task $TASK_STATUS"
+              exit 1
+            fi
+
+            sleep 10
+          done
+
+          if [ "$TASK_STATUS" != "SUCCESS" ]; then
+            echo "::error::Timed out waiting for SonarQube analysis"
+            exit 1
+          fi
+
+          # Get Quality Gate status
+          ANALYSIS_ID=$(curl -s -u "${{ env.SONAR_TOKEN }}:" \
+            "${SERVER_URL}/api/ce/task?id=${CE_TASK_ID}" \
+            | jq -r '.task.analysisId')
+
+          STATUS=$(curl -s -u "${{ env.SONAR_TOKEN }}:" \
+            "${SERVER_URL}/api/qualitygates/project_status?analysisId=${ANALYSIS_ID}" \
+            | jq -r '.projectStatus.status')
+
+          echo "quality-gate-status=$STATUS" >> $GITHUB_OUTPUT
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### SonarQube Quality Gate" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$STATUS" = "OK" ]; then
+            echo "**Quality Gate: PASSED**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Quality Gate: $STATUS**" >> $GITHUB_STEP_SUMMARY
+            echo "::error::Quality Gate failed with status: $STATUS"
+            exit 1
           fi
