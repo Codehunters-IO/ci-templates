@@ -1,0 +1,14 @@
+// Template: React frontend pipeline
+// Copy to: Jenkinsfile (project root)
+//
+// Prerequisites:
+//   - Jenkins credentials: aws-access-key-id, aws-secret-access-key
+//   - Jenkins global env: AWS_REGION, AWS_ECR_URL
+//   - Jenkins runs on same EC2 server with Docker socket mounted
+//
+// Setup:
+//   1. Copy this file as 'Jenkinsfile' to your project root
+//   2. Create a Pipeline job in Jenkins pointing to your repo
+//   3. Configure parameters on first run
+
+evaluate(new File('/var/jenkins_home/pipelines/react-pipeline.groovy').text)

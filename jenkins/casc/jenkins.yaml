@@ -1,0 +1,42 @@
+jenkins:
+  systemMessage: "Jenkins CI - Fallback para builds sin minutos de GitHub Actions"
+  numExecutors: 2
+  mode: NORMAL
+
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: admin
+          password: "${JENKINS_ADMIN_PASSWORD}"
+
+  authorizationStrategy:
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: false
+
+  globalNodeProperties:
+    - envVars:
+        env:
+          - key: AWS_REGION
+            value: "${AWS_REGION}"
+          - key: AWS_ECR_URL
+            value: "${AWS_ECR_URL}"
+
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          - string:
+              scope: GLOBAL
+              id: "aws-access-key-id"
+              description: "AWS Access Key ID"
+              secret: "${AWS_ACCESS_KEY_ID}"
+          - string:
+              scope: GLOBAL
+              id: "aws-secret-access-key"
+              description: "AWS Secret Access Key"
+              secret: "${AWS_SECRET_ACCESS_KEY}"
+
+unclassified:
+  location:
+    url: "http://localhost:8081/"
