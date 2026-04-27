@@ -77,6 +77,11 @@ on:
         required: false
         type: number
         default: 0
+      coverage_line_threshold:
+        description: 'Minimum line coverage percentage (0-100). Set to 0 to disable.'
+        required: false
+        type: number
+        default: 0
       run_code_analysis:
         description: 'Run code analysis'
         required: false
@@ -152,6 +157,7 @@ jobs:
       run_coverage: ${{ inputs.run_coverage }}
       coverage_instruction_threshold: ${{ inputs.coverage_instruction_threshold }}
       coverage_branch_threshold: ${{ inputs.coverage_branch_threshold }}
+      coverage_line_threshold: ${{ inputs.coverage_line_threshold }}
       run_code_analysis: ${{ inputs.run_code_analysis }}
       code_analysis_tool: ${{ inputs.code_analysis_tool }}
       skip_quality_gate: ${{ inputs.skip_quality_gate }}

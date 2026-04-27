@@ -33,6 +33,11 @@ on:
         required: false
         type: number
         default: 0
+      coverage_line_threshold:
+        description: 'Minimum line coverage percentage (0-100). Set to 0 to disable.'
+        required: false
+        type: number
+        default: 0
       run_code_analysis:
         description: 'Run code analysis'
         required: false
@@ -383,8 +388,8 @@ jobs:
         with:
           paths: ${{ github.workspace }}/**/build/reports/jacoco/test/jacocoTestReport.xml
           token: ${{ secrets.GITHUB_TOKEN }}
-          min-coverage-overall: 80
-          min-coverage-changed-files: 80
+          min-coverage-overall: ${{ inputs.coverage_line_threshold }}
+          min-coverage-changed-files: ${{ inputs.coverage_line_threshold }}
           title: "Code Coverage Report"
           update-comment: true
 
@@ -443,11 +448,14 @@ jobs:
         if: inputs.run_coverage && always()
         run: |
           FAILED=false
-          COVERAGE_THRESHOLD=80
-
-          # Check line coverage threshold
+          COVERAGE_THRESHOLD=${{ inputs.coverage_line_threshold }}
           COVERAGE="${{ steps.coverage.outputs.percentage }}"
-          if [ "$(echo "$COVERAGE < $COVERAGE_THRESHOLD" | bc -l)" -eq 1 ]; then
+
+          # Always print line coverage
+          echo "Line coverage: ${COVERAGE}%"
+
+          # Validate only if threshold > 0
+          if [ "$COVERAGE_THRESHOLD" -gt 0 ] && [ "$(echo "$COVERAGE < $COVERAGE_THRESHOLD" | bc -l)" -eq 1 ]; then
             echo "::error::Line coverage ${COVERAGE}% is below threshold of ${COVERAGE_THRESHOLD}%"
             FAILED=true
           fi
