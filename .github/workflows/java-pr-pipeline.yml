@@ -77,13 +77,13 @@ on:
         required: false
         type: number
         default: 0
-      code_analysis:
-        description: 'Code analysis tool: none, sonar, qodana'
+      run_sonar:
+        description: 'Run SonarQube analysis'
         required: false
-        type: string
-        default: 'none'
+        type: boolean
+        default: false
       skip_quality_gate:
-        description: 'Skip Quality Gate check (Sonar/Qodana)'
+        description: 'Skip Quality Gate check'
         required: false
         type: boolean
         default: false
@@ -147,7 +147,7 @@ jobs:
       run_coverage: ${{ inputs.run_coverage }}
       coverage_instruction_threshold: ${{ inputs.coverage_instruction_threshold }}
       coverage_branch_threshold: ${{ inputs.coverage_branch_threshold }}
-      code_analysis: ${{ inputs.code_analysis }}
+      run_sonar: ${{ inputs.run_sonar }}
       skip_quality_gate: ${{ inputs.skip_quality_gate }}
       run_owasp: ${{ inputs.run_owasp }}
       owasp_fail_on_cvss: ${{ inputs.owasp_fail_on_cvss }}

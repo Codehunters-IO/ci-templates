@@ -36,7 +36,7 @@ jobs:
     with:
       run_build: true
       run_test: true
-      code_analysis: 'sonar'
+      run_sonar: true
       run_deploy: true
       run_cleanup: true
       run_release: true

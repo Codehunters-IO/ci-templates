@@ -51,7 +51,7 @@ jobs:
       run_build: true
       run_test: true
       run_coverage: true
-      code_analysis: 'sonar'
+      run_sonar: true
       run_owasp: true
       run_architecture: true
       run_artifact: true

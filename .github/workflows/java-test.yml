@@ -33,13 +33,13 @@ on:
         required: false
         type: number
         default: 0
-      code_analysis:
-        description: 'Code analysis tool (none, sonar, qodana)'
+      run_sonar:
+        description: 'Run SonarQube analysis'
         required: false
-        type: string
-        default: 'none'
+        type: boolean
+        default: false
       skip_quality_gate:
-        description: 'Skip Quality Gate check (Sonar/Qodana)'
+        description: 'Skip Quality Gate check'
         required: false
         type: boolean
         default: false
@@ -171,7 +171,7 @@ jobs:
       # SONAR ANALYSIS (optional)
       # ============================================
       - name: Run SonarQube Analysis (Gradle)
-        if: inputs.code_analysis == 'sonar' && inputs.build_tool == 'gradle'
+        if: inputs.run_sonar && inputs.build_tool == 'gradle'
         env:
           GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME }}
           GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
@@ -182,7 +182,7 @@ jobs:
             --no-daemon --build-cache
 
       - name: Run SonarQube Analysis (Maven)
-        if: inputs.code_analysis == 'sonar' && inputs.build_tool == 'maven'
+        if: inputs.run_sonar && inputs.build_tool == 'maven'
         env:
           GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME }}
           GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
@@ -194,7 +194,7 @@ jobs:
 
       - name: SonarQube Quality Gate
         id: quality-gate
-        if: inputs.code_analysis == 'sonar' && !inputs.skip_quality_gate
+        if: inputs.run_sonar && !inputs.skip_quality_gate
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |

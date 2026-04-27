@@ -6,8 +6,8 @@
 # Uses the PR pipeline (wrapper over main pipeline, quality gates only)
 #
 # Required secrets:
-#   SonarQube (if code_analysis: 'sonar'):
-#   - SONAR_HOST_URL: SonarQube server URL
+#   SonarQube (if run_sonar: true):
+#   - SONAR_URL: SonarQube server URL
 #   - SONAR_TOKEN: SonarQube authentication token
 #
 #   OWASP (if run_owasp: true):
@@ -27,7 +27,7 @@ jobs:
       run_commit_lint: true
       run_test: true
       run_coverage: true
-      code_analysis: 'sonar'
+      run_sonar: true
       run_owasp: true
       run_architecture: true
     secrets: inherit
