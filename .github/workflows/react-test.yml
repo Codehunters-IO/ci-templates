@@ -33,11 +33,16 @@ on:
         required: false
         type: boolean
         default: false
-      run_sonar:
-        description: 'Run SonarQube analysis'
+      run_code_analysis:
+        description: 'Run code analysis'
         required: false
         type: boolean
         default: false
+      code_analysis_tool:
+        description: 'Code analysis tool: sonar or qodana'
+        required: false
+        type: string
+        default: 'sonar'
       skip_quality_gate:
         description: 'Skip Quality Gate check'
         required: false
@@ -96,7 +101,7 @@ jobs:
     # SONARQUBE ANALYSIS
     # ============================================
       - name: SonarQube Scan
-        if: inputs.run_sonar && secrets.SONAR_TOKEN != ''
+        if: inputs.run_code_analysis && inputs.code_analysis_tool == 'sonar' && secrets.SONAR_TOKEN != ''
         uses: SonarSource/sonarqube-scan-action@v4
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -104,7 +109,7 @@ jobs:
 
       - name: SonarQube Quality Gate
         id: quality-gate
-        if: inputs.run_sonar && !inputs.skip_quality_gate && secrets.SONAR_TOKEN != ''
+        if: inputs.run_code_analysis && inputs.code_analysis_tool == 'sonar' && !inputs.skip_quality_gate && secrets.SONAR_TOKEN != ''
         uses: SonarSource/sonarqube-quality-gate-action@v1
         timeout-minutes: 5
         env:
@@ -112,7 +117,7 @@ jobs:
           SONAR_HOST_URL: ${{ secrets.SONAR_URL }}
 
       - name: SonarQube Quality Gate Summary
-        if: inputs.run_sonar && !inputs.skip_quality_gate && secrets.SONAR_TOKEN != ''
+        if: inputs.run_code_analysis && inputs.code_analysis_tool == 'sonar' && !inputs.skip_quality_gate && secrets.SONAR_TOKEN != ''
         run: |
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### SonarQube Quality Gate" >> $GITHUB_STEP_SUMMARY

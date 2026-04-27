@@ -63,11 +63,16 @@ on:
         required: false
         type: boolean
         default: false
-      run_sonar:
-        description: 'Run SonarQube analysis (requires run_test: true)'
+      run_code_analysis:
+        description: 'Run code analysis (requires run_test: true)'
         required: false
         type: boolean
         default: false
+      code_analysis_tool:
+        description: 'Code analysis tool: sonar or qodana'
+        required: false
+        type: string
+        default: 'sonar'
       skip_quality_gate:
         description: 'Skip Quality Gate check'
         required: false
@@ -249,7 +254,8 @@ jobs:
       package_manager: ${{ inputs.package_manager }}
       run_coverage: true
       test_command: ${{ inputs.test_command }}
-      run_sonar: ${{ inputs.run_sonar }}
+      run_code_analysis: ${{ inputs.run_code_analysis }}
+      code_analysis_tool: ${{ inputs.code_analysis_tool }}
       skip_quality_gate: ${{ inputs.skip_quality_gate }}
     secrets: inherit
 

@@ -73,18 +73,18 @@ on:
         required: false
         type: boolean
         default: false
-      run_sonar:
-        description: 'Run SonarQube analysis'
+      run_code_analysis:
+        description: 'Run code analysis'
         required: false
         type: boolean
         default: false
+      code_analysis_tool:
+        description: 'Code analysis tool: sonar or qodana'
+        required: false
+        type: string
+        default: 'sonar'
       skip_quality_gate:
         description: 'Skip Quality Gate check'
-        required: false
-        type: boolean
-        default: false
-      run_qodana:
-        description: 'Run Qodana analysis'
         required: false
         type: boolean
         default: false
@@ -365,7 +365,8 @@ jobs:
       run_coverage: ${{ inputs.run_coverage }}
       coverage_instruction_threshold: ${{ inputs.coverage_instruction_threshold }}
       coverage_branch_threshold: ${{ inputs.coverage_branch_threshold }}
-      run_sonar: ${{ inputs.run_sonar }}
+      run_code_analysis: ${{ inputs.run_code_analysis }}
+      code_analysis_tool: ${{ inputs.code_analysis_tool }}
       skip_quality_gate: ${{ inputs.skip_quality_gate }}
       run_owasp: ${{ inputs.run_owasp }}
     secrets: inherit
@@ -375,7 +376,7 @@ jobs:
   # ============================================
   qodana:
     name: Qodana
-    if: inputs.run_qodana
+    if: inputs.run_code_analysis && inputs.code_analysis_tool == 'qodana'
     needs: build
     uses: ./.github/workflows/java-qodana.yml
     with:
