@@ -362,29 +362,13 @@ jobs:
       runner: ${{ inputs.runner }}
       java_version: ${{ inputs.java_version }}
       java_distribution: ${{ inputs.java_distribution }}
-      run_coverage: true
+      run_coverage: ${{ inputs.run_coverage }}
       coverage_threshold: ${{ inputs.coverage_threshold }}
       coverage_instruction_threshold: ${{ inputs.coverage_instruction_threshold }}
       coverage_branch_threshold: ${{ inputs.coverage_branch_threshold }}
       code_analysis: ${{ inputs.code_analysis }}
       skip_quality_gate: ${{ inputs.skip_quality_gate }}
       run_owasp: ${{ inputs.run_owasp }}
-    secrets: inherit
-
-  # ============================================
-  # COVERAGE - JaCoCo (parallel with test, needs: build)
-  # ============================================
-  coverage:
-    name: Coverage
-    if: inputs.run_coverage
-    needs: build
-    uses: ./.github/workflows/java-coverage.yml
-    with:
-      runner: ${{ inputs.runner }}
-      java_version: ${{ inputs.java_version }}
-      java_distribution: ${{ inputs.java_distribution }}
-      coverage_threshold: ${{ inputs.coverage_threshold }}
-      build_tool: ${{ inputs.build_tool }}
     secrets: inherit
 
   # ============================================
@@ -456,12 +440,11 @@ jobs:
       always() &&
       needs.build.result == 'success' &&
       (needs.test.result == 'success' || needs.test.result == 'skipped') &&
-      (needs.coverage.result == 'success' || needs.coverage.result == 'skipped') &&
       (needs.sonar.result == 'success' || needs.sonar.result == 'skipped') &&
       (needs.qodana.result == 'success' || needs.qodana.result == 'skipped') &&
       (needs.owasp.result == 'success' || needs.owasp.result == 'skipped') &&
       (needs.architecture.result == 'success' || needs.architecture.result == 'skipped')
-    needs: [build, test, coverage, sonar, qodana, owasp, architecture]
+    needs: [build, test, sonar, qodana, owasp, architecture]
     uses: ./.github/workflows/shared-artifact-docker-ecr.yml
     with:
       runner: ${{ inputs.runner }}

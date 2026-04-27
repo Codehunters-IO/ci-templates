@@ -250,20 +250,61 @@ jobs:
           echo "| Skipped | $SKIPPED |" >> $GITHUB_STEP_SUMMARY
           echo "| **Total** | **$TOTAL** |" >> $GITHUB_STEP_SUMMARY
 
+      - name: Publish JaCoCo Report
+        if: inputs.run_coverage && always()
+        uses: madrapps/jacoco-report@v1.7.1
+        with:
+          paths: ${{ github.workspace }}/**/build/reports/jacoco/test/jacocoTestReport.xml
+          token: ${{ secrets.GITHUB_TOKEN }}
+          min-coverage-overall: ${{ inputs.coverage_threshold }}
+          min-coverage-changed-files: ${{ inputs.coverage_threshold }}
+          title: "Code Coverage Report"
+          update-comment: true
+
       - name: Parse coverage report
         id: coverage
         if: inputs.run_coverage && always()
         run: |
-          COVERAGE=0
+          TOTAL_MISSED=0
+          TOTAL_COVERED=0
 
-          if [ -f "build/reports/jacoco/test/jacocoTestReport.csv" ]; then
-            MISSED=$(awk -F',' 'NR>1 {sum+=$8} END {print sum}' build/reports/jacoco/test/jacocoTestReport.csv 2>/dev/null || echo "0")
-            COVERED=$(awk -F',' 'NR>1 {sum+=$9} END {print sum}' build/reports/jacoco/test/jacocoTestReport.csv 2>/dev/null || echo "0")
+          # Find all JaCoCo CSV reports (supports multi-module projects)
+          CSV_FILES=$(find . -path "*/jacoco/*.csv" -name "*.csv" 2>/dev/null)
 
-            if [ "$((MISSED + COVERED))" -gt 0 ]; then
-              COVERAGE=$(awk "BEGIN {printf \"%.1f\", ($COVERED / ($MISSED + $COVERED)) * 100}")
-            fi
+          if [ -z "$CSV_FILES" ]; then
+            echo "::warning::No JaCoCo CSV reports found"
+            echo "percentage=0" >> $GITHUB_OUTPUT
+            echo "### Code Coverage" >> $GITHUB_STEP_SUMMARY
+            echo "**Line Coverage: 0%** (no reports found)" >> $GITHUB_STEP_SUMMARY
+            exit 0
           fi
+
+          echo "=== JaCoCo Coverage Report ==="
+          echo ""
+
+          while IFS= read -r CSV_FILE; do
+            MODULE=$(echo "$CSV_FILE" | sed 's|^\./||;s|/build/.*||')
+            MISSED=$(awk -F',' 'NR>1 {sum+=$8} END {print sum+0}' "$CSV_FILE" 2>/dev/null)
+            COVERED=$(awk -F',' 'NR>1 {sum+=$9} END {print sum+0}' "$CSV_FILE" 2>/dev/null)
+            TOTAL=$((MISSED + COVERED))
+
+            if [ "$TOTAL" -gt 0 ]; then
+              MOD_COV=$(awk "BEGIN {printf \"%.1f\", ($COVERED / $TOTAL) * 100}")
+              echo "  $MODULE: ${MOD_COV}% (${COVERED}/${TOTAL} lines)"
+            fi
+
+            TOTAL_MISSED=$((TOTAL_MISSED + MISSED))
+            TOTAL_COVERED=$((TOTAL_COVERED + COVERED))
+          done <<< "$CSV_FILES"
+
+          COVERAGE=0
+          if [ "$((TOTAL_MISSED + TOTAL_COVERED))" -gt 0 ]; then
+            COVERAGE=$(awk "BEGIN {printf \"%.1f\", ($TOTAL_COVERED / ($TOTAL_MISSED + $TOTAL_COVERED)) * 100}")
+          fi
+
+          echo ""
+          echo "  Total: ${COVERAGE}% (${TOTAL_COVERED}/$((TOTAL_MISSED + TOTAL_COVERED)) lines)"
+          echo "================================"
 
           echo "percentage=$COVERAGE" >> $GITHUB_OUTPUT
 
