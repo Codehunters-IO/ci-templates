@@ -23,11 +23,6 @@ on:
         required: false
         type: boolean
         default: true
-      coverage_threshold:
-        description: 'Minimum line coverage percentage (0-100). Set to 0 to disable.'
-        required: false
-        type: number
-        default: 0
       coverage_instruction_threshold:
         description: 'Minimum instruction coverage percentage (0-100). Set to 0 to disable. Requires jacocoLogCodeCoverage task.'
         required: false
@@ -256,8 +251,8 @@ jobs:
         with:
           paths: ${{ github.workspace }}/**/build/reports/jacoco/test/jacocoTestReport.xml
           token: ${{ secrets.GITHUB_TOKEN }}
-          min-coverage-overall: ${{ inputs.coverage_threshold }}
-          min-coverage-changed-files: ${{ inputs.coverage_threshold }}
+          min-coverage-overall: 80
+          min-coverage-changed-files: 80
           title: "Code Coverage Report"
           update-comment: true
 
@@ -313,18 +308,16 @@ jobs:
           echo "**Line Coverage: ${COVERAGE}%**" >> $GITHUB_STEP_SUMMARY
 
       - name: Check coverage threshold
-        if: inputs.run_coverage && (inputs.coverage_threshold > 0 || inputs.coverage_instruction_threshold > 0 || inputs.coverage_branch_threshold > 0)
+        if: inputs.run_coverage && always()
         run: |
           FAILED=false
+          COVERAGE_THRESHOLD=80
 
           # Check line coverage threshold
-          if [ "${{ inputs.coverage_threshold }}" -gt 0 ]; then
-            COVERAGE="${{ steps.coverage.outputs.percentage }}"
-            THRESHOLD="${{ inputs.coverage_threshold }}"
-            if [ "$(echo "$COVERAGE < $THRESHOLD" | bc -l)" -eq 1 ]; then
-              echo "::error::Line coverage ${COVERAGE}% is below threshold of ${THRESHOLD}%"
-              FAILED=true
-            fi
+          COVERAGE="${{ steps.coverage.outputs.percentage }}"
+          if [ "$(echo "$COVERAGE < $COVERAGE_THRESHOLD" | bc -l)" -eq 1 ]; then
+            echo "::error::Line coverage ${COVERAGE}% is below threshold of ${COVERAGE_THRESHOLD}%"
+            FAILED=true
           fi
 
           # Check instruction coverage threshold (from jacocoLogCodeCoverage)

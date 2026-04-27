@@ -9,7 +9,6 @@
 #   - SONAR_TOKEN: SonarQube authentication token
 #
 # Customize:
-#   - coverage_threshold: Set minimum coverage (e.g., 80)
 #   - build_output_dir: Set to 'dist' for Vite projects
 
 name: PR Validation
@@ -27,5 +26,4 @@ jobs:
       run_build: true
       run_test: true
       code_analysis: 'sonar'
-      coverage_threshold: 0
     secrets: inherit

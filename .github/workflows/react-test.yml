@@ -23,11 +23,6 @@ on:
         required: false
         type: boolean
         default: true
-      coverage_threshold:
-        description: 'Minimum coverage percentage (0-100). Set to 0 to disable.'
-        required: false
-        type: number
-        default: 0
       test_command:
         description: 'Test script name (yarn <command>)'
         required: false
@@ -196,13 +191,13 @@ jobs:
           echo "**Line Coverage: ${COVERAGE}%**" >> $GITHUB_STEP_SUMMARY
 
       - name: Check coverage threshold
-        if: inputs.run_coverage && inputs.coverage_threshold > 0
+        if: inputs.run_coverage && always()
         run: |
           COVERAGE="${{ steps.coverage.outputs.percentage }}"
-          THRESHOLD="${{ inputs.coverage_threshold }}"
+          COVERAGE_THRESHOLD=80
 
-          if [ "$(echo "$COVERAGE < $THRESHOLD" | bc -l)" -eq 1 ]; then
-            echo "::error::Coverage ${COVERAGE}% is below threshold of ${THRESHOLD}%"
+          if [ "$(echo "$COVERAGE < $COVERAGE_THRESHOLD" | bc -l)" -eq 1 ]; then
+            echo "::error::Coverage ${COVERAGE}% is below threshold of ${COVERAGE_THRESHOLD}%"
             exit 1
           fi
 

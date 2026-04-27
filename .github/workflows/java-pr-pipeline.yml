@@ -67,11 +67,6 @@ on:
         required: false
         type: boolean
         default: true
-      coverage_threshold:
-        description: 'Minimum coverage percentage (0-100)'
-        required: false
-        type: number
-        default: 0
       coverage_instruction_threshold:
         description: 'Minimum instruction coverage percentage (0-100)'
         required: false
@@ -150,7 +145,6 @@ jobs:
       run_build: true
       run_test: ${{ inputs.run_test }}
       run_coverage: ${{ inputs.run_coverage }}
-      coverage_threshold: ${{ inputs.coverage_threshold }}
       coverage_instruction_threshold: ${{ inputs.coverage_instruction_threshold }}
       coverage_branch_threshold: ${{ inputs.coverage_branch_threshold }}
       code_analysis: ${{ inputs.code_analysis }}

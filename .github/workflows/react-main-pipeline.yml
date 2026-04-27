@@ -142,11 +142,6 @@ on:
         default: false
 
       # Test options
-      coverage_threshold:
-        description: 'Minimum coverage percentage (0-100)'
-        required: false
-        type: number
-        default: 0
       test_command:
         description: 'Test script name (yarn <command>)'
         required: false
@@ -253,7 +248,6 @@ jobs:
       node_version: ${{ inputs.node_version }}
       package_manager: ${{ inputs.package_manager }}
       run_coverage: true
-      coverage_threshold: ${{ inputs.coverage_threshold }}
       test_command: ${{ inputs.test_command }}
       code_analysis: ${{ inputs.code_analysis }}
       skip_quality_gate: ${{ inputs.skip_quality_gate }}
