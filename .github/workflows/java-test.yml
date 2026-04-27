@@ -106,6 +106,9 @@ on:
       tests_skipped:
         description: 'Number of tests skipped'
         value: ${{ jobs.test.outputs.skipped }}
+      quality_gate_status:
+        description: 'SonarQube Quality Gate status (OK/ERROR)'
+        value: ${{ jobs.test.outputs.quality_gate }}
       artifact_name:
         description: 'Name of uploaded artifact'
         value: ${{ jobs.test.outputs.artifact_name }}
@@ -121,6 +124,7 @@ jobs:
       coverage: ${{ steps.coverage.outputs.percentage }}
       coverage_instruction: ${{ steps.jacoco-log.outputs.instruction_pct }}
       coverage_branch: ${{ steps.jacoco-log.outputs.branch_pct }}
+      quality_gate: ${{ steps.quality-gate.outputs.quality-gate-status }}
       passed: ${{ steps.test-summary.outputs.passed }}
       failed: ${{ steps.test-summary.outputs.failed }}
       skipped: ${{ steps.test-summary.outputs.skipped }}
@@ -153,7 +157,7 @@ jobs:
         env:
           GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME }}
           GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
-        run: ./gradlew clean build test --no-daemon --build-cache --parallel || true
+        run: ./gradlew clean build test jacocoTestReport --no-daemon --build-cache --parallel || true
 
       - name: Run tests (Maven)
         id: test-run-maven
@@ -161,7 +165,130 @@ jobs:
         env:
           GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME }}
           GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
-        run: mvn clean test -B || true
+        run: mvn clean verify -B || true
+
+      # ============================================
+      # SONAR ANALYSIS (optional)
+      # ============================================
+      - name: Run SonarQube Analysis (Gradle)
+        if: inputs.code_analysis == 'sonar' && inputs.build_tool == 'gradle'
+        env:
+          GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME }}
+          GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          ./gradlew sonar \
+            -Dsonar.token="${SONAR_TOKEN}" \
+            --no-daemon --build-cache
+
+      - name: Run SonarQube Analysis (Maven)
+        if: inputs.code_analysis == 'sonar' && inputs.build_tool == 'maven'
+        env:
+          GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME }}
+          GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          mvn sonar:sonar \
+            -Dsonar.token="${SONAR_TOKEN}" \
+            -B
+
+      - name: SonarQube Quality Gate
+        id: quality-gate
+        if: inputs.code_analysis == 'sonar' && !inputs.skip_quality_gate
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          # Gradle: build/sonar/ | Maven/CLI: .scannerwork/
+          REPORT_FILE=$(find . -name "report-task.txt" \( -path "*/build/sonar/*" -o -path "*/.scannerwork/*" \) 2>/dev/null | head -1)
+
+          if [ -z "$REPORT_FILE" ]; then
+            echo "::warning::No report-task.txt found, listing build directories for debug:"
+            find . -type d -name "sonar" -o -type d -name ".scannerwork" 2>/dev/null || true
+            echo "::error::Cannot check Quality Gate without report-task.txt"
+            exit 1
+          fi
+
+          echo "Found report: $REPORT_FILE"
+          cat "$REPORT_FILE"
+
+          # Extract ceTaskId, server URL, and dashboard URL from report
+          CE_TASK_ID=$(grep "ceTaskId=" "$REPORT_FILE" | cut -d'=' -f2)
+          SERVER_URL=$(grep "serverUrl=" "$REPORT_FILE" | cut -d'=' -f2)
+          DASHBOARD_URL=$(grep "dashboardUrl=" "$REPORT_FILE" | cut -d'=' -f2-)
+
+          if [ -z "$CE_TASK_ID" ]; then
+            echo "::error::ceTaskId not found in report-task.txt"
+            exit 1
+          fi
+
+          echo "Waiting for analysis task $CE_TASK_ID to complete..."
+
+          # Poll CE task status (max 5 min)
+          for i in $(seq 1 30); do
+            TASK_STATUS=$(curl -s -u "${SONAR_TOKEN}:" \
+              "${SERVER_URL}/api/ce/task?id=${CE_TASK_ID}" \
+              | jq -r '.task.status // empty')
+
+            echo "  Attempt $i/30 - task status: $TASK_STATUS"
+
+            if [ "$TASK_STATUS" = "SUCCESS" ]; then
+              break
+            elif [ "$TASK_STATUS" = "FAILED" ] || [ "$TASK_STATUS" = "CANCELED" ]; then
+              echo "::error::SonarQube analysis task $TASK_STATUS"
+              exit 1
+            fi
+
+            sleep 10
+          done
+
+          if [ "$TASK_STATUS" != "SUCCESS" ]; then
+            echo "::error::Timed out waiting for SonarQube analysis"
+            exit 1
+          fi
+
+          # Get Quality Gate status
+          ANALYSIS_ID=$(curl -s -u "${SONAR_TOKEN}:" \
+            "${SERVER_URL}/api/ce/task?id=${CE_TASK_ID}" \
+            | jq -r '.task.analysisId')
+
+          QG_RESPONSE=$(curl -s -u "${SONAR_TOKEN}:" \
+            "${SERVER_URL}/api/qualitygates/project_status?analysisId=${ANALYSIS_ID}")
+
+          STATUS=$(echo "$QG_RESPONSE" | jq -r '.projectStatus.status')
+
+          echo "quality-gate-status=$STATUS" >> $GITHUB_OUTPUT
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### SonarQube Quality Gate" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$STATUS" = "OK" ]; then
+            echo "**Quality Gate: PASSED** — [View in SonarQube]($DASHBOARD_URL)" >> $GITHUB_STEP_SUMMARY
+          else
+            # Extract failed conditions with details
+            FAILED_CONDITIONS=$(echo "$QG_RESPONSE" | jq -r '
+              .projectStatus.conditions[]
+              | select(.status == "ERROR")
+              | "| \(.metricKey) | \(.actualValue) | \(.errorThreshold) |"
+            ')
+
+            echo "**Quality Gate: FAILED**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "#### Failed Conditions" >> $GITHUB_STEP_SUMMARY
+            echo "| Metric | Actual | Threshold |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|--------|-----------|" >> $GITHUB_STEP_SUMMARY
+            echo "$FAILED_CONDITIONS" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "[View details in SonarQube]($DASHBOARD_URL)" >> $GITHUB_STEP_SUMMARY
+
+            echo "::error::Quality Gate FAILED — See details: $DASHBOARD_URL"
+            echo "Failed conditions:"
+            echo "$QG_RESPONSE" | jq -r '
+              .projectStatus.conditions[]
+              | select(.status == "ERROR")
+              | "  \(.metricKey): \(.actualValue) (threshold: \(.errorThreshold))"
+            '
+            exit 1
+          fi
 
       - name: JaCoCo Log Code Coverage
         id: jacoco-log

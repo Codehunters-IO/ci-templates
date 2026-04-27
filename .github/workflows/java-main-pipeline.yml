@@ -263,7 +263,7 @@ on:
         value: ${{ jobs.test.outputs.coverage_branch }}
       quality_gate:
         description: 'SonarQube Quality Gate status'
-        value: ${{ jobs.sonar.outputs.quality_gate_status }}
+        value: ${{ jobs.test.outputs.quality_gate_status }}
       owasp_vulnerabilities:
         description: 'Number of OWASP vulnerabilities found'
         value: ${{ jobs.owasp.outputs.vulnerabilities }}
@@ -366,22 +366,6 @@ jobs:
     secrets: inherit
 
   # ============================================
-  # SONAR (parallel with test, needs: build)
-  # ============================================
-  sonar:
-    name: SonarQube
-    if: inputs.code_analysis == 'sonar'
-    needs: build
-    uses: ./.github/workflows/java-sonar.yml
-    with:
-      runner: ${{ inputs.runner }}
-      java_version: ${{ inputs.java_version }}
-      java_distribution: ${{ inputs.java_distribution }}
-      skip_quality_gate: ${{ inputs.skip_quality_gate }}
-      build_tool: ${{ inputs.build_tool }}
-    secrets: inherit
-
-  # ============================================
   # QODANA (parallel with test, needs: build)
   # ============================================
   qodana:
@@ -434,11 +418,10 @@ jobs:
       always() &&
       needs.build.result == 'success' &&
       (needs.test.result == 'success' || needs.test.result == 'skipped') &&
-      (needs.sonar.result == 'success' || needs.sonar.result == 'skipped') &&
       (needs.qodana.result == 'success' || needs.qodana.result == 'skipped') &&
       (needs.owasp.result == 'success' || needs.owasp.result == 'skipped') &&
       (needs.architecture.result == 'success' || needs.architecture.result == 'skipped')
-    needs: [build, test, sonar, qodana, owasp, architecture]
+    needs: [build, test, qodana, owasp, architecture]
     uses: ./.github/workflows/shared-artifact-docker-ecr.yml
     with:
       runner: ${{ inputs.runner }}
