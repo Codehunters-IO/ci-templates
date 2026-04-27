@@ -119,9 +119,10 @@ jobs:
           echo "Found report: $REPORT_FILE"
           cat "$REPORT_FILE"
 
-          # Extract ceTaskId and server URL from report
+          # Extract ceTaskId, server URL, and dashboard URL from report
           CE_TASK_ID=$(grep "ceTaskId=" "$REPORT_FILE" | cut -d'=' -f2)
           SERVER_URL=$(grep "serverUrl=" "$REPORT_FILE" | cut -d'=' -f2)
+          DASHBOARD_URL=$(grep "dashboardUrl=" "$REPORT_FILE" | cut -d'=' -f2-)
 
           if [ -z "$CE_TASK_ID" ]; then
             echo "::error::ceTaskId not found in report-task.txt"
@@ -158,9 +159,10 @@ jobs:
             "${SERVER_URL}/api/ce/task?id=${CE_TASK_ID}" \
             | jq -r '.task.analysisId')
 
-          STATUS=$(curl -s -u "${{ env.SONAR_TOKEN }}:" \
-            "${SERVER_URL}/api/qualitygates/project_status?analysisId=${ANALYSIS_ID}" \
-            | jq -r '.projectStatus.status')
+          QG_RESPONSE=$(curl -s -u "${{ env.SONAR_TOKEN }}:" \
+            "${SERVER_URL}/api/qualitygates/project_status?analysisId=${ANALYSIS_ID}")
+
+          STATUS=$(echo "$QG_RESPONSE" | jq -r '.projectStatus.status')
 
           echo "quality-gate-status=$STATUS" >> $GITHUB_OUTPUT
 
@@ -168,9 +170,30 @@ jobs:
           echo "### SonarQube Quality Gate" >> $GITHUB_STEP_SUMMARY
 
           if [ "$STATUS" = "OK" ]; then
-            echo "**Quality Gate: PASSED**" >> $GITHUB_STEP_SUMMARY
+            echo "**Quality Gate: PASSED** — [View in SonarQube]($DASHBOARD_URL)" >> $GITHUB_STEP_SUMMARY
           else
-            echo "**Quality Gate: $STATUS**" >> $GITHUB_STEP_SUMMARY
-            echo "::error::Quality Gate failed with status: $STATUS"
+            # Extract failed conditions with details
+            FAILED_CONDITIONS=$(echo "$QG_RESPONSE" | jq -r '
+              .projectStatus.conditions[]
+              | select(.status == "ERROR")
+              | "| \(.metricKey) | \(.actualValue) | \(.errorThreshold) |"
+            ')
+
+            echo "**Quality Gate: FAILED**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "#### Failed Conditions" >> $GITHUB_STEP_SUMMARY
+            echo "| Metric | Actual | Threshold |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|--------|-----------|" >> $GITHUB_STEP_SUMMARY
+            echo "$FAILED_CONDITIONS" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "[View details in SonarQube]($DASHBOARD_URL)" >> $GITHUB_STEP_SUMMARY
+
+            echo "::error::Quality Gate FAILED — See details: $DASHBOARD_URL"
+            echo "Failed conditions:"
+            echo "$QG_RESPONSE" | jq -r '
+              .projectStatus.conditions[]
+              | select(.status == "ERROR")
+              | "  \(.metricKey): \(.actualValue) (threshold: \(.errorThreshold))"
+            '
             exit 1
           fi
