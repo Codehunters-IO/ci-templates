@@ -1,0 +1,104 @@
+name: Shared - Tag Release
+
+on:
+  workflow_call:
+    inputs:
+      tag_prefix:
+        description: 'Prefix for version tags'
+        required: false
+        type: string
+        default: 'v'
+      major_pattern:
+        description: 'Regex pattern for major version bump'
+        required: false
+        type: string
+        default: '(MAJOR|BREAKING CHANGE)'
+      minor_pattern:
+        description: 'Regex pattern for minor version bump'
+        required: false
+        type: string
+        default: '(feat)'
+
+    outputs:
+      version:
+        description: 'Semantic version (e.g. 1.2.3)'
+        value: ${{ jobs.tag.outputs.version }}
+      version_tag:
+        description: 'Version tag (e.g. v1.2.3)'
+        value: ${{ jobs.tag.outputs.version_tag }}
+
+jobs:
+  tag:
+    name: Tag Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    outputs:
+      version: ${{ steps.semver.outputs.version }}
+      version_tag: ${{ steps.semver.outputs.version_tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Calculate semantic version
+        id: semver
+        uses: PaulHatch/semantic-version@v5.4.0
+        with:
+          tag_prefix: ${{ inputs.tag_prefix }}
+          major_pattern: ${{ inputs.major_pattern }}
+          minor_pattern: ${{ inputs.minor_pattern }}
+          format: "${major}.${minor}.${patch}"
+          namespace: ""
+          change_path: ""
+          bump_each_commit: false
+
+      - name: Check if tag exists
+        id: check-tag
+        run: |
+          TAG="${{ inputs.tag_prefix }}${{ steps.semver.outputs.version }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Tag $TAG already exists, skipping"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create and push tag
+        if: steps.check-tag.outputs.exists == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ inputs.tag_prefix }}${{ steps.semver.outputs.version }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+
+          echo "### Tag Created: $TAG" >> $GITHUB_STEP_SUMMARY
+
+      - name: Create GitHub Release
+        if: steps.check-tag.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.tag_prefix }}${{ steps.semver.outputs.version }}"
+
+          # Generate changelog from previous tag
+          if git describe --tags --abbrev=0 HEAD^ >/dev/null 2>&1; then
+            PREV_TAG="$(git describe --tags --abbrev=0 HEAD^)"
+            CHANGELOG=$(git log --pretty=format:'- %s (%h)' "${PREV_TAG}..HEAD~1" | head -30)
+          else
+            CHANGELOG=$(git log --pretty=format:'- %s (%h)' | head -30)
+          fi
+
+          gh release create "$TAG" \
+            --title "Release $TAG" \
+            --notes "## Changes
+
+          ${CHANGELOG}" \
+            --latest
