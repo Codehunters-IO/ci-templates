@@ -142,12 +142,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Setup JDK ${{ inputs.java_version }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: ${{ inputs.java_distribution }}
           java-version: ${{ inputs.java_version }}
@@ -509,7 +509,7 @@ jobs:
 
       - name: Upload test reports
         if: inputs.upload_reports && !inputs.disable_artifacts && always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: test-reports-${{ github.run_id }}
           path: |
@@ -531,7 +531,7 @@ jobs:
 
       - name: Upload build artifact
         if: inputs.upload_artifact && !inputs.disable_artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ steps.artifact-info.outputs.name }}
           path: ${{ inputs.jar_path }}/*.jar

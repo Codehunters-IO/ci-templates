@@ -40,11 +40,11 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Dependency Review
         id: review
-        uses: actions/dependency-review-action@v4
+        uses: actions/dependency-review-action@v5
         with:
           fail-on-severity: ${{ inputs.fail_on_severity }}
           allow-licenses: ${{ inputs.allow_licenses }}
