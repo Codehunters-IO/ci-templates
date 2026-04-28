@@ -582,8 +582,10 @@ jobs:
       always() &&
       (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success' ||
        (needs.deploy-ec2.result == 'skipped' && needs.deploy-ec2-vpn.result == 'skipped' && needs.deploy-eks.result == 'skipped' &&
-        (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success' || needs.artifact-packages.result == 'success')))
-    needs: [deploy-ec2, deploy-ec2-vpn, deploy-eks]
+        (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success' || needs.artifact-packages.result == 'success' ||
+         (needs.artifact-ecr.result == 'skipped' && needs.artifact-github.result == 'skipped' && needs.artifact-packages.result == 'skipped' &&
+          needs.test.result == 'success'))))
+    needs: [test, artifact-ecr, artifact-github, artifact-packages, deploy-ec2, deploy-ec2-vpn, deploy-eks]
     uses: ./.github/workflows/shared-delete-branch.yml
     secrets: inherit
 
@@ -597,9 +599,11 @@ jobs:
       always() &&
       (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success' ||
        (needs.deploy-ec2.result == 'skipped' && needs.deploy-ec2-vpn.result == 'skipped' && needs.deploy-eks.result == 'skipped' &&
-        (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success' || needs.artifact-packages.result == 'success'))) &&
+        (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success' || needs.artifact-packages.result == 'success' ||
+         (needs.artifact-ecr.result == 'skipped' && needs.artifact-github.result == 'skipped' && needs.artifact-packages.result == 'skipped' &&
+          needs.test.result == 'success')))) &&
       (needs.cleanup.result == 'success' || needs.cleanup.result == 'skipped')
-    needs: [deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup]
+    needs: [test, artifact-ecr, artifact-github, artifact-packages, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup]
     uses: ./.github/workflows/shared-release.yml
     with:
       base_branch: ${{ inputs.environment }}
