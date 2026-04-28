@@ -51,15 +51,25 @@ jobs:
           if [ -n "$INPUT_BRANCH" ]; then
             BRANCH="$INPUT_BRANCH"
           else
-            # Try to detect from merge commit message
+            COMMIT_SHA=$(git rev-parse HEAD)
             COMMIT_MSG=$(git log -1 --pretty=%B)
 
+            # Method 1: Merge commit message
             if echo "$COMMIT_MSG" | grep -q "Merge pull request"; then
               BRANCH=$(echo "$COMMIT_MSG" | grep -oP "from [^/]+/\K[^\s]+" | head -1)
             elif echo "$COMMIT_MSG" | grep -q "Merge branch"; then
               BRANCH=$(echo "$COMMIT_MSG" | grep -oP "Merge branch '\K[^']+" | head -1)
-            else
-              echo "Could not detect branch from commit message"
+            fi
+
+            # Method 2: GitHub API (handles squash merges)
+            if [ -z "$BRANCH" ]; then
+              echo "Trying GitHub API to find PR for commit $COMMIT_SHA"
+              BRANCH=$(gh api "repos/${{ github.repository }}/commits/${COMMIT_SHA}/pulls" \
+                --jq '.[0].head.ref // empty' 2>/dev/null || echo "")
+            fi
+
+            if [ -z "$BRANCH" ]; then
+              echo "Could not detect source branch from commit"
               echo "status=not_found" >> $GITHUB_OUTPUT
               echo "branch=" >> $GITHUB_OUTPUT
               exit 0
