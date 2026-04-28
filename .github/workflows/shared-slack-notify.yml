@@ -3,12 +3,27 @@ name: Shared - Slack Notification
 on:
   workflow_call:
     inputs:
-      status:
-        description: 'Pipeline status: success, failure, cancelled'
+      channel:
+        description: 'Slack channel name (without #)'
         required: true
         type: string
+      status:
+        description: 'Pipeline status: success, failure, cancelled, info'
+        required: false
+        type: string
+        default: 'info'
+      title:
+        description: 'Notification title (overrides auto-generated)'
+        required: false
+        type: string
+        default: ''
+      message:
+        description: 'Notification message body'
+        required: false
+        type: string
+        default: ''
       environment:
-        description: 'Deployment environment (develop, prod)'
+        description: 'Deployment environment (develop, staging, prod)'
         required: false
         type: string
         default: ''
@@ -22,21 +37,16 @@ on:
         required: false
         type: string
         default: ''
-      message:
-        description: 'Custom message (overrides default template)'
-        required: false
-        type: string
-        default: ''
       mention_on_failure:
-        description: 'Slack mention on failure (e.g., @channel, @here, <@U12345>)'
+        description: 'Slack mention on failure (e.g., @channel, @here)'
         required: false
         type: string
         default: ''
-
-    secrets:
-      SLACK_WEBHOOK_URL:
-        description: 'Slack incoming webhook URL'
-        required: true
+      pr_url:
+        description: 'Pull request URL (for PR notifications)'
+        required: false
+        type: string
+        default: ''
 
 jobs:
   notify:
@@ -45,23 +55,30 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - name: Build payload and send
+      - name: Send Slack notification
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          CHANNEL: ${{ inputs.channel }}
           STATUS: ${{ inputs.status }}
+          TITLE: ${{ inputs.title }}
+          MESSAGE: ${{ inputs.message }}
           ENVIRONMENT: ${{ inputs.environment }}
           VERSION: ${{ inputs.version }}
           CHANGELOG: ${{ inputs.changelog }}
-          CUSTOM_MESSAGE: ${{ inputs.message }}
           MENTION_ON_FAILURE: ${{ inputs.mention_on_failure }}
+          PR_URL: ${{ inputs.pr_url }}
           REPO: ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
           ACTOR: ${{ github.actor }}
           SERVER_URL: ${{ github.server_url }}
           RUN_ID: ${{ github.run_id }}
-          SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+
+          if [ -z "$SLACK_BOT_TOKEN" ]; then
+            echo "::warning::SLACK_BOT_TOKEN secret is not set, skipping notification"
+            exit 0
+          fi
 
           # Status emoji and color
           case "$STATUS" in
@@ -71,70 +88,83 @@ jobs:
             *)         EMOJI="ℹ️"; COLOR="#1264A3" ;;
           esac
 
-          # Header text
-          if [ -n "$VERSION" ]; then
-            HEADER="${EMOJI} Release v${VERSION} — ${REPO##*/}"
-          else
-            HEADER="${EMOJI} Pipeline ${STATUS} — ${REPO##*/}"
+          # Auto-generate title if not provided
+          if [ -z "$TITLE" ]; then
+            if [ -n "$VERSION" ]; then
+              TITLE="Release v${VERSION} — ${REPO##*/}"
+            else
+              TITLE="Pipeline ${STATUS} — ${REPO##*/}"
+            fi
           fi
 
-          # Build blocks array
-          BLOCKS=$(cat <<BLOCKS_EOF
-          [
-            {
-              "type": "header",
-              "text": {
-                "type": "plain_text",
-                "text": "${HEADER}",
-                "emoji": true
-              }
-            },
-            {
-              "type": "section",
-              "fields": [
-                {"type": "mrkdwn", "text": "*Repository:*\n<${SERVER_URL}/${REPO}|${REPO}>"},
-                {"type": "mrkdwn", "text": "*Branch:*\n\`${BRANCH}\`"},
-                {"type": "mrkdwn", "text": "*Environment:*\n${ENVIRONMENT:-N/A}"},
-                {"type": "mrkdwn", "text": "*Actor:*\n${ACTOR}"}
-              ]
-            }
-          ]
-          BLOCKS_EOF
-          )
+          HEADER="${EMOJI} ${TITLE}"
 
-          # Append optional blocks
-          if [ -n "$CUSTOM_MESSAGE" ]; then
-            BLOCKS=$(echo "$BLOCKS" | jq --arg msg "$CUSTOM_MESSAGE" \
+          # Build blocks array
+          BLOCKS=$(jq -n --arg header "$HEADER" \
+            '[{"type":"header","text":{"type":"plain_text","text":$header,"emoji":true}}]')
+
+          # Info fields
+          BLOCKS=$(echo "$BLOCKS" | jq \
+            --arg repo "<${SERVER_URL}/${REPO}|${REPO}>" \
+            --arg branch "\`${BRANCH}\`" \
+            --arg env "${ENVIRONMENT:-N/A}" \
+            --arg actor "$ACTOR" \
+            '. += [{"type":"section","fields":[
+              {"type":"mrkdwn","text":("*Repository:*\n" + $repo)},
+              {"type":"mrkdwn","text":("*Branch:*\n" + $branch)},
+              {"type":"mrkdwn","text":("*Environment:*\n" + $env)},
+              {"type":"mrkdwn","text":("*Actor:*\n" + $actor)}
+            ]}]')
+
+          # Custom message
+          if [ -n "$MESSAGE" ]; then
+            BLOCKS=$(echo "$BLOCKS" | jq --arg msg "$MESSAGE" \
               '. += [{"type":"section","text":{"type":"mrkdwn","text":$msg}}]')
           fi
 
+          # Changelog
           if [ -n "$VERSION" ] && [ -n "$CHANGELOG" ]; then
             BLOCKS=$(echo "$BLOCKS" | jq --arg cl "*Changelog:*\n${CHANGELOG}" \
               '. += [{"type":"section","text":{"type":"mrkdwn","text":$cl}}]')
           fi
 
+          # PR link
+          if [ -n "$PR_URL" ]; then
+            BLOCKS=$(echo "$BLOCKS" | jq --arg pr "📋 *Pull Request:* <${PR_URL}|View PR>" \
+              '. += [{"type":"section","text":{"type":"mrkdwn","text":$pr}}]')
+          fi
+
+          # Mention on failure
           if [ "$STATUS" = "failure" ] && [ -n "$MENTION_ON_FAILURE" ]; then
-            BLOCKS=$(echo "$BLOCKS" | jq --arg m "${MENTION_ON_FAILURE} Pipeline failed — attention needed" \
+            BLOCKS=$(echo "$BLOCKS" | jq --arg m "<!${MENTION_ON_FAILURE#@}> Pipeline failed — attention needed" \
               '. += [{"type":"section","text":{"type":"mrkdwn","text":$m}}]')
           fi
 
-          # Always add View Run button
+          # View Run button
           BLOCKS=$(echo "$BLOCKS" | jq --arg url "${SERVER_URL}/${REPO}/actions/runs/${RUN_ID}" \
             '. += [{"type":"actions","elements":[{"type":"button","text":{"type":"plain_text","text":"View Run"},"url":$url}]}]')
 
-          # Build final payload
-          PAYLOAD=$(jq -n --argjson blocks "$BLOCKS" --arg color "$COLOR" \
-            '{blocks: $blocks, attachments: [{color: $color, blocks: []}]}')
+          # Build payload
+          PAYLOAD=$(jq -n \
+            --arg channel "$CHANNEL" \
+            --argjson blocks "$BLOCKS" \
+            --arg color "$COLOR" \
+            --arg text "$HEADER" \
+            '{channel: $channel, text: $text, blocks: $blocks, attachments: [{color: $color, blocks: []}]}')
 
-          # Send to Slack
+          # Send via Slack Bot Token API
           HTTP_CODE=$(curl -s -o /tmp/slack_response.txt -w "%{http_code}" \
-            -X POST -H "Content-Type: application/json" \
-            -d "$PAYLOAD" \
-            "$SLACK_WEBHOOK_URL")
+            -X POST "https://slack.com/api/chat.postMessage" \
+            -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD")
 
-          if [ "$HTTP_CODE" -ne 200 ]; then
-            echo "::warning::Slack notification failed with HTTP $HTTP_CODE"
-            cat /tmp/slack_response.txt
+          RESPONSE=$(cat /tmp/slack_response.txt)
+          OK=$(echo "$RESPONSE" | jq -r '.ok // false')
+
+          if [ "$OK" = "true" ]; then
+            echo "Slack notification sent to #${CHANNEL}"
           else
-            echo "Slack notification sent successfully"
+            ERROR=$(echo "$RESPONSE" | jq -r '.error // "unknown"')
+            echo "::warning::Slack notification failed: $ERROR (HTTP $HTTP_CODE)"
           fi

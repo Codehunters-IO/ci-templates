@@ -221,22 +221,42 @@ on:
         type: string
         default: 'bug,pipeline-failure'
 
-      # Notifications
-      run_notifications:
-        description: 'Send notifications after pipeline completes'
+      # Notifications (Slack Bot Token)
+      notify_on_failure:
+        description: 'Send Slack notification on pipeline failure'
         required: false
         type: boolean
         default: false
-      notify_providers:
-        description: 'Notification providers (comma-separated: slack, teams)'
+      notify_failure_channel:
+        description: 'Slack channel for failure notifications'
         required: false
         type: string
-        default: 'slack'
-      notify_mention_on_failure:
-        description: 'Mention on failure (Slack: @channel, Teams: @General)'
+        default: 'pipeline-errors'
+      notify_failure_mention:
+        description: 'Slack mention on failure (e.g., @channel, @here)'
         required: false
         type: string
-        default: ''
+        default: '@channel'
+      notify_on_deploy:
+        description: 'Send Slack notification on deploy success'
+        required: false
+        type: boolean
+        default: false
+      notify_deploy_channel:
+        description: 'Slack channel for deploy notifications'
+        required: false
+        type: string
+        default: 'pipeline-deployments'
+      notify_on_release:
+        description: 'Send Slack notification when release PR is created'
+        required: false
+        type: boolean
+        default: false
+      notify_release_channel:
+        description: 'Slack channel for release PR notifications'
+        required: false
+        type: string
+        default: 'pr-review'
 
       # Cleanup & Release
       run_cleanup:
@@ -627,22 +647,60 @@ jobs:
     secrets: inherit
 
   # ============================================
-  # NOTIFY - Notifications (runs last, always)
+  # NOTIFY FAILURE - Slack notification on pipeline failure
   # ============================================
-  notify:
-    name: Notify
+  notify-failure:
+    name: Notify Failure
     if: |
-      inputs.run_notifications &&
-      always()
+      inputs.notify_on_failure &&
+      always() &&
+      (needs.build.result == 'failure' || needs.test.result == 'failure' ||
+       needs.artifact-ecr.result == 'failure' || needs.artifact-github.result == 'failure' || needs.artifact-packages.result == 'failure' ||
+       needs.deploy-ec2.result == 'failure' || needs.deploy-ec2-vpn.result == 'failure' || needs.deploy-eks.result == 'failure')
     needs: [build, test, artifact-ecr, artifact-github, artifact-packages, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release, tag]
-    uses: ./.github/workflows/shared-notifications.yml
+    uses: ./.github/workflows/shared-slack-notify.yml
     with:
-      providers: ${{ inputs.notify_providers }}
-      status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.artifact-ecr.result == 'failure' || needs.artifact-github.result == 'failure' || needs.artifact-packages.result == 'failure' || needs.deploy-ec2.result == 'failure' || needs.deploy-ec2-vpn.result == 'failure' || needs.deploy-eks.result == 'failure') && 'failure' || (needs.build.result == 'cancelled') && 'cancelled' || 'success' }}
+      channel: ${{ inputs.notify_failure_channel }}
+      status: 'failure'
+      mention_on_failure: ${{ inputs.notify_failure_mention }}
       environment: ${{ inputs.environment }}
+    secrets: inherit
+
+  # ============================================
+  # NOTIFY DEPLOY - Slack notification on deploy success
+  # ============================================
+  notify-deploy:
+    name: Notify Deploy
+    if: |
+      inputs.notify_on_deploy &&
+      always() &&
+      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success')
+    needs: [deploy-ec2, deploy-ec2-vpn, deploy-eks]
+    uses: ./.github/workflows/shared-slack-notify.yml
+    with:
+      channel: ${{ inputs.notify_deploy_channel }}
+      status: 'success'
+      title: 'Deploy successful — ${{ github.repository }}'
+      environment: ${{ inputs.environment }}
+    secrets: inherit
+
+  # ============================================
+  # NOTIFY RELEASE - Slack notification when release PR created
+  # ============================================
+  notify-release:
+    name: Notify Release PR
+    if: |
+      inputs.notify_on_release &&
+      always() &&
+      needs.release.result == 'success'
+    needs: [release]
+    uses: ./.github/workflows/shared-slack-notify.yml
+    with:
+      channel: ${{ inputs.notify_release_channel }}
+      status: 'info'
+      title: 'Release PR created — ${{ github.repository }}'
       version: ${{ needs.release.outputs.version }}
-      changelog: ${{ needs.release.outputs.changelog }}
-      mention_on_failure: ${{ inputs.notify_mention_on_failure }}
+      pr_url: ${{ needs.release.outputs.pr_url }}
     secrets: inherit
 
   # ============================================
