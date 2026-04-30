@@ -268,15 +268,19 @@ jobs:
             echo "    external: true"
           } > docker-compose.yml
 
-          # Create start.sh
-          echo "Creating start.sh..."
-          printf '#!/usr/bin/env bash\nset -euo pipefail\nPROJECT_NAME="%s"\nCOMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"\necho "==> Starting stack (project: ${PROJECT_NAME})"\ndocker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" up -d\necho "==> Current status:"\ndocker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" ps\necho "==> App logs (last 50 lines):"\ndocker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" logs --tail=50\n' "${REPO_NAME}" > start.sh
-          chmod +x start.sh
+          # Create start.sh if not exists
+          if [ ! -f "start.sh" ]; then
+            echo "Creating start.sh..."
+            printf '#!/usr/bin/env bash\nset -euo pipefail\nCOMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"\nPROJECT_NAME="${PROJECT_NAME:-$(basename $(pwd))}"\necho "==> Starting stack (project: ${PROJECT_NAME})"\ndocker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" up -d\necho "==> Current status:"\ndocker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" ps\necho "==> App logs (last 50 lines):"\ndocker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" logs --tail=50\n' > start.sh
+            chmod +x start.sh
+          fi
 
-          # Create stop.sh
-          echo "Creating stop.sh..."
-          printf '#!/usr/bin/env bash\nset -euo pipefail\nPROJECT_NAME="%s"\nCOMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"\necho "==> Stopping stack (project: ${PROJECT_NAME})"\ndocker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" down\necho "==> Done."\n' "${REPO_NAME}" > stop.sh
-          chmod +x stop.sh
+          # Create stop.sh if not exists
+          if [ ! -f "stop.sh" ]; then
+            echo "Creating stop.sh..."
+            printf '#!/usr/bin/env bash\nset -euo pipefail\nCOMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"\nPROJECT_NAME="${PROJECT_NAME:-$(basename $(pwd))}"\necho "==> Stopping stack (project: ${PROJECT_NAME})"\ndocker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" down\necho "==> Done."\n' > stop.sh
+            chmod +x stop.sh
+          fi
 
           # Pull latest image from ECR
           echo "Pulling latest image..."
