@@ -268,47 +268,41 @@ jobs:
             echo "    external: true"
           } > docker-compose.yml
 
-          # Create start.sh if not exists
-          if [ ! -f "start.sh" ]; then
-            echo "Creating start.sh..."
-            cat > start.sh << 'STARTEOF'
+          # Create start.sh (always overwrite to keep in sync)
+          echo "Creating start.sh..."
+          cat > start.sh <<STARTEOF
           #!/usr/bin/env bash
           set -euo pipefail
 
-          COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
-          PROJECT_NAME="${PROJECT_NAME:-${REPO_NAME}}"
+          COMPOSE_FILE="\${COMPOSE_FILE:-docker-compose.yml}"
+          PROJECT_NAME="${REPO_NAME}"
 
-          echo "==> Starting stack (project: ${PROJECT_NAME}) using ${COMPOSE_FILE}"
-          docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" up -d
+          echo "==> Starting stack (project: \${PROJECT_NAME}) using \${COMPOSE_FILE}"
+          docker compose -p "\${PROJECT_NAME}" -f "\${COMPOSE_FILE}" up -d
 
           echo "==> Current status:"
-          docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" ps
+          docker compose -p "\${PROJECT_NAME}" -f "\${COMPOSE_FILE}" ps
 
           echo "==> App logs (last 50 lines):"
-          docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" logs --tail=50
+          docker compose -p "\${PROJECT_NAME}" -f "\${COMPOSE_FILE}" logs --tail=50
           STARTEOF
-            chmod +x start.sh
-          fi
+          chmod +x start.sh
 
-          # Create stop.sh if not exists
-          if [ ! -f "stop.sh" ]; then
-            echo "Creating stop.sh..."
-            cat > stop.sh << 'STOPEOF'
+          # Create stop.sh (always overwrite to keep in sync)
+          echo "Creating stop.sh..."
+          cat > stop.sh <<STOPEOF
           #!/usr/bin/env bash
           set -euo pipefail
 
-          COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
-          PROJECT_NAME="${REPO_NAME:-$(basename $(pwd))}"
+          COMPOSE_FILE="\${COMPOSE_FILE:-docker-compose.yml}"
+          PROJECT_NAME="${REPO_NAME}"
 
-          echo "==> Stopping stack (project: ${PROJECT_NAME})"
-          docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" down
+          echo "==> Stopping stack (project: \${PROJECT_NAME})"
+          docker compose -p "\${PROJECT_NAME}" -f "\${COMPOSE_FILE}" down
 
           echo "==> Done."
-          echo "Tip: if you ALSO want to remove volumes (DATA LOSS), run:"
-          echo "  docker compose -p \"${PROJECT_NAME}\" -f \"${COMPOSE_FILE}\" down -v"
           STOPEOF
-            chmod +x stop.sh
-          fi
+          chmod +x stop.sh
 
           # Pull latest image from ECR
           echo "Pulling latest image..."
@@ -320,9 +314,11 @@ jobs:
             ./stop.sh || true
           fi
 
-          # Clean up unused Docker resources (old images, stopped containers, networks)
-          echo "Pruning unused Docker resources..."
-          docker system prune -af > /dev/null || true
+          # Remove only old images for this repo (keep the new one)
+          echo "Removing old images for ${REPO_NAME}..."
+          docker images "${AWS_ECR_URL}/${REPO_NAME}" --format '{{.Repository}}:{{.Tag}}' \
+            | grep -v ":${IMAGE_TAG}$" \
+            | xargs -r docker rmi 2>/dev/null || true
 
           # Start new container
           echo "Starting new container..."
