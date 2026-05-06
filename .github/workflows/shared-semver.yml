@@ -53,17 +53,50 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Fetch all tags
+        run: git fetch --tags --force
+
       - name: Calculate semantic version
         id: semver
-        uses: PaulHatch/semantic-version@v5.4.0
-        with:
-          tag_prefix: ${{ inputs.tag_prefix }}
-          major_pattern: ${{ inputs.major_pattern }}
-          minor_pattern: ${{ inputs.minor_pattern }}
-          version_format: "${major}.${minor}.${patch}"
-          namespace: ""
-          change_path: ""
-          bump_each_commit: false
+        env:
+          TAG_PREFIX: ${{ inputs.tag_prefix }}
+          MAJOR_PATTERN: ${{ inputs.major_pattern }}
+          MINOR_PATTERN: ${{ inputs.minor_pattern }}
+        run: |
+          LAST_TAG=$(git tag -l "${TAG_PREFIX}*" --sort=-v:refname | head -n1)
+          if [ -z "$LAST_TAG" ]; then
+            LAST_TAG="${TAG_PREFIX}0.0.0"
+            echo "No previous tag found, starting from $LAST_TAG"
+          else
+            echo "Last tag: $LAST_TAG"
+          fi
+
+          LAST_VERSION="${LAST_TAG#"${TAG_PREFIX}"}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$LAST_VERSION"
+
+          if git rev-parse "$LAST_TAG" >/dev/null 2>&1; then
+            COMMITS=$(git log "${LAST_TAG}..HEAD" --pretty=format:'%s%n%b')
+          else
+            COMMITS=$(git log --pretty=format:'%s%n%b')
+          fi
+
+          if [ -z "$COMMITS" ]; then
+            echo "No new commits since $LAST_TAG"
+            VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          elif echo "$COMMITS" | grep -qE "$MAJOR_PATTERN"; then
+            MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
+            VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          elif echo "$COMMITS" | grep -qE "$MINOR_PATTERN"; then
+            MINOR=$((MINOR + 1)); PATCH=0
+            VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          else
+            PATCH=$((PATCH + 1))
+            VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          fi
+
+          echo "Calculated version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version_tag=${TAG_PREFIX}${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Export version
         run: |
@@ -72,13 +105,15 @@ jobs:
 
       - name: Update CHANGELOG.md
         if: inputs.update_changelog
+        env:
+          TAG_PREFIX: ${{ inputs.tag_prefix }}
         run: |
           set -e
           TODAY="$(date +%Y-%m-%d)"
           VERSION_LINE="## ${VERSION} - ${TODAY}"
 
-          if git describe --tags --abbrev=0 >/dev/null 2>&1; then
-            PREV_TAG="$(git describe --tags --abbrev=0)"
+          PREV_TAG=$(git tag -l "${TAG_PREFIX}*" --sort=-v:refname | head -n1)
+          if [ -n "$PREV_TAG" ] && git rev-parse "$PREV_TAG" >/dev/null 2>&1; then
             RANGE="${PREV_TAG}..HEAD"
           else
             RANGE="$(git rev-list --max-parents=0 HEAD)^..HEAD"
