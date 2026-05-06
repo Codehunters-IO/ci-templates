@@ -170,7 +170,7 @@ on:
         description: 'Container memory limit (e.g., 512m/512Mi)'
         required: false
         type: string
-        default: '512m'
+        default: '800m'
       memory_reservation:
         description: 'Container memory reservation (e.g., 256m/256Mi)'
         required: false
