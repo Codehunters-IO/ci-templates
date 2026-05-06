@@ -5,19 +5,16 @@
 # Flow: build → test → artifact (ECR) → deploy (EC2) → delete branch → create release PR
 #
 # Required secrets:
-#   AWS:
-#   - AWS_ACCESS_KEY_ID: AWS access key
-#   - AWS_SECRET_ACCESS_KEY: AWS secret key
-#   - AWS_REGION: AWS region (e.g., us-east-1)
+#   Container registry & deploy target (provider-neutral):
+#   - CONTAINER_REGISTRY_URL: Registry URL (ECR, DOCR, etc.)
+#   - DEPLOY_HOST: Server IP or hostname
+#   - DEPLOY_USER: SSH username (e.g., ubuntu, root)
+#   - DEPLOY_SSH_KEY: SSH private key
+#   - APP_PORT: External port for KrakenD (maps to 8080)
 #
-#   ECR:
-#   - AWS_ECR_URL: ECR registry URL
-#
-#   EC2:
-#   - AWS_EC2_HOST: Server IP or hostname
-#   - AWS_EC2_USER: SSH username (e.g., ubuntu, ec2-user)
-#   - AWS_EC2_SSH_KEY: SSH private key
-#   - AWS_APP_PORT: External port for KrakenD (maps to 8080)
+#   Provider-specific (only for the selected cloud_provider):
+#   - cloud_provider: 'aws'         → AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
+#   - cloud_provider: 'digitalocean' → DO_API_TOKEN
 
 name: Deploy to Develop
 
@@ -41,6 +38,8 @@ jobs:
       run_test: true
       run_artifact: true
       run_deploy: true
+      deploy_target: 'vm'
+      cloud_provider: 'aws'
       run_cleanup: true
       run_release: true
       environment: 'develop'

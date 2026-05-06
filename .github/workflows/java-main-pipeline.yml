@@ -157,10 +157,15 @@ on:
         type: boolean
         default: false
       deploy_target:
-        description: 'Deploy target: ec2, ec2-vpn, or eks'
+        description: 'Deploy target: vm, vm-vpn, or eks'
         required: false
         type: string
-        default: 'ec2'
+        default: 'vm'
+      cloud_provider:
+        description: 'Cloud provider for VM deploy (aws, digitalocean)'
+        required: false
+        type: string
+        default: 'aws'
       environment:
         description: 'GitHub environment (develop, prod)'
         required: false
@@ -517,19 +522,20 @@ jobs:
     secrets: inherit
 
   # ============================================
-  # DEPLOY - EC2
+  # DEPLOY - VM (AWS EC2 / DO Droplet / etc.)
   # ============================================
-  deploy-ec2:
-    name: Deploy EC2
+  deploy-vm:
+    name: Deploy VM
     if: |
       inputs.run_deploy &&
-      inputs.deploy_target == 'ec2' &&
+      inputs.deploy_target == 'vm' &&
       always() &&
       (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success' || needs.artifact-packages.result == 'success')
     needs: [artifact-ecr, artifact-github, artifact-packages]
-    uses: ./.github/workflows/shared-deploy-ec2.yml
+    uses: ./.github/workflows/shared-deploy-vm.yml
     with:
       runner: ${{ inputs.runner }}
+      cloud_provider: ${{ inputs.cloud_provider }}
       image_tag: ${{ needs.artifact-ecr.outputs.image_tag || needs.artifact-github.outputs.image_tag }}
       docker_platform: ${{ inputs.docker_platform }}
       environment: ${{ inputs.environment }}
@@ -541,19 +547,20 @@ jobs:
     secrets: inherit
 
   # ============================================
-  # DEPLOY - EC2 via WireGuard VPN
+  # DEPLOY - VM via WireGuard VPN
   # ============================================
-  deploy-ec2-vpn:
-    name: Deploy EC2 (VPN)
+  deploy-vm-vpn:
+    name: Deploy VM (VPN)
     if: |
       inputs.run_deploy &&
-      inputs.deploy_target == 'ec2-vpn' &&
+      inputs.deploy_target == 'vm-vpn' &&
       always() &&
       (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success' || needs.artifact-packages.result == 'success')
     needs: [artifact-ecr, artifact-github, artifact-packages]
-    uses: ./.github/workflows/shared-deploy-ec2-vpn.yml
+    uses: ./.github/workflows/shared-deploy-vm-vpn.yml
     with:
       runner: ${{ inputs.runner }}
+      cloud_provider: ${{ inputs.cloud_provider }}
       image_tag: ${{ needs.artifact-ecr.outputs.image_tag || needs.artifact-github.outputs.image_tag }}
       docker_platform: ${{ inputs.docker_platform }}
       environment: ${{ inputs.environment }}
@@ -600,12 +607,12 @@ jobs:
     if: |
       inputs.run_cleanup &&
       always() &&
-      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success' ||
-       (needs.deploy-ec2.result == 'skipped' && needs.deploy-ec2-vpn.result == 'skipped' && needs.deploy-eks.result == 'skipped' &&
+      (needs.deploy-vm.result == 'success' || needs.deploy-vm-vpn.result == 'success' || needs.deploy-eks.result == 'success' ||
+       (needs.deploy-vm.result == 'skipped' && needs.deploy-vm-vpn.result == 'skipped' && needs.deploy-eks.result == 'skipped' &&
         (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success' || needs.artifact-packages.result == 'success' ||
          (needs.artifact-ecr.result == 'skipped' && needs.artifact-github.result == 'skipped' && needs.artifact-packages.result == 'skipped' &&
           needs.test.result == 'success'))))
-    needs: [test, artifact-ecr, artifact-github, artifact-packages, deploy-ec2, deploy-ec2-vpn, deploy-eks]
+    needs: [test, artifact-ecr, artifact-github, artifact-packages, deploy-vm, deploy-vm-vpn, deploy-eks]
     uses: ./.github/workflows/shared-delete-branch.yml
     secrets: inherit
 
@@ -617,13 +624,13 @@ jobs:
     if: |
       inputs.run_release &&
       always() &&
-      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success' ||
-       (needs.deploy-ec2.result == 'skipped' && needs.deploy-ec2-vpn.result == 'skipped' && needs.deploy-eks.result == 'skipped' &&
+      (needs.deploy-vm.result == 'success' || needs.deploy-vm-vpn.result == 'success' || needs.deploy-eks.result == 'success' ||
+       (needs.deploy-vm.result == 'skipped' && needs.deploy-vm-vpn.result == 'skipped' && needs.deploy-eks.result == 'skipped' &&
         (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success' || needs.artifact-packages.result == 'success' ||
          (needs.artifact-ecr.result == 'skipped' && needs.artifact-github.result == 'skipped' && needs.artifact-packages.result == 'skipped' &&
           needs.test.result == 'success')))) &&
       (needs.cleanup.result == 'success' || needs.cleanup.result == 'skipped')
-    needs: [test, artifact-ecr, artifact-github, artifact-packages, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup]
+    needs: [test, artifact-ecr, artifact-github, artifact-packages, deploy-vm, deploy-vm-vpn, deploy-eks, cleanup]
     uses: ./.github/workflows/shared-release.yml
     with:
       base_branch: ${{ inputs.environment }}
@@ -638,11 +645,11 @@ jobs:
     if: |
       inputs.run_tag &&
       always() &&
-      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success' ||
-       (needs.deploy-ec2.result == 'skipped' && needs.deploy-ec2-vpn.result == 'skipped' && needs.deploy-eks.result == 'skipped' &&
+      (needs.deploy-vm.result == 'success' || needs.deploy-vm-vpn.result == 'success' || needs.deploy-eks.result == 'success' ||
+       (needs.deploy-vm.result == 'skipped' && needs.deploy-vm-vpn.result == 'skipped' && needs.deploy-eks.result == 'skipped' &&
         (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success' || needs.artifact-packages.result == 'success' ||
          (needs.test.result == 'success' && needs.artifact-ecr.result == 'skipped' && needs.artifact-github.result == 'skipped' && needs.artifact-packages.result == 'skipped'))))
-    needs: [build, test, artifact-ecr, artifact-github, artifact-packages, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release]
+    needs: [build, test, artifact-ecr, artifact-github, artifact-packages, deploy-vm, deploy-vm-vpn, deploy-eks, cleanup, release]
     uses: ./.github/workflows/shared-tag-release.yml
     secrets: inherit
 
@@ -656,8 +663,8 @@ jobs:
       always() &&
       (needs.build.result == 'failure' || needs.test.result == 'failure' ||
        needs.artifact-ecr.result == 'failure' || needs.artifact-github.result == 'failure' || needs.artifact-packages.result == 'failure' ||
-       needs.deploy-ec2.result == 'failure' || needs.deploy-ec2-vpn.result == 'failure' || needs.deploy-eks.result == 'failure')
-    needs: [build, test, artifact-ecr, artifact-github, artifact-packages, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release, tag]
+       needs.deploy-vm.result == 'failure' || needs.deploy-vm-vpn.result == 'failure' || needs.deploy-eks.result == 'failure')
+    needs: [build, test, artifact-ecr, artifact-github, artifact-packages, deploy-vm, deploy-vm-vpn, deploy-eks, cleanup, release, tag]
     uses: ./.github/workflows/shared-slack-notify.yml
     with:
       channel: ${{ inputs.notify_failure_channel }}
@@ -674,8 +681,8 @@ jobs:
     if: |
       inputs.notify_on_deploy &&
       always() &&
-      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success')
-    needs: [deploy-ec2, deploy-ec2-vpn, deploy-eks]
+      (needs.deploy-vm.result == 'success' || needs.deploy-vm-vpn.result == 'success' || needs.deploy-eks.result == 'success')
+    needs: [deploy-vm, deploy-vm-vpn, deploy-eks]
     uses: ./.github/workflows/shared-slack-notify.yml
     with:
       channel: ${{ inputs.notify_deploy_channel }}
@@ -711,10 +718,10 @@ jobs:
     if: |
       inputs.run_create_issue_on_failure &&
       always()
-    needs: [build, test, artifact-ecr, artifact-github, artifact-packages, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release, tag]
+    needs: [build, test, artifact-ecr, artifact-github, artifact-packages, deploy-vm, deploy-vm-vpn, deploy-eks, cleanup, release, tag]
     uses: ./.github/workflows/shared-create-issue-on-failure.yml
     with:
-      status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.artifact-ecr.result == 'failure' || needs.artifact-github.result == 'failure' || needs.artifact-packages.result == 'failure' || needs.deploy-ec2.result == 'failure' || needs.deploy-ec2-vpn.result == 'failure' || needs.deploy-eks.result == 'failure') && 'failure' || 'success' }}
+      status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.artifact-ecr.result == 'failure' || needs.artifact-github.result == 'failure' || needs.artifact-packages.result == 'failure' || needs.deploy-vm.result == 'failure' || needs.deploy-vm-vpn.result == 'failure' || needs.deploy-eks.result == 'failure') && 'failure' || 'success' }}
       environment: ${{ inputs.environment }}
       version: ${{ needs.release.outputs.version }}
       changelog: ${{ needs.release.outputs.changelog }}

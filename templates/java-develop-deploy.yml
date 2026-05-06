@@ -6,19 +6,18 @@
 # Image tag: commit SHA (7 chars)
 #
 # Required secrets:
-#   AWS / ECR:
-#   - AWS_ACCESS_KEY_ID: AWS access key
-#   - AWS_SECRET_ACCESS_KEY: AWS secret key
-#   - AWS_REGION: AWS region (e.g., us-east-1)
-#   - AWS_ECR_URL: ECR registry URL
+#   Container registry & deploy target (provider-neutral):
+#   - CONTAINER_REGISTRY_URL: Registry URL (ECR, DOCR, etc.)
+#   - DEPLOY_HOST: Server IP or hostname
+#   - DEPLOY_USER: SSH username (e.g., ubuntu, root)
+#   - DEPLOY_SSH_KEY: SSH private key (PEM)
+#   - APP_PORT: External port for the application
 #
-#   EC2 (deploy_target: ec2 or ec2-vpn):
-#   - AWS_EC2_HOST: Server IP or hostname
-#   - AWS_EC2_USER: SSH username (e.g., ubuntu)
-#   - AWS_EC2_SSH_KEY: SSH private key (PEM)
-#   - AWS_APP_PORT: External port for the application
+#   Provider-specific (only for the selected cloud_provider):
+#   - cloud_provider: 'aws'         → AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
+#   - cloud_provider: 'digitalocean' → DO_API_TOKEN
 #
-#   WireGuard (deploy_target: ec2-vpn only):
+#   WireGuard (deploy_target: vm-vpn only):
 #   - WG_PRIVATE_KEY, WG_ADDRESS, WG_PEER_PUBLIC_KEY, WG_PEER_ALLOWED_IPS, WG_PEER_ENDPOINT
 #   - WG_DNS (optional)
 #
@@ -58,7 +57,8 @@ jobs:
       run_artifact: true
       artifact_registry: 'ecr'
       run_deploy: true
-      deploy_target: 'ec2-vpn'
+      deploy_target: 'vm-vpn'
+      cloud_provider: 'aws'
       environment: 'develop'
       run_cleanup: true
       run_release: true

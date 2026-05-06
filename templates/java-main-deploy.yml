@@ -28,7 +28,8 @@ jobs:
       run_artifact: true
       artifact_registry: 'ecr'
       run_deploy: true
-      deploy_target: 'ec2-vpn'
+      deploy_target: 'vm-vpn'
+      cloud_provider: 'aws'
       environment: 'prod'
       spring_profiles: 'production'
       run_notifications: true

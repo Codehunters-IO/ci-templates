@@ -1,4 +1,4 @@
-name: Shared - Deploy to EC2 (WireGuard VPN)
+name: Shared - Deploy to VM
 
 on:
   workflow_call:
@@ -8,6 +8,11 @@ on:
         required: false
         type: string
         default: 'ubuntu-latest'
+      cloud_provider:
+        description: 'Cloud provider (aws, digitalocean)'
+        required: false
+        type: string
+        default: 'aws'
       image_tag:
         description: 'Docker image tag to deploy'
         required: true
@@ -17,11 +22,6 @@ on:
         required: false
         type: string
         default: 'develop'
-      verify_vpn_connectivity:
-        description: 'Run ping check to EC2 host before deploying'
-        required: false
-        type: boolean
-        default: false
       docker_platform:
         description: 'Docker platform for the container (linux/amd64, linux/arm64)'
         required: false
@@ -44,34 +44,27 @@ on:
         default: ''
 
     secrets:
-      AWS_ECR_URL:
+      # Neutral deploy target
+      CONTAINER_REGISTRY_URL:
         required: true
+      DEPLOY_HOST:
+        required: true
+      DEPLOY_USER:
+        required: true
+      DEPLOY_SSH_KEY:
+        required: true
+      APP_PORT:
+        required: true
+      # AWS-specific (required when cloud_provider=aws)
       AWS_ACCESS_KEY_ID:
-        required: true
-      AWS_SECRET_ACCESS_KEY:
-        required: true
-      AWS_REGION:
-        required: true
-      AWS_EC2_HOST:
-        required: true
-      AWS_EC2_USER:
-        required: true
-      AWS_EC2_SSH_KEY:
-        required: true
-      AWS_APP_PORT:
-        required: true
-      WG_PRIVATE_KEY:
-        required: true
-      WG_ADDRESS:
-        required: true
-      WG_DNS:
         required: false
-      WG_PEER_PUBLIC_KEY:
-        required: true
-      WG_PEER_ALLOWED_IPS:
-        required: true
-      WG_PEER_ENDPOINT:
-        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: false
+      AWS_REGION:
+        required: false
+      # DigitalOcean-specific (required when cloud_provider=digitalocean)
+      DO_API_TOKEN:
+        required: false
 
     outputs:
       deploy_status:
@@ -83,10 +76,10 @@ on:
 
 jobs:
   deploy:
-    name: Deploy to EC2 via WireGuard
+    name: Deploy to VM (${{ inputs.cloud_provider }})
     runs-on: ${{ inputs.runner }}
     environment: ${{ inputs.environment }}
-    timeout-minutes: 20
+    timeout-minutes: 15
 
     outputs:
       status: ${{ steps.deploy.outputs.status }}
@@ -101,80 +94,45 @@ jobs:
           echo "name=$REPO_NAME" >> $GITHUB_OUTPUT
           echo "Repository name: $REPO_NAME"
 
-      - name: Install WireGuard
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq wireguard wireguard-tools resolvconf
-          wg --version
-
-      - name: Setup WireGuard tunnel
-        id: wg
+      - name: Validate provider credentials
         env:
-          WG_IFACE: wg0
-          WG_PRIVATE_KEY: ${{ secrets.WG_PRIVATE_KEY }}
-          WG_ADDRESS: ${{ secrets.WG_ADDRESS }}
-          WG_DNS: ${{ secrets.WG_DNS }}
-          WG_PEER_PUBLIC_KEY: ${{ secrets.WG_PEER_PUBLIC_KEY }}
-          WG_PEER_ALLOWED_IPS: ${{ secrets.WG_PEER_ALLOWED_IPS }}
-          WG_PEER_ENDPOINT: ${{ secrets.WG_PEER_ENDPOINT }}
+          CLOUD_PROVIDER: ${{ inputs.cloud_provider }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          DO_API_TOKEN: ${{ secrets.DO_API_TOKEN }}
         run: |
-          set -e
-          WG_CONF_PATH="/etc/wireguard/${WG_IFACE}.conf"
-
-          echo "Writing WireGuard config to ${WG_CONF_PATH}"
-          sudo mkdir -p /etc/wireguard
-          {
-            echo "[Interface]"
-            echo "PrivateKey = ${WG_PRIVATE_KEY}"
-            echo "Address = ${WG_ADDRESS}"
-            if [ -n "${WG_DNS}" ]; then
-              echo "DNS = ${WG_DNS}"
-            fi
-            echo ""
-            echo "[Peer]"
-            echo "PublicKey = ${WG_PEER_PUBLIC_KEY}"
-            echo "AllowedIPs = ${WG_PEER_ALLOWED_IPS}"
-            echo "Endpoint = ${WG_PEER_ENDPOINT}"
-            echo "PersistentKeepalive = 25"
-          } | sudo tee "$WG_CONF_PATH" > /dev/null
-          sudo chmod 600 "$WG_CONF_PATH"
-
-          echo "Bringing up WireGuard interface ${WG_IFACE}..."
-          sudo wg-quick up "$WG_IFACE"
-
-          echo "WireGuard status:"
-          sudo wg show "$WG_IFACE"
-
-          echo "started=true" >> $GITHUB_OUTPUT
-
-      - name: Verify VPN connectivity to EC2
-        if: inputs.verify_vpn_connectivity
-        env:
-          AWS_EC2_HOST: ${{ secrets.AWS_EC2_HOST }}
-        run: |
-          echo "Testing connectivity to ${AWS_EC2_HOST} over VPN..."
-          for i in 1 2 3 4 5; do
-            if ping -c 1 -W 3 "${AWS_EC2_HOST}" >/dev/null 2>&1; then
-              echo "VPN connectivity OK (attempt $i)"
-              exit 0
-            fi
-            echo "Attempt $i failed, retrying..."
-            sleep 2
-          done
-          echo "WARNING: ping failed, will still try SSH"
+          case "$CLOUD_PROVIDER" in
+            aws)
+              if [ -z "$AWS_ACCESS_KEY_ID" ]; then
+                echo "::error::cloud_provider=aws requires AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION secrets"
+                exit 1
+              fi
+              ;;
+            digitalocean)
+              if [ -z "$DO_API_TOKEN" ]; then
+                echo "::error::cloud_provider=digitalocean requires DO_API_TOKEN secret"
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::Unsupported cloud_provider: $CLOUD_PROVIDER (expected: aws, digitalocean)"
+              exit 1
+              ;;
+          esac
 
       - name: Deploy via SSH
         id: deploy
         env:
-          AWS_EC2_HOST: ${{ secrets.AWS_EC2_HOST }}
-          AWS_EC2_USER: ${{ secrets.AWS_EC2_USER }}
-          AWS_EC2_SSH_KEY: ${{ secrets.AWS_EC2_SSH_KEY }}
-          AWS_ECR_URL: ${{ secrets.AWS_ECR_URL }}
+          CLOUD_PROVIDER: ${{ inputs.cloud_provider }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          CONTAINER_REGISTRY_URL: ${{ secrets.CONTAINER_REGISTRY_URL }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
+          DO_API_TOKEN: ${{ secrets.DO_API_TOKEN }}
           IMAGE_TAG: ${{ inputs.image_tag }}
-          APP_PORT: ${{ secrets.AWS_APP_PORT }}
+          APP_PORT: ${{ secrets.APP_PORT }}
           REPO_NAME: ${{ steps.repo.outputs.name }}
           ENVIRONMENT: ${{ inputs.environment }}
           DOCKER_PLATFORM: ${{ inputs.docker_platform }}
@@ -184,9 +142,9 @@ jobs:
         run: |
           # Setup SSH
           mkdir -p ~/.ssh
-          echo "$AWS_EC2_SSH_KEY" > ~/.ssh/deploy_key
+          echo "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H $AWS_EC2_HOST >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -H $DEPLOY_HOST >> ~/.ssh/known_hosts 2>/dev/null
 
           # Encode multiline env vars to preserve newlines over SSH
           CONTAINER_ENV_VARS_B64=$(echo "$CONTAINER_ENV_VARS" | base64 | tr -d '\n')
@@ -200,6 +158,7 @@ jobs:
 
           echo "=========================================="
           echo "Deploying ${REPO_NAME}"
+          echo "Provider: ${CLOUD_PROVIDER}"
           echo "Image tag: ${IMAGE_TAG}"
           echo "Environment: ${ENVIRONMENT}"
           echo "=========================================="
@@ -216,9 +175,17 @@ jobs:
           # Create shared_logs volume if not exists
           docker volume inspect shared_logs >/dev/null 2>&1 || docker volume create shared_logs
 
-          # Login to ECR
-          echo "Logging in to ECR..."
-          aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ECR_URL}
+          # Login to container registry (provider-specific)
+          case "$CLOUD_PROVIDER" in
+            aws)
+              echo "Logging in to AWS ECR..."
+              aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${CONTAINER_REGISTRY_URL}
+              ;;
+            digitalocean)
+              echo "Logging in to DigitalOcean Container Registry..."
+              echo "${DO_API_TOKEN}" | docker login --username "${DO_API_TOKEN}" --password-stdin ${CONTAINER_REGISTRY_URL}
+              ;;
+          esac
 
           # Decode env vars from base64
           CONTAINER_ENV_VARS=$(echo "${CONTAINER_ENV_VARS_B64}" | base64 -d)
@@ -228,16 +195,20 @@ jobs:
           {
             echo "services:"
             echo "  ${REPO_NAME}:"
-            echo "    image: ${AWS_ECR_URL}/${REPO_NAME}:${IMAGE_TAG}"
+            echo "    image: ${CONTAINER_REGISTRY_URL}/${REPO_NAME}:${IMAGE_TAG}"
             echo "    platform: ${DOCKER_PLATFORM}"
             echo "    container_name: ${REPO_NAME}"
             echo "    restart: unless-stopped"
             echo "    environment:"
             echo "      - APP_NAME=${REPO_NAME}"
             echo "      - PATH_LOGS=/app/log/${REPO_NAME}"
-            echo "      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
-            echo "      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
-            echo "      - AWS_REGION=${AWS_REGION}"
+            if [ "${CLOUD_PROVIDER}" = "aws" ]; then
+              echo "      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
+              echo "      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
+              echo "      - AWS_REGION=${AWS_REGION}"
+            elif [ "${CLOUD_PROVIDER}" = "digitalocean" ]; then
+              echo "      - DO_API_TOKEN=${DO_API_TOKEN}"
+            fi
             if [ -n "${CONTAINER_ENV_VARS}" ]; then
               while IFS= read -r line; do
                 if [ -n "$line" ]; then
@@ -282,9 +253,9 @@ jobs:
             chmod +x stop.sh
           fi
 
-          # Pull latest image from ECR
+          # Pull latest image from registry
           echo "Pulling latest image..."
-          docker pull ${AWS_ECR_URL}/${REPO_NAME}:${IMAGE_TAG}
+          docker pull ${CONTAINER_REGISTRY_URL}/${REPO_NAME}:${IMAGE_TAG}
 
           # Stop existing container if running
           if docker ps -q -f name=${REPO_NAME} 2>/dev/null | grep -q .; then
@@ -294,7 +265,7 @@ jobs:
 
           # Remove only old images for this repo (keep the new one)
           echo "Removing old images for ${REPO_NAME}..."
-          docker images "${AWS_ECR_URL}/${REPO_NAME}" --format '{{.Repository}}:{{.Tag}}' \
+          docker images "${CONTAINER_REGISTRY_URL}/${REPO_NAME}" --format '{{.Repository}}:{{.Tag}}' \
             | grep -v ":${IMAGE_TAG}$" \
             | xargs -r docker rmi 2>/dev/null || true
 
@@ -305,17 +276,19 @@ jobs:
           echo "Deployment completed successfully!"
           DEPLOY_SCRIPT
 
-          # Copy and execute script on EC2 (use ~ to avoid /tmp permission conflicts)
-          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no /tmp/deploy.sh ${AWS_EC2_USER}@${AWS_EC2_HOST}:~/deploy.sh
+          # Copy and execute script on server (use ~ to avoid /tmp permission conflicts)
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no /tmp/deploy.sh ${DEPLOY_USER}@${DEPLOY_HOST}:~/deploy.sh
 
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=10 ${AWS_EC2_USER}@${AWS_EC2_HOST} "
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=10 ${DEPLOY_USER}@${DEPLOY_HOST} "
             chmod +x ~/deploy.sh && \
+            CLOUD_PROVIDER='${CLOUD_PROVIDER}' \
             REPO_NAME='${REPO_NAME}' \
             IMAGE_TAG='${IMAGE_TAG}' \
-            AWS_ECR_URL='${AWS_ECR_URL}' \
+            CONTAINER_REGISTRY_URL='${CONTAINER_REGISTRY_URL}' \
             AWS_ACCESS_KEY_ID='${AWS_ACCESS_KEY_ID}' \
             AWS_SECRET_ACCESS_KEY='${AWS_SECRET_ACCESS_KEY}' \
             AWS_REGION='${AWS_REGION}' \
+            DO_API_TOKEN='${DO_API_TOKEN}' \
             APP_PORT='${APP_PORT}' \
             ENVIRONMENT='${ENVIRONMENT}' \
             DOCKER_PLATFORM='${DOCKER_PLATFORM}' \
@@ -329,23 +302,14 @@ jobs:
           echo "status=success" >> $GITHUB_OUTPUT
 
           # Summary
-          echo "### Deployment Completed (via WireGuard VPN)" >> $GITHUB_STEP_SUMMARY
+          echo "### Deployment Completed" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| **Server** | $AWS_EC2_HOST |" >> $GITHUB_STEP_SUMMARY
-          echo "| **VPN** | WireGuard (wg0) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Provider** | $CLOUD_PROVIDER |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Server** | $DEPLOY_HOST |" >> $GITHUB_STEP_SUMMARY
           echo "| **Application** | $REPO_NAME |" >> $GITHUB_STEP_SUMMARY
           echo "| **Image Tag** | $IMAGE_TAG |" >> $GITHUB_STEP_SUMMARY
           echo "| **Environment** | $ENVIRONMENT |" >> $GITHUB_STEP_SUMMARY
           echo "| **Port** | $APP_PORT |" >> $GITHUB_STEP_SUMMARY
           echo "| **Directory** | /opt/docker/$REPO_NAME |" >> $GITHUB_STEP_SUMMARY
-
-      - name: Teardown WireGuard tunnel
-        if: always() && steps.wg.outputs.started == 'true'
-        env:
-          WG_IFACE: wg0
-        run: |
-          echo "Bringing down WireGuard interface ${WG_IFACE}..."
-          sudo wg-quick down "$WG_IFACE" || true
-          sudo rm -f "/etc/wireguard/${WG_IFACE}.conf"
