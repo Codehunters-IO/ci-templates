@@ -30,4 +30,9 @@ jobs:
       deploy_target: 'ec2-vpn'
       environment: 'staging'
       spring_profiles: 'staging'
+      # Mount TLS material/keystore from host into the container (read-only).
+      # Place files at /opt/docker/<repo>/certs/ on the EC2 host before deploy.
+      # Pair with container_env_vars (set in the pipeline) to point Spring Boot at them.
+      # extra_volumes: |
+      #   - ./certs:/etc/ssl/app:ro
     secrets: inherit

@@ -37,6 +37,11 @@ on:
         required: false
         type: string
         default: ''
+      extra_volumes:
+        description: 'Additional docker-compose volume mounts (one per line, including the leading "- ", e.g. "- ./certs:/etc/krakend/certs:ro")'
+        required: false
+        type: string
+        default: ''
 
     secrets:
       AWS_ECR_URL:
@@ -102,6 +107,7 @@ jobs:
           MEMORY_LIMIT: ${{ inputs.memory_limit }}
           MEMORY_RESERVATION: ${{ inputs.memory_reservation }}
           CONTAINER_ENV_VARS: ${{ inputs.container_env_vars }}
+          EXTRA_VOLUMES: ${{ inputs.extra_volumes }}
         run: |
           # Setup SSH
           mkdir -p ~/.ssh
@@ -111,6 +117,7 @@ jobs:
 
           # Encode multiline env vars to preserve newlines over SSH
           CONTAINER_ENV_VARS_B64=$(echo "$CONTAINER_ENV_VARS" | base64 | tr -d '\n')
+          EXTRA_VOLUMES_B64=$(echo "$EXTRA_VOLUMES" | base64 | tr -d '\n')
 
           # Create deployment script
           cat > /tmp/deploy.sh << 'DEPLOY_SCRIPT'
@@ -143,6 +150,7 @@ jobs:
 
           # Decode env vars from base64
           CONTAINER_ENV_VARS=$(echo "${CONTAINER_ENV_VARS_B64}" | base64 -d)
+          EXTRA_VOLUMES=$(echo "${EXTRA_VOLUMES_B64}" | base64 -d)
 
           # Create docker-compose.yml
           echo "Creating docker-compose.yml..."
@@ -170,6 +178,13 @@ jobs:
             echo "      - \"${APP_PORT}:8080\""
             echo "    volumes:"
             echo "      - shared_logs:/app/log"
+            if [ -n "${EXTRA_VOLUMES}" ]; then
+              while IFS= read -r line; do
+                if [ -n "$line" ]; then
+                  echo "      ${line}"
+                fi
+              done <<< "${EXTRA_VOLUMES}"
+            fi
             echo "    mem_limit: ${MEMORY_LIMIT}"
             echo "    mem_reservation: ${MEMORY_RESERVATION}"
             echo "    networks:"
@@ -243,6 +258,7 @@ jobs:
             MEMORY_LIMIT='${MEMORY_LIMIT}' \
             MEMORY_RESERVATION='${MEMORY_RESERVATION}' \
             CONTAINER_ENV_VARS_B64='${CONTAINER_ENV_VARS_B64}' \
+            EXTRA_VOLUMES_B64='${EXTRA_VOLUMES_B64}' \
             ~/deploy.sh && \
             rm -f ~/deploy.sh
           "

@@ -144,6 +144,12 @@ on:
         required: false
         type: string
         default: '256m'
+      extra_volumes:
+        description: 'Additional docker-compose volume mounts (one per line, including the leading "- ")'
+        required: false
+        type: string
+        default: |
+          - ./certs:/etc/krakend/certs:ro
 
       # EKS-specific options
       eks_cluster_name:
@@ -307,6 +313,7 @@ jobs:
       environment: ${{ inputs.environment }}
       memory_limit: ${{ inputs.memory_limit }}
       memory_reservation: ${{ inputs.memory_reservation }}
+      extra_volumes: ${{ inputs.extra_volumes }}
     secrets: inherit
 
   # ============================================
@@ -328,6 +335,7 @@ jobs:
       environment: ${{ inputs.environment }}
       memory_limit: ${{ inputs.memory_limit }}
       memory_reservation: ${{ inputs.memory_reservation }}
+      extra_volumes: ${{ inputs.extra_volumes }}
     secrets: inherit
 
   # ============================================

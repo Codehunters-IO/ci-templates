@@ -27,4 +27,10 @@ jobs:
       run_artifact: true
       run_deploy: true
       environment: 'staging'
+      # extra_volumes: default mounts ./certs:/etc/krakend/certs:ro on the host.
+      # Place certs at /opt/docker/<repo>/certs/ on the EC2 host before deploy.
+      # Override below to add more bind mounts (one per line, leading "- "):
+      # extra_volumes: |
+      #   - ./certs:/etc/krakend/certs:ro
+      #   - ./config:/etc/krakend/config:ro
     secrets: inherit

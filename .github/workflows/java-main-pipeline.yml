@@ -181,6 +181,11 @@ on:
         required: false
         type: string
         default: ''
+      extra_volumes:
+        description: 'Additional docker-compose volume mounts (one per line, including the leading "- "). Example: "- ./certs:/etc/ssl/app:ro"'
+        required: false
+        type: string
+        default: ''
 
       # EKS-specific options
       eks_cluster_name:
@@ -538,6 +543,7 @@ jobs:
       container_env_vars: |
         SPRING_PROFILES_ACTIVE=${{ inputs.spring_profiles != '' && format('{0},{1}', inputs.spring_profiles, inputs.environment) || inputs.environment }}
         SERVER_CONTEXT_PATH=/${{ github.event.repository.name }}
+      extra_volumes: ${{ inputs.extra_volumes }}
     secrets: inherit
 
   # ============================================
@@ -562,6 +568,7 @@ jobs:
       container_env_vars: |
         SPRING_PROFILES_ACTIVE=${{ inputs.spring_profiles != '' && format('{0},{1}', inputs.spring_profiles, inputs.environment) || inputs.environment }}
         SERVER_CONTEXT_PATH=/${{ github.event.repository.name }}
+      extra_volumes: ${{ inputs.extra_volumes }}
     secrets: inherit
 
   # ============================================
