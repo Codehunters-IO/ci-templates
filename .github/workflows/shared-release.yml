@@ -13,6 +13,11 @@ on:
         required: false
         type: string
         default: 'main'
+      strict_flow:
+        description: 'Enforce GitFlow: base_branch must be develop, target_branch must be main'
+        required: false
+        type: boolean
+        default: true
 
     outputs:
       version:
@@ -44,6 +49,38 @@ jobs:
       changelog: ${{ steps.create-pr.outputs.changelog }}
 
     steps:
+      - name: Validate release flow
+        env:
+          BASE_BRANCH: ${{ inputs.base_branch }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+          STRICT_FLOW: ${{ inputs.strict_flow }}
+        run: |
+          echo "Release flow: $BASE_BRANCH -> $TARGET_BRANCH (strict=$STRICT_FLOW)"
+
+          if [ "$STRICT_FLOW" != "true" ]; then
+            echo "Strict flow disabled, skipping validation."
+            exit 0
+          fi
+
+          ERRORS=0
+          if [ "$BASE_BRANCH" != "develop" ]; then
+            echo "::error::Release base_branch must be 'develop' under strict flow. Got: '$BASE_BRANCH'."
+            ERRORS=1
+          fi
+          if [ "$TARGET_BRANCH" != "main" ]; then
+            echo "::error::Release target_branch must be 'main' under strict flow. Got: '$TARGET_BRANCH'."
+            ERRORS=1
+          fi
+
+          if [ "$ERRORS" -ne 0 ]; then
+            echo ""
+            echo "Strict GitFlow requires release PRs to flow develop -> main."
+            echo "Set strict_flow: false to opt out (custom GitFlow only)."
+            exit 1
+          fi
+
+          echo "Release flow validated: develop -> main."
+
       - name: Checkout
         uses: actions/checkout@v5
         with:

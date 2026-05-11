@@ -13,6 +13,11 @@ on:
         required: false
         type: boolean
         default: false
+      fail_on_protected:
+        description: 'Hard-fail when target branch is protected (develop/main/master/release/*). Default true for explicit branch_name inputs.'
+        required: false
+        type: boolean
+        default: true
 
     outputs:
       deleted_branch:
@@ -43,13 +48,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           INPUT_BRANCH: ${{ inputs.branch_name }}
           DRY_RUN: ${{ inputs.dry_run }}
+          FAIL_ON_PROTECTED: ${{ inputs.fail_on_protected }}
         run: |
           # Protected branches - never delete
-          PROTECTED_BRANCHES="main master develop release"
+          PROTECTED_BRANCHES="main master develop"
 
           # Determine branch to delete
+          EXPLICIT_INPUT=false
           if [ -n "$INPUT_BRANCH" ]; then
             BRANCH="$INPUT_BRANCH"
+            EXPLICIT_INPUT=true
           else
             COMMIT_SHA=$(git rev-parse HEAD)
             COMMIT_MSG=$(git log -1 --pretty=%B)
@@ -79,20 +87,25 @@ jobs:
           echo "Detected branch: $BRANCH"
 
           # Check if branch is protected
+          IS_PROTECTED=false
           for protected in $PROTECTED_BRANCHES; do
             if [ "$BRANCH" = "$protected" ]; then
-              echo "Branch '$BRANCH' is protected, skipping"
-              echo "status=protected" >> $GITHUB_OUTPUT
-              echo "branch=$BRANCH" >> $GITHUB_OUTPUT
-              exit 0
+              IS_PROTECTED=true
+              break
             fi
           done
-
-          # Check if starts with release/
           if echo "$BRANCH" | grep -q "^release/"; then
-            echo "Branch '$BRANCH' is a release branch, skipping"
+            IS_PROTECTED=true
+          fi
+
+          if [ "$IS_PROTECTED" = "true" ]; then
+            echo "::warning::Branch '$BRANCH' is protected (main/master/develop/release/*) — refusing to delete."
             echo "status=protected" >> $GITHUB_OUTPUT
             echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+            if [ "$EXPLICIT_INPUT" = "true" ] && [ "$FAIL_ON_PROTECTED" = "true" ]; then
+              echo "::error::Refusing to delete protected branch '$BRANCH' (explicit input + fail_on_protected=true)."
+              exit 1
+            fi
             exit 0
           fi
 

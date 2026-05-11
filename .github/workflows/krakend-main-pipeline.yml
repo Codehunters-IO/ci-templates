@@ -365,19 +365,6 @@ jobs:
     secrets: inherit
 
   # ============================================
-  # CLEANUP - Delete merged branch
-  # ============================================
-  cleanup:
-    name: Delete Branch
-    if: |
-      inputs.run_cleanup &&
-      always() &&
-      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success')
-    needs: [deploy-ec2, deploy-ec2-vpn, deploy-eks]
-    uses: ./.github/workflows/shared-delete-branch.yml
-    secrets: inherit
-
-  # ============================================
   # RELEASE - Create release PR
   # ============================================
   release:
@@ -385,13 +372,26 @@ jobs:
     if: |
       inputs.run_release &&
       always() &&
-      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success') &&
-      (needs.cleanup.result == 'success' || needs.cleanup.result == 'skipped')
-    needs: [deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup]
+      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success')
+    needs: [deploy-ec2, deploy-ec2-vpn, deploy-eks]
     uses: ./.github/workflows/shared-release.yml
     with:
       base_branch: ${{ inputs.environment }}
       target_branch: ${{ inputs.release_target_branch }}
+    secrets: inherit
+
+  # ============================================
+  # CLEANUP - Delete merged branch (runs after release PR created)
+  # ============================================
+  cleanup:
+    name: Delete Branch
+    if: |
+      inputs.run_cleanup &&
+      always() &&
+      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success') &&
+      (needs.release.result == 'success' || needs.release.result == 'skipped')
+    needs: [deploy-ec2, deploy-ec2-vpn, deploy-eks, release]
+    uses: ./.github/workflows/shared-delete-branch.yml
     secrets: inherit
 
   # ============================================

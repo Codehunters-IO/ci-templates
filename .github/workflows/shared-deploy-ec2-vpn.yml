@@ -293,7 +293,7 @@ jobs:
           # Create stop.sh if not exists
           if [ ! -f "stop.sh" ]; then
             echo "Creating stop.sh..."
-            printf '#!/usr/bin/env bash\nset -euo pipefail\nCOMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"\nPROJECT_NAME="${PROJECT_NAME:-$(basename $(pwd))}"\necho "==> Stopping stack (project: ${PROJECT_NAME})"\ndocker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" down\necho "==> Done."\n' > stop.sh
+            printf '#!/usr/bin/env bash\nset -uo pipefail\nCOMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"\nPROJECT_NAME="${PROJECT_NAME:-$(basename $(pwd))}"\necho "==> Stopping stack (project: ${PROJECT_NAME})"\ndocker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" down --timeout 30 || true\necho "==> Done."\n' > stop.sh
             chmod +x stop.sh
           fi
 
@@ -301,10 +301,15 @@ jobs:
           echo "Pulling latest image..."
           docker pull ${AWS_ECR_URL}/${REPO_NAME}:${IMAGE_TAG}
 
-          # Stop existing container if running
-          if docker ps -q -f name=${REPO_NAME} 2>/dev/null | grep -q .; then
-            echo "Stopping existing container..."
-            ./stop.sh || true
+          # Stop existing container if running (force-kill fallback if hung)
+          if docker ps -aq -f name=${REPO_NAME} 2>/dev/null | grep -q .; then
+            echo "Stopping existing container (graceful, 30s timeout)..."
+            timeout 60 ./stop.sh || true
+            if docker ps -q -f name=${REPO_NAME} 2>/dev/null | grep -q .; then
+              echo "Container still running, force-killing..."
+              docker kill ${REPO_NAME} 2>/dev/null || true
+              docker rm -f ${REPO_NAME} 2>/dev/null || true
+            fi
           fi
 
           # Remove only old images for this repo (keep the new one)
@@ -320,10 +325,40 @@ jobs:
           echo "Deployment completed successfully!"
           DEPLOY_SCRIPT
 
-          # Copy and execute script on EC2 (use ~ to avoid /tmp permission conflicts)
-          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no /tmp/deploy.sh ${AWS_EC2_USER}@${AWS_EC2_HOST}:~/deploy.sh
+          SSH_COMMON_OPTS="-i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=20"
 
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=10 ${AWS_EC2_USER}@${AWS_EC2_HOST} "
+          # Retry helper: SSH transport can drop transiently. Retry up to 3 times.
+          run_with_retry() {
+            local attempt=1
+            local max_attempts=3
+            local delay=15
+            while [ "$attempt" -le "$max_attempts" ]; do
+              echo "Attempt $attempt/$max_attempts: $*"
+              if "$@"; then
+                return 0
+              fi
+              local rc=$?
+              echo "Attempt $attempt failed (exit $rc)"
+              if [ "$attempt" -lt "$max_attempts" ]; then
+                echo "Retrying in ${delay}s..."
+                sleep "$delay"
+                delay=$((delay * 2))
+              fi
+              attempt=$((attempt + 1))
+            done
+            return 1
+          }
+
+          # Copy script to EC2 (with retry)
+          run_with_retry bash -c "scp $SSH_COMMON_OPTS /tmp/deploy.sh ${AWS_EC2_USER}@${AWS_EC2_HOST}:~/deploy.sh" || {
+            echo "::warning::scp failed after retries — server may be unreachable. Skipping remote deploy."
+            echo "status=skipped_unreachable" >> $GITHUB_OUTPUT
+            exit 0
+          }
+
+          # Execute deploy script (with retry on transport error)
+          DEPLOY_RC=0
+          run_with_retry bash -c "ssh $SSH_COMMON_OPTS ${AWS_EC2_USER}@${AWS_EC2_HOST} \"
             chmod +x ~/deploy.sh && \
             REPO_NAME='${REPO_NAME}' \
             IMAGE_TAG='${IMAGE_TAG}' \
@@ -340,9 +375,27 @@ jobs:
             EXTRA_VOLUMES_B64='${EXTRA_VOLUMES_B64}' \
             ~/deploy.sh && \
             rm -f ~/deploy.sh
-          "
+          \"" || DEPLOY_RC=$?
 
-          echo "status=success" >> $GITHUB_OUTPUT
+          # Post-deploy verification: if container is running w/ correct image, success regardless of transport error
+          echo "Verifying container state..."
+          VERIFY_OUTPUT=$(ssh $SSH_COMMON_OPTS ${AWS_EC2_USER}@${AWS_EC2_HOST} "docker ps --filter name=^${REPO_NAME}$ --format '{{.Image}}|{{.Status}}' 2>/dev/null" || echo "")
+          RUNNING_IMAGE=$(echo "$VERIFY_OUTPUT" | cut -d'|' -f1)
+          RUNNING_STATUS=$(echo "$VERIFY_OUTPUT" | cut -d'|' -f2)
+          echo "Container image: '$RUNNING_IMAGE'"
+          echo "Container status: '$RUNNING_STATUS'"
+
+          if echo "$RUNNING_IMAGE" | grep -q "${REPO_NAME}:${IMAGE_TAG}$"; then
+            echo "Container is running with target image."
+            echo "status=success" >> $GITHUB_OUTPUT
+          elif [ "$DEPLOY_RC" -eq 0 ]; then
+            echo "Deploy script completed but verification could not confirm running container."
+            echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "::error::Deploy failed (rc=$DEPLOY_RC) and container is not running with target image."
+            echo "status=failure" >> $GITHUB_OUTPUT
+            exit "$DEPLOY_RC"
+          fi
 
           # Summary
           echo "### Deployment Completed (via WireGuard VPN)" >> $GITHUB_STEP_SUMMARY

@@ -600,23 +600,6 @@ jobs:
     secrets: inherit
 
   # ============================================
-  # CLEANUP - Delete merged branch
-  # ============================================
-  cleanup:
-    name: Delete Branch
-    if: |
-      inputs.run_cleanup &&
-      always() &&
-      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success' ||
-       (needs.deploy-ec2.result == 'skipped' && needs.deploy-ec2-vpn.result == 'skipped' && needs.deploy-eks.result == 'skipped' &&
-        (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success' || needs.artifact-packages.result == 'success' ||
-         (needs.artifact-ecr.result == 'skipped' && needs.artifact-github.result == 'skipped' && needs.artifact-packages.result == 'skipped' &&
-          needs.test.result == 'success'))))
-    needs: [test, artifact-ecr, artifact-github, artifact-packages, deploy-ec2, deploy-ec2-vpn, deploy-eks]
-    uses: ./.github/workflows/shared-delete-branch.yml
-    secrets: inherit
-
-  # ============================================
   # RELEASE - Create release PR
   # ============================================
   release:
@@ -628,13 +611,30 @@ jobs:
        (needs.deploy-ec2.result == 'skipped' && needs.deploy-ec2-vpn.result == 'skipped' && needs.deploy-eks.result == 'skipped' &&
         (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success' || needs.artifact-packages.result == 'success' ||
          (needs.artifact-ecr.result == 'skipped' && needs.artifact-github.result == 'skipped' && needs.artifact-packages.result == 'skipped' &&
-          needs.test.result == 'success')))) &&
-      (needs.cleanup.result == 'success' || needs.cleanup.result == 'skipped')
-    needs: [test, artifact-ecr, artifact-github, artifact-packages, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup]
+          needs.test.result == 'success'))))
+    needs: [test, artifact-ecr, artifact-github, artifact-packages, deploy-ec2, deploy-ec2-vpn, deploy-eks]
     uses: ./.github/workflows/shared-release.yml
     with:
       base_branch: ${{ inputs.environment }}
       target_branch: ${{ inputs.release_target_branch }}
+    secrets: inherit
+
+  # ============================================
+  # CLEANUP - Delete merged branch (runs after release PR created)
+  # ============================================
+  cleanup:
+    name: Delete Branch
+    if: |
+      inputs.run_cleanup &&
+      always() &&
+      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success' ||
+       (needs.deploy-ec2.result == 'skipped' && needs.deploy-ec2-vpn.result == 'skipped' && needs.deploy-eks.result == 'skipped' &&
+        (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success' || needs.artifact-packages.result == 'success' ||
+         (needs.artifact-ecr.result == 'skipped' && needs.artifact-github.result == 'skipped' && needs.artifact-packages.result == 'skipped' &&
+          needs.test.result == 'success')))) &&
+      (needs.release.result == 'success' || needs.release.result == 'skipped')
+    needs: [test, artifact-ecr, artifact-github, artifact-packages, deploy-ec2, deploy-ec2-vpn, deploy-eks, release]
+    uses: ./.github/workflows/shared-delete-branch.yml
     secrets: inherit
 
   # ============================================
