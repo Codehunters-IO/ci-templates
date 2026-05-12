@@ -279,6 +279,11 @@ on:
         required: false
         type: string
         default: 'main'
+      release_strict_flow:
+        description: 'Enforce GitFlow on release PR (base must be develop, target must be main)'
+        required: false
+        type: boolean
+        default: true
       run_tag:
         description: 'Create git tag and GitHub Release after deploy'
         required: false
@@ -615,8 +620,9 @@ jobs:
     needs: [test, artifact-ecr, artifact-github, artifact-packages, deploy-ec2, deploy-ec2-vpn, deploy-eks]
     uses: ./.github/workflows/shared-release.yml
     with:
-      base_branch: ${{ inputs.environment }}
+      base_branch: ${{ github.ref_name }}
       target_branch: ${{ inputs.release_target_branch }}
+      strict_flow: ${{ inputs.release_strict_flow }}
     secrets: inherit
 
   # ============================================

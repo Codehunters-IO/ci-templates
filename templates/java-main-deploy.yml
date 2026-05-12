@@ -31,8 +31,10 @@ jobs:
       deploy_target: 'ec2-vpn'
       environment: 'prod'
       spring_profiles: 'production'
-      run_notifications: true
-      notify_mention_on_failure: '@channel'
+      run_tag: true
+      notify_on_failure: true
+      notify_failure_mention: '@channel'
+      notify_on_deploy: true
       # Mount TLS material/keystore from host into the container (read-only).
       # Place files at /opt/docker/<repo>/certs/ on the EC2 host before deploy.
       # Pair with container_env_vars (set in the pipeline) to point Spring Boot at them.

@@ -184,6 +184,16 @@ on:
         required: false
         type: string
         default: 'main'
+      release_strict_flow:
+        description: 'Enforce GitFlow on release PR (base must be develop, target must be main)'
+        required: false
+        type: boolean
+        default: true
+      run_tag:
+        description: 'Create git tag and GitHub Release after deploy'
+        required: false
+        type: boolean
+        default: false
 
     outputs:
       image_tag:
@@ -376,8 +386,9 @@ jobs:
     needs: [deploy-ec2, deploy-ec2-vpn, deploy-eks]
     uses: ./.github/workflows/shared-release.yml
     with:
-      base_branch: ${{ inputs.environment }}
+      base_branch: ${{ github.ref_name }}
       target_branch: ${{ inputs.release_target_branch }}
+      strict_flow: ${{ inputs.release_strict_flow }}
     secrets: inherit
 
   # ============================================
@@ -395,6 +406,19 @@ jobs:
     secrets: inherit
 
   # ============================================
+  # TAG - Create git tag and GitHub Release
+  # ============================================
+  tag:
+    name: Tag Release
+    if: |
+      inputs.run_tag &&
+      always() &&
+      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success')
+    needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release]
+    uses: ./.github/workflows/shared-tag-release.yml
+    secrets: inherit
+
+  # ============================================
   # NOTIFY - Notifications (runs last, always)
   # ============================================
   notify:
@@ -402,7 +426,7 @@ jobs:
     if: |
       inputs.run_notifications &&
       always()
-    needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release]
+    needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release, tag]
     uses: ./.github/workflows/shared-notifications.yml
     with:
       providers: ${{ inputs.notify_providers }}
@@ -421,7 +445,7 @@ jobs:
     if: |
       inputs.run_create_issue_on_failure &&
       always()
-    needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release]
+    needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release, tag]
     uses: ./.github/workflows/shared-create-issue-on-failure.yml
     with:
       status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.artifact.result == 'failure' || needs.deploy-ec2.result == 'failure' || needs.deploy-ec2-vpn.result == 'failure' || needs.deploy-eks.result == 'failure') && 'failure' || 'success' }}

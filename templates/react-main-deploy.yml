@@ -34,4 +34,7 @@ jobs:
       run_deploy: true
       deploy_target: 'amplify'
       environment: 'production'
+      run_tag: true
+      run_notifications: true
+      notify_mention_on_failure: '@channel'
     secrets: inherit

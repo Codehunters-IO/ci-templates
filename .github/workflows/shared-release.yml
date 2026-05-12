@@ -153,8 +153,10 @@ jobs:
           echo "$CHANGELOG" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-          # Create PR
-          PR_BODY="## Release v${VERSION}
+          # Create PR (body via heredoc to avoid leading-whitespace bug)
+          PR_BODY_FILE="$(mktemp)"
+          cat > "$PR_BODY_FILE" <<EOF
+          ## Release v${VERSION}
 
           This PR was automatically created after successful deployment to develop.
 
@@ -164,15 +166,18 @@ jobs:
           ### Checklist
           - [ ] Review changes
           - [ ] Approve and merge to deploy to production
-          "
+          EOF
+          # Strip the 10-space indent introduced by YAML block scalar
+          sed -i 's/^          //' "$PR_BODY_FILE"
 
-          PR_URL=$(gh pr create \
+          gh pr create \
             --title "Release v${VERSION}" \
-            --body "$PR_BODY" \
+            --body-file "$PR_BODY_FILE" \
             --base "$TARGET_BRANCH" \
-            --head "$RELEASE_BRANCH")
+            --head "$RELEASE_BRANCH" >/dev/null
 
-          PR_NUMBER=$(echo "$PR_URL" | grep -oP '\d+$')
+          PR_NUMBER=$(gh pr list --head "$RELEASE_BRANCH" --base "$TARGET_BRANCH" --json number --jq '.[0].number')
+          PR_URL=$(gh pr view "$PR_NUMBER" --json url --jq '.url')
 
           echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
           echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
