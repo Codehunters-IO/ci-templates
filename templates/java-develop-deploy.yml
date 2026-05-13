@@ -22,9 +22,8 @@
 #   - WG_PRIVATE_KEY, WG_ADDRESS, WG_PEER_PUBLIC_KEY, WG_PEER_ALLOWED_IPS, WG_PEER_ENDPOINT
 #   - WG_DNS (optional)
 #
-#   Notifications (run_notifications: true):
-#   - SLACK_WEBHOOK_URL: Slack incoming webhook URL (default provider)
-#   - TEAMS_WEBHOOK_URL: Teams incoming webhook URL (notify_providers: 'slack,teams')
+#   Notifications (notify_on_failure / notify_on_deploy / notify_on_release):
+#   - SLACK_WEBHOOK_URL: Slack incoming webhook URL
 #
 #   Optional:
 #   - SONAR_HOST_URL / SONAR_TOKEN: SonarQube
@@ -63,7 +62,9 @@ jobs:
       run_cleanup: true
       run_release: true
       release_target_branch: 'main'
-      run_notifications: true
+      notify_on_failure: true
+      notify_on_deploy: true
+      notify_on_release: true
       # Mount TLS material/keystore from host into the container (read-only).
       # Place files at /opt/docker/<repo>/certs/ on the EC2 host before deploy.
       # Pair with container_env_vars (set in the pipeline) to point Spring Boot at them.

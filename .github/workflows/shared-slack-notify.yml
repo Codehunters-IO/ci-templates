@@ -57,7 +57,7 @@ jobs:
     steps:
       - name: Send Slack notification
         env:
-          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           CHANNEL: ${{ inputs.channel }}
           STATUS: ${{ inputs.status }}
           TITLE: ${{ inputs.title }}
@@ -76,8 +76,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -z "$SLACK_BOT_TOKEN" ]; then
-            echo "::warning::SLACK_BOT_TOKEN secret is not set, skipping notification"
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "::warning::SLACK_WEBHOOK_URL secret is not set, skipping notification"
             exit 0
           fi
 
@@ -147,27 +147,30 @@ jobs:
           BLOCKS=$(echo "$BLOCKS" | jq --arg url "${SERVER_URL}/${REPO}/actions/runs/${RUN_ID}" \
             '. += [{"type":"actions","elements":[{"type":"button","text":{"type":"plain_text","text":"View Run"},"url":$url}]}]')
 
-          # Build payload
-          PAYLOAD=$(jq -n \
-            --arg channel "$CHANNEL" \
-            --argjson blocks "$BLOCKS" \
-            --arg color "$COLOR" \
-            --arg text "$HEADER" \
-            '{channel: $channel, text: $text, blocks: $blocks, attachments: [{color: $color, blocks: []}]}')
-
-          # Send via Slack Bot Token API
-          HTTP_CODE=$(curl -s -o /tmp/slack_response.txt -w "%{http_code}" \
-            -X POST "https://slack.com/api/chat.postMessage" \
-            -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "$PAYLOAD")
-
-          RESPONSE=$(cat /tmp/slack_response.txt)
-          OK=$(echo "$RESPONSE" | jq -r '.ok // false')
-
-          if [ "$OK" = "true" ]; then
-            echo "Slack notification sent to #${CHANNEL}"
+          # Build payload — channel field honored only by legacy incoming-webhook integrations
+          if [ -n "$CHANNEL" ]; then
+            PAYLOAD=$(jq -n \
+              --arg channel "$CHANNEL" \
+              --argjson blocks "$BLOCKS" \
+              --arg color "$COLOR" \
+              --arg text "$HEADER" \
+              '{channel: $channel, text: $text, blocks: $blocks, attachments: [{color: $color, blocks: []}]}')
           else
-            ERROR=$(echo "$RESPONSE" | jq -r '.error // "unknown"')
-            echo "::warning::Slack notification failed: $ERROR (HTTP $HTTP_CODE)"
+            PAYLOAD=$(jq -n \
+              --argjson blocks "$BLOCKS" \
+              --arg color "$COLOR" \
+              --arg text "$HEADER" \
+              '{text: $text, blocks: $blocks, attachments: [{color: $color, blocks: []}]}')
+          fi
+
+          # Send via Slack Incoming Webhook
+          HTTP_CODE=$(curl -s -o /tmp/slack_response.txt -w "%{http_code}" \
+            -X POST -H "Content-Type: application/json" \
+            -d "$PAYLOAD" "$SLACK_WEBHOOK_URL")
+
+          if [ "$HTTP_CODE" -eq 200 ]; then
+            echo "Slack notification sent (channel hint: #${CHANNEL:-default})"
+          else
+            echo "::warning::Slack notification failed (HTTP $HTTP_CODE)"
+            cat /tmp/slack_response.txt
           fi

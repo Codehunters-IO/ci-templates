@@ -226,7 +226,7 @@ on:
         type: string
         default: 'bug,pipeline-failure'
 
-      # Notifications (Slack Bot Token)
+      # Notifications (Slack Incoming Webhook)
       notify_on_failure:
         description: 'Send Slack notification on pipeline failure'
         required: false
