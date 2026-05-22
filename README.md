@@ -196,7 +196,7 @@ feature/*              ──► compile + size check
      │
      ▼ (merge to develop)   compile + test
      │
-     ▼ (merge to main)      compile + test + artifact (ECR, PRODUCTION) + tag
+     ▼ (merge to main)      compile + test + artifact (ECR) + deploy (EC2 via VPN) + tag
 ```
 
 ### Contracts-specific inputs

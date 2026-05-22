@@ -103,6 +103,41 @@ on:
         required: false
         type: boolean
         default: false
+      run_deploy:
+        description: 'Deploy container to EC2 after ECR push'
+        required: false
+        type: boolean
+        default: false
+      deploy_target:
+        description: 'Deploy target: ec2 or ec2-vpn'
+        required: false
+        type: string
+        default: 'ec2-vpn'
+      memory_limit:
+        description: 'Container memory limit (e.g., 1024m, 2g)'
+        required: false
+        type: string
+        default: '1024m'
+      memory_reservation:
+        description: 'Container memory reservation (e.g., 256m, 512m)'
+        required: false
+        type: string
+        default: '512m'
+      internal_port:
+        description: 'Container internal port (Hardhat node = 8545)'
+        required: false
+        type: string
+        default: '8545'
+      extra_volumes:
+        description: 'Additional docker-compose volume mounts (one per line, leading "- ")'
+        required: false
+        type: string
+        default: ''
+      verify_vpn_connectivity:
+        description: 'Ping EC2 host before deploying (deploy_target: ec2-vpn only)'
+        required: false
+        type: boolean
+        default: false
       run_create_issue_on_failure:
         description: 'Create GitHub issue on pipeline failure'
         required: false
@@ -196,6 +231,9 @@ on:
       tests_failed:
         description: 'Number of tests failed'
         value: ${{ jobs.test.outputs.tests_failed }}
+      deploy_status:
+        description: 'Deployment status'
+        value: ${{ jobs.deploy-ec2.outputs.deploy_status || jobs.deploy-ec2-vpn.outputs.deploy_status }}
       deleted_branch:
         description: 'Name of deleted branch'
         value: ${{ jobs.cleanup.outputs.deleted_branch }}
@@ -303,6 +341,53 @@ jobs:
     secrets: inherit
 
   # ============================================
+  # DEPLOY - EC2 (direct)
+  # ============================================
+  deploy-ec2:
+    name: Deploy EC2
+    if: |
+      inputs.run_deploy &&
+      inputs.deploy_target == 'ec2' &&
+      always() &&
+      needs.artifact.result == 'success'
+    needs: [artifact]
+    uses: ./.github/workflows/shared-deploy-ec2.yml
+    with:
+      runner: ${{ inputs.runner }}
+      image_tag: ${{ needs.artifact.outputs.image_tag }}
+      docker_platform: ${{ inputs.docker_platform }}
+      environment: ${{ inputs.environment }}
+      memory_limit: ${{ inputs.memory_limit }}
+      memory_reservation: ${{ inputs.memory_reservation }}
+      internal_port: ${{ inputs.internal_port }}
+      extra_volumes: ${{ inputs.extra_volumes }}
+    secrets: inherit
+
+  # ============================================
+  # DEPLOY - EC2 via WireGuard VPN
+  # ============================================
+  deploy-ec2-vpn:
+    name: Deploy EC2 (VPN)
+    if: |
+      inputs.run_deploy &&
+      inputs.deploy_target == 'ec2-vpn' &&
+      always() &&
+      needs.artifact.result == 'success'
+    needs: [artifact]
+    uses: ./.github/workflows/shared-deploy-ec2-vpn.yml
+    with:
+      runner: ${{ inputs.runner }}
+      image_tag: ${{ needs.artifact.outputs.image_tag }}
+      docker_platform: ${{ inputs.docker_platform }}
+      environment: ${{ inputs.environment }}
+      memory_limit: ${{ inputs.memory_limit }}
+      memory_reservation: ${{ inputs.memory_reservation }}
+      internal_port: ${{ inputs.internal_port }}
+      extra_volumes: ${{ inputs.extra_volumes }}
+      verify_vpn_connectivity: ${{ inputs.verify_vpn_connectivity }}
+    secrets: inherit
+
+  # ============================================
   # RELEASE - Create release PR
   # ============================================
   release:
@@ -310,8 +395,8 @@ jobs:
     if: |
       inputs.run_release &&
       always() &&
-      needs.artifact.result == 'success'
-    needs: [artifact]
+      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.artifact.result == 'success')
+    needs: [artifact, deploy-ec2, deploy-ec2-vpn]
     uses: ./.github/workflows/shared-release.yml
     with:
       base_branch: ${{ github.ref_name }}
@@ -327,9 +412,9 @@ jobs:
     if: |
       inputs.run_cleanup &&
       always() &&
-      needs.artifact.result == 'success' &&
+      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.artifact.result == 'success') &&
       (needs.release.result == 'success' || needs.release.result == 'skipped')
-    needs: [artifact, release]
+    needs: [artifact, deploy-ec2, deploy-ec2-vpn, release]
     uses: ./.github/workflows/shared-delete-branch.yml
     secrets: inherit
 
@@ -341,8 +426,8 @@ jobs:
     if: |
       inputs.run_tag &&
       always() &&
-      needs.artifact.result == 'success'
-    needs: [build, test, artifact, cleanup, release]
+      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.artifact.result == 'success')
+    needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, cleanup, release]
     uses: ./.github/workflows/shared-tag-release.yml
     secrets: inherit
 
@@ -354,11 +439,11 @@ jobs:
     if: |
       inputs.run_notifications &&
       always()
-    needs: [build, test, artifact, cleanup, release, tag]
+    needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, cleanup, release, tag]
     uses: ./.github/workflows/shared-notifications.yml
     with:
       providers: ${{ inputs.notify_providers }}
-      status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.artifact.result == 'failure') && 'failure' || (needs.build.result == 'cancelled') && 'cancelled' || 'success' }}
+      status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.artifact.result == 'failure' || needs.deploy-ec2.result == 'failure' || needs.deploy-ec2-vpn.result == 'failure') && 'failure' || (needs.build.result == 'cancelled') && 'cancelled' || 'success' }}
       environment: ${{ inputs.environment }}
       version: ${{ needs.release.outputs.version }}
       changelog: ${{ needs.release.outputs.changelog }}
@@ -373,10 +458,10 @@ jobs:
     if: |
       inputs.run_create_issue_on_failure &&
       always()
-    needs: [build, test, artifact, cleanup, release, tag]
+    needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, cleanup, release, tag]
     uses: ./.github/workflows/shared-create-issue-on-failure.yml
     with:
-      status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.artifact.result == 'failure') && 'failure' || 'success' }}
+      status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.artifact.result == 'failure' || needs.deploy-ec2.result == 'failure' || needs.deploy-ec2-vpn.result == 'failure') && 'failure' || 'success' }}
       environment: ${{ inputs.environment }}
       version: ${{ needs.release.outputs.version }}
       changelog: ${{ needs.release.outputs.changelog }}

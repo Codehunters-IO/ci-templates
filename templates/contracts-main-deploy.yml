@@ -1,11 +1,13 @@
-# Template: Build + test + deploy (ECR push) on push to main
+# Template: Build + test + deploy on push to main
 # Copy to: .github/workflows/main-deploy.yml
 #
-# Flow: build + test + artifact (ECR push, production environment) + tag.
+# Flow: build + test + artifact (ECR push) + deploy to EC2 via WireGuard VPN + tag.
 # ECR repository is auto-created by the pipeline if missing.
 #
 # Required secrets:
-#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, AWS_ECR_URL
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, AWS_ECR_URL,
+#   AWS_EC2_HOST, AWS_EC2_USER, AWS_EC2_SSH_KEY, AWS_APP_PORT,
+#   WG_PRIVATE_KEY, WG_ADDRESS, WG_PEER_PUBLIC_KEY, WG_PEER_ALLOWED_IPS, WG_PEER_ENDPOINT
 
 name: Main Build, Test & Deploy
 
@@ -26,6 +28,11 @@ jobs:
       run_build: true
       run_test: true
       run_artifact: true
+      run_deploy: true
+      deploy_target: 'ec2-vpn'
+      internal_port: '8545'
+      memory_limit: '1024m'
+      memory_reservation: '512m'
       push_latest: true
       environment: 'production'
       run_tag: true
