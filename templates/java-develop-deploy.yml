@@ -62,6 +62,8 @@ jobs:
       run_cleanup: true
       run_release: true
       release_target_branch: 'main'
+      # release_update_strategy: 'fast-forward'   # fast-forward | recreate | fail-on-divergence
+      # release_close_superseded: false           # close older open release/* PRs when version bumps
       notify_on_failure: true
       notify_on_deploy: true
       notify_on_release: true

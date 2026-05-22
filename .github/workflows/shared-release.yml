@@ -1,5 +1,9 @@
 name: Shared - Create Release
 
+# Required caller permissions:
+#   contents: write        # push release branch, force-with-lease updates
+#   pull-requests: write   # create / edit / close release PRs
+
 on:
   workflow_call:
     inputs:
@@ -18,6 +22,16 @@ on:
         required: false
         type: boolean
         default: true
+      update_strategy:
+        description: 'How to reconcile an existing release branch: fast-forward | recreate | fail-on-divergence'
+        required: false
+        type: string
+        default: 'fast-forward'
+      close_superseded:
+        description: 'Close older open release/* PRs whose version is lower than the computed one'
+        required: false
+        type: boolean
+        default: false
 
     outputs:
       version:
@@ -36,6 +50,10 @@ on:
         description: 'Release changelog (commit list)'
         value: ${{ jobs.release.outputs.changelog }}
 
+concurrency:
+  group: shared-release-${{ github.repository }}-${{ inputs.base_branch }}
+  cancel-in-progress: false
+
 jobs:
   release:
     name: Create Release PR
@@ -43,10 +61,10 @@ jobs:
 
     outputs:
       version: ${{ steps.semver.outputs.version }}
-      branch: ${{ steps.create-branch.outputs.branch }}
-      pr_number: ${{ steps.create-pr.outputs.pr_number }}
-      pr_url: ${{ steps.create-pr.outputs.pr_url }}
-      changelog: ${{ steps.create-pr.outputs.changelog }}
+      branch: ${{ steps.state.outputs.release_branch }}
+      pr_number: ${{ steps.upsert-pr.outputs.pr_number }}
+      pr_url: ${{ steps.upsert-pr.outputs.pr_url }}
+      changelog: ${{ steps.changelog.outputs.changelog }}
 
     steps:
       - name: Validate release flow
@@ -81,11 +99,29 @@ jobs:
 
           echo "Release flow validated: develop -> main."
 
+      - name: Validate update strategy
+        env:
+          STRATEGY: ${{ inputs.update_strategy }}
+        run: |
+          case "$STRATEGY" in
+            fast-forward|recreate|fail-on-divergence) ;;
+            *)
+              echo "::error::Invalid update_strategy '$STRATEGY'. Allowed: fast-forward, recreate, fail-on-divergence."
+              exit 1
+              ;;
+          esac
+
       - name: Checkout
         uses: actions/checkout@v5
         with:
           ref: ${{ inputs.base_branch }}
           fetch-depth: 0
+          persist-credentials: true
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Calculate semantic version
         id: semver
@@ -96,97 +132,275 @@ jobs:
           minor_pattern: "(feat)"
           format: "${major}.${minor}.${patch}"
 
-      - name: Create release branch
-        id: create-branch
+      - name: Guard against already-released version
+        id: guard
         env:
           VERSION: ${{ steps.semver.outputs.version }}
-          GH_TOKEN: ${{ github.token }}
         run: |
-          RELEASE_BRANCH="release/${VERSION}"
-
-          echo "Creating release branch: $RELEASE_BRANCH"
-
-          # Check if branch already exists
-          if git ls-remote --heads origin "$RELEASE_BRANCH" | grep -q .; then
-            echo "Branch $RELEASE_BRANCH already exists, skipping creation"
-            echo "branch=$RELEASE_BRANCH" >> $GITHUB_OUTPUT
-            echo "created=false" >> $GITHUB_OUTPUT
-            exit 0
+          TAG="v${VERSION}"
+          if git rev-parse "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "::warning::Tag ${TAG} already exists; release was already cut. Skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Release skipped"
+              echo ""
+              echo "Tag \`${TAG}\` already exists. Commit a \`feat:\` or breaking change to bump the version."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-          # Create and push release branch
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git checkout -b "$RELEASE_BRANCH"
-          git push origin "$RELEASE_BRANCH"
-
-          echo "branch=$RELEASE_BRANCH" >> $GITHUB_OUTPUT
-          echo "created=true" >> $GITHUB_OUTPUT
-
-      - name: Create Pull Request
-        id: create-pr
+      - name: Resolve branch state
+        id: state
+        if: steps.guard.outputs.skip == 'false'
         env:
           VERSION: ${{ steps.semver.outputs.version }}
-          RELEASE_BRANCH: ${{ steps.create-branch.outputs.branch }}
+          BASE_BRANCH: ${{ inputs.base_branch }}
+        run: |
+          RELEASE_BRANCH="release/${VERSION}"
+          echo "release_branch=${RELEASE_BRANCH}" >> "$GITHUB_OUTPUT"
+
+          git fetch --no-tags origin "${BASE_BRANCH}" --depth=0 || git fetch --no-tags origin "${BASE_BRANCH}"
+          BASE_SHA="$(git rev-parse "origin/${BASE_BRANCH}")"
+          echo "base_sha=${BASE_SHA}" >> "$GITHUB_OUTPUT"
+
+          REMOTE_LINE="$(git ls-remote --heads origin "${RELEASE_BRANCH}" || true)"
+          if [ -n "${REMOTE_LINE}" ]; then
+            REMOTE_SHA="$(echo "${REMOTE_LINE}" | awk '{print $1}')"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "remote_sha=${REMOTE_SHA}" >> "$GITHUB_OUTPUT"
+
+            git fetch --no-tags origin "${RELEASE_BRANCH}"
+            if git merge-base --is-ancestor "${REMOTE_SHA}" "${BASE_SHA}"; then
+              echo "is_ancestor=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "is_ancestor=false" >> "$GITHUB_OUTPUT"
+            fi
+
+            if [ "${REMOTE_SHA}" = "${BASE_SHA}" ]; then
+              echo "up_to_date=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "up_to_date=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "remote_sha=" >> "$GITHUB_OUTPUT"
+            echo "is_ancestor=true" >> "$GITHUB_OUTPUT"
+            echo "up_to_date=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create release branch (first run)
+        if: steps.guard.outputs.skip == 'false' && steps.state.outputs.exists == 'false'
+        env:
+          RELEASE_BRANCH: ${{ steps.state.outputs.release_branch }}
+          BASE_SHA: ${{ steps.state.outputs.base_sha }}
+        run: |
+          git checkout -B "${RELEASE_BRANCH}" "${BASE_SHA}"
+          git push origin "${RELEASE_BRANCH}"
+          echo "Created ${RELEASE_BRANCH} at ${BASE_SHA}"
+
+      - name: Fast-forward release branch
+        if: |
+          steps.guard.outputs.skip == 'false' &&
+          steps.state.outputs.exists == 'true' &&
+          steps.state.outputs.is_ancestor == 'true' &&
+          steps.state.outputs.up_to_date == 'false' &&
+          inputs.update_strategy == 'fast-forward'
+        env:
+          RELEASE_BRANCH: ${{ steps.state.outputs.release_branch }}
+          REMOTE_SHA: ${{ steps.state.outputs.remote_sha }}
+          BASE_BRANCH: ${{ inputs.base_branch }}
+        run: |
+          git checkout -B "${RELEASE_BRANCH}" "origin/${RELEASE_BRANCH}"
+          git merge --ff-only "origin/${BASE_BRANCH}"
+          git push --force-with-lease="${RELEASE_BRANCH}:${REMOTE_SHA}" origin "${RELEASE_BRANCH}"
+          FF_DISTANCE="$(git rev-list --count "${REMOTE_SHA}..HEAD")"
+          echo "Fast-forwarded ${RELEASE_BRANCH} by ${FF_DISTANCE} commit(s)"
+          {
+            echo "### Release branch fast-forwarded"
+            echo ""
+            echo "- Branch: \`${RELEASE_BRANCH}\`"
+            echo "- Commits advanced: ${FF_DISTANCE}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Handle divergence (fast-forward strategy)
+        if: |
+          steps.guard.outputs.skip == 'false' &&
+          steps.state.outputs.exists == 'true' &&
+          steps.state.outputs.is_ancestor == 'false' &&
+          inputs.update_strategy == 'fast-forward'
+        env:
+          RELEASE_BRANCH: ${{ steps.state.outputs.release_branch }}
+        run: |
+          echo "::warning::Release branch ${RELEASE_BRANCH} has diverged from base. Skipping update under fast-forward strategy."
+          {
+            echo "### Divergence detected"
+            echo ""
+            echo "Branch \`${RELEASE_BRANCH}\` has commits not present in \`${{ inputs.base_branch }}\`."
+            echo "Resolve manually or set \`update_strategy: recreate\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Recreate release branch (recreate strategy)
+        if: |
+          steps.guard.outputs.skip == 'false' &&
+          steps.state.outputs.exists == 'true' &&
+          steps.state.outputs.up_to_date == 'false' &&
+          inputs.update_strategy == 'recreate'
+        env:
+          RELEASE_BRANCH: ${{ steps.state.outputs.release_branch }}
+          REMOTE_SHA: ${{ steps.state.outputs.remote_sha }}
+          BASE_SHA: ${{ steps.state.outputs.base_sha }}
+        run: |
+          git checkout -B "${RELEASE_BRANCH}" "${BASE_SHA}"
+          git push --force-with-lease="${RELEASE_BRANCH}:${REMOTE_SHA}" origin "${RELEASE_BRANCH}"
+          echo "Recreated ${RELEASE_BRANCH} at ${BASE_SHA}"
+
+      - name: Fail on divergence (fail-on-divergence strategy)
+        if: |
+          steps.guard.outputs.skip == 'false' &&
+          steps.state.outputs.exists == 'true' &&
+          steps.state.outputs.is_ancestor == 'false' &&
+          inputs.update_strategy == 'fail-on-divergence'
+        env:
+          RELEASE_BRANCH: ${{ steps.state.outputs.release_branch }}
+        run: |
+          echo "::error::Release branch ${RELEASE_BRANCH} diverged from base and update_strategy is fail-on-divergence."
+          exit 1
+
+      - name: Close superseded release PRs
+        if: |
+          steps.guard.outputs.skip == 'false' &&
+          inputs.close_superseded == true
+        env:
+          VERSION: ${{ steps.semver.outputs.version }}
           TARGET_BRANCH: ${{ inputs.target_branch }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Check if PR already exists
-          EXISTING_PR=$(gh pr list --head "$RELEASE_BRANCH" --base "$TARGET_BRANCH" --json number --jq '.[0].number' 2>/dev/null || echo "")
+          CURRENT_TUPLE="$(echo "${VERSION}" | awk -F. '{ printf "%010d%010d%010d", $1, $2, $3 }')"
+          mapfile -t PR_ROWS < <(gh pr list \
+            --state open \
+            --base "${TARGET_BRANCH}" \
+            --search "head:release/" \
+            --json number,headRefName \
+            --jq '.[] | "\(.number)\t\(.headRefName)"')
 
-          if [ -n "$EXISTING_PR" ]; then
-            echo "PR #$EXISTING_PR already exists for this release"
-            PR_URL=$(gh pr view "$EXISTING_PR" --json url --jq '.url')
-            echo "pr_number=$EXISTING_PR" >> $GITHUB_OUTPUT
-            echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
-            CHANGELOG=$(git log origin/${TARGET_BRANCH}..HEAD --pretty=format:'- %s (%h)' | head -20)
-            echo "changelog<<EOF" >> $GITHUB_OUTPUT
-            echo "$CHANGELOG" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-            exit 0
+          for ROW in "${PR_ROWS[@]}"; do
+            [ -z "${ROW}" ] && continue
+            PR_NUMBER="$(echo "${ROW}" | cut -f1)"
+            HEAD_REF="$(echo "${ROW}" | cut -f2)"
+            OLD_VERSION="${HEAD_REF#release/}"
+            case "${OLD_VERSION}" in
+              [0-9]*.[0-9]*.[0-9]*) ;;
+              *) continue ;;
+            esac
+            OLD_TUPLE="$(echo "${OLD_VERSION}" | awk -F. '{ printf "%010d%010d%010d", $1, $2, $3 }')"
+            if [ "${OLD_TUPLE}" \< "${CURRENT_TUPLE}" ]; then
+              echo "Closing superseded PR #${PR_NUMBER} (${HEAD_REF})"
+              gh pr close "${PR_NUMBER}" \
+                --comment "Superseded by release v${VERSION}." \
+                --delete-branch || echo "::warning::Failed to close PR #${PR_NUMBER}"
+            fi
+          done
+
+      - name: Generate changelog
+        id: changelog
+        if: steps.guard.outputs.skip == 'false'
+        env:
+          RELEASE_BRANCH: ${{ steps.state.outputs.release_branch }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+        run: |
+          git fetch --no-tags origin "${TARGET_BRANCH}" "${RELEASE_BRANCH}"
+          CHANGELOG="$(git log "origin/${TARGET_BRANCH}..origin/${RELEASE_BRANCH}" --pretty=format:'- %s (%h)' | head -30)"
+          if [ -z "${CHANGELOG}" ]; then
+            CHANGELOG="- (no commits)"
+          fi
+          {
+            echo "changelog<<EOF"
+            echo "${CHANGELOG}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create or update Pull Request
+        id: upsert-pr
+        if: steps.guard.outputs.skip == 'false'
+        env:
+          VERSION: ${{ steps.semver.outputs.version }}
+          RELEASE_BRANCH: ${{ steps.state.outputs.release_branch }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+          CHANGELOG: ${{ steps.changelog.outputs.changelog }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_BODY_FILE="$(mktemp)"
+          {
+            echo "## Release v${VERSION}"
+            echo ""
+            echo "Automatically created from \`${{ inputs.base_branch }}\` -> \`${TARGET_BRANCH}\`."
+            echo ""
+            echo "### Changes"
+            echo "${CHANGELOG}"
+            echo ""
+            echo "### Checklist"
+            echo "- [ ] Review changes"
+            echo "- [ ] Approve and merge to deploy to production"
+            echo ""
+            echo "---"
+            echo "_Last updated by run [#${RUN_NUMBER}](https://github.com/${REPO}/actions/runs/${RUN_ID}) at $(date -u +%FT%TZ)._"
+          } > "${PR_BODY_FILE}"
+
+          EXISTING_PR_JSON="$(gh pr list \
+            --state all \
+            --head "${RELEASE_BRANCH}" \
+            --base "${TARGET_BRANCH}" \
+            --json number,state,url \
+            --jq '.[0] // empty')"
+
+          if [ -z "${EXISTING_PR_JSON}" ]; then
+            gh pr create \
+              --title "Release v${VERSION}" \
+              --body-file "${PR_BODY_FILE}" \
+              --base "${TARGET_BRANCH}" \
+              --head "${RELEASE_BRANCH}" >/dev/null
+            PR_NUMBER="$(gh pr list --head "${RELEASE_BRANCH}" --base "${TARGET_BRANCH}" --json number --jq '.[0].number')"
+            PR_URL="$(gh pr view "${PR_NUMBER}" --json url --jq '.url')"
+            ACTION="created"
+          else
+            PR_NUMBER="$(echo "${EXISTING_PR_JSON}" | jq -r '.number')"
+            PR_STATE="$(echo "${EXISTING_PR_JSON}" | jq -r '.state')"
+            PR_URL="$(echo "${EXISTING_PR_JSON}" | jq -r '.url')"
+            case "${PR_STATE}" in
+              OPEN)
+                gh pr edit "${PR_NUMBER}" --body-file "${PR_BODY_FILE}" >/dev/null
+                ACTION="updated"
+                ;;
+              MERGED)
+                echo "::warning::PR #${PR_NUMBER} already merged; skipping update."
+                ACTION="skipped (merged)"
+                ;;
+              CLOSED)
+                echo "::warning::PR #${PR_NUMBER} was closed without merging; skipping update."
+                ACTION="skipped (closed)"
+                ;;
+              *)
+                echo "::warning::Unknown PR state '${PR_STATE}' for #${PR_NUMBER}; skipping update."
+                ACTION="skipped (${PR_STATE})"
+                ;;
+            esac
           fi
 
-          # Generate changelog
-          CHANGELOG=$(git log origin/${TARGET_BRANCH}..HEAD --pretty=format:'- %s (%h)' | head -20)
-          echo "changelog<<EOF" >> $GITHUB_OUTPUT
-          echo "$CHANGELOG" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "pr_number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "pr_url=${PR_URL}" >> "$GITHUB_OUTPUT"
 
-          # Create PR (body via heredoc to avoid leading-whitespace bug)
-          PR_BODY_FILE="$(mktemp)"
-          cat > "$PR_BODY_FILE" <<EOF
-          ## Release v${VERSION}
-
-          This PR was automatically created after successful deployment to develop.
-
-          ### Changes
-          ${CHANGELOG}
-
-          ### Checklist
-          - [ ] Review changes
-          - [ ] Approve and merge to deploy to production
-          EOF
-          # Strip the 10-space indent introduced by YAML block scalar
-          sed -i 's/^          //' "$PR_BODY_FILE"
-
-          gh pr create \
-            --title "Release v${VERSION}" \
-            --body-file "$PR_BODY_FILE" \
-            --base "$TARGET_BRANCH" \
-            --head "$RELEASE_BRANCH" >/dev/null
-
-          PR_NUMBER=$(gh pr list --head "$RELEASE_BRANCH" --base "$TARGET_BRANCH" --json number --jq '.[0].number')
-          PR_URL=$(gh pr view "$PR_NUMBER" --json url --jq '.url')
-
-          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
-          echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
-
-          echo "### Release Created" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| **Version** | v${VERSION} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Branch** | ${RELEASE_BRANCH} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **PR** | #${PR_NUMBER} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **URL** | ${PR_URL} |" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "### Release PR ${ACTION}"
+            echo ""
+            echo "| Property | Value |"
+            echo "|----------|-------|"
+            echo "| Version | v${VERSION} |"
+            echo "| Branch | ${RELEASE_BRANCH} |"
+            echo "| Strategy | ${{ inputs.update_strategy }} |"
+            echo "| PR | #${PR_NUMBER} |"
+            echo "| URL | ${PR_URL} |"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -171,6 +171,16 @@ on:
         required: false
         type: boolean
         default: true
+      release_update_strategy:
+        description: 'How to reconcile an existing release branch: fast-forward | recreate | fail-on-divergence'
+        required: false
+        type: string
+        default: 'fast-forward'
+      release_close_superseded:
+        description: 'Close older open release/* PRs whose version is lower than the computed one'
+        required: false
+        type: boolean
+        default: false
       run_tag:
         description: 'Create git tag and GitHub Release after deploy'
         required: false
@@ -302,6 +312,8 @@ jobs:
       base_branch: ${{ github.ref_name }}
       target_branch: ${{ inputs.release_target_branch }}
       strict_flow: ${{ inputs.release_strict_flow }}
+      update_strategy: ${{ inputs.release_update_strategy }}
+      close_superseded: ${{ inputs.release_close_superseded }}
     secrets: inherit
 
   # ============================================
