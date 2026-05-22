@@ -169,4 +169,5 @@ jobs:
       run_artifact: false
       run_deploy: false
       run_cleanup: false
+      run_release: false   # deprecated, kept for clarity
     secrets: inherit

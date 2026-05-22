@@ -161,6 +161,27 @@ on:
         type: boolean
         default: false
 
+      # ====================================================================
+      # DEPRECATED inputs — accepted for backward compatibility, no-op.
+      # Release PR is now created by the independent release-pr.yml workflow
+      # (templates/release-pr.yml). Remove these from caller workflows.
+      # ====================================================================
+      run_release:
+        description: 'DEPRECATED — no-op. Use release-pr.yml workflow instead.'
+        required: false
+        type: boolean
+        default: false
+      release_target_branch:
+        description: 'DEPRECATED — no-op. Configure target in release-pr.yml.'
+        required: false
+        type: string
+        default: 'main'
+      release_strict_flow:
+        description: 'DEPRECATED — no-op. Configure strict_flow in release-pr.yml.'
+        required: false
+        type: boolean
+        default: true
+
     outputs:
       coverage:
         description: 'Code coverage percentage'
