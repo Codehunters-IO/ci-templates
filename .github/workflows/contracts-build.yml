@@ -14,10 +14,15 @@ on:
         type: string
         default: '22'
       package_manager:
-        description: 'Package manager (npm or yarn)'
+        description: 'Package manager (npm, yarn, or pnpm)'
         required: false
         type: string
-        default: 'yarn'
+        default: 'pnpm'
+      pnpm_version:
+        description: 'pnpm version (used when package_manager: pnpm)'
+        required: false
+        type: string
+        default: '10'
       run_size_check:
         description: 'Run hardhat-contract-sizer (strict mode fails if any contract > 24KB)'
         required: false
@@ -47,6 +52,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Setup pnpm
+        if: inputs.package_manager == 'pnpm'
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ inputs.pnpm_version }}
+
       - name: Setup Node.js ${{ inputs.node_version }}
         uses: actions/setup-node@v5
         with:
@@ -55,19 +66,19 @@ jobs:
 
       - name: Install dependencies
         run: |
-          if [ "${{ inputs.package_manager }}" = "yarn" ]; then
-            yarn install --frozen-lockfile
-          else
-            npm ci
-          fi
+          case "${{ inputs.package_manager }}" in
+            pnpm) pnpm install --frozen-lockfile ;;
+            yarn) yarn install --frozen-lockfile ;;
+            *)    npm ci ;;
+          esac
 
       - name: Compile contracts
         run: |
-          if [ "${{ inputs.package_manager }}" = "yarn" ]; then
-            yarn hardhat compile
-          else
-            npx hardhat compile
-          fi
+          case "${{ inputs.package_manager }}" in
+            pnpm) pnpm hardhat compile ;;
+            yarn) yarn hardhat compile ;;
+            *)    npx hardhat compile ;;
+          esac
 
           echo "### Hardhat Compile" >> $GITHUB_STEP_SUMMARY
           echo "**Status:** Passed" >> $GITHUB_STEP_SUMMARY
@@ -75,11 +86,11 @@ jobs:
       - name: Contract size check
         if: inputs.run_size_check
         run: |
-          if [ "${{ inputs.package_manager }}" = "yarn" ]; then
-            yarn hardhat size-contracts
-          else
-            npx hardhat size-contracts
-          fi
+          case "${{ inputs.package_manager }}" in
+            pnpm) pnpm hardhat size-contracts ;;
+            yarn) yarn hardhat size-contracts ;;
+            *)    npx hardhat size-contracts ;;
+          esac
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Contract Sizes" >> $GITHUB_STEP_SUMMARY

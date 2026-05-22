@@ -206,7 +206,8 @@ feature/*              ──► compile + size check
 | Input | Description | Default |
 |-------|-------------|---------|
 | `node_version` | Node.js version | `'22'` |
-| `package_manager` | `npm` or `yarn` | `'yarn'` |
+| `package_manager` | `npm`, `yarn`, or `pnpm` | `'pnpm'` |
+| `pnpm_version` | pnpm version (when `package_manager: pnpm`) | `'10'` |
 | `run_size_check` | Run `hardhat-contract-sizer` (24KB EIP-170 limit) | `true` |
 | `run_coverage` | Run `solidity-coverage` | `false` |
 | `coverage_threshold` | Minimum line coverage (0-100, 0 = disabled) | `0` |

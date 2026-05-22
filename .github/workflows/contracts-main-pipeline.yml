@@ -17,10 +17,15 @@ on:
         type: string
         default: '22'
       package_manager:
-        description: 'Package manager (npm or yarn)'
+        description: 'Package manager (npm, yarn, or pnpm)'
         required: false
         type: string
-        default: 'yarn'
+        default: 'pnpm'
+      pnpm_version:
+        description: 'pnpm version (used when package_manager: pnpm)'
+        required: false
+        type: string
+        default: '10'
       dockerfile_path:
         description: 'Path to Dockerfile (build context)'
         required: false
@@ -251,6 +256,7 @@ jobs:
       runner: ${{ inputs.runner }}
       node_version: ${{ inputs.node_version }}
       package_manager: ${{ inputs.package_manager }}
+      pnpm_version: ${{ inputs.pnpm_version }}
       run_size_check: ${{ inputs.run_size_check }}
     secrets: inherit
 
@@ -266,6 +272,7 @@ jobs:
       runner: ${{ inputs.runner }}
       node_version: ${{ inputs.node_version }}
       package_manager: ${{ inputs.package_manager }}
+      pnpm_version: ${{ inputs.pnpm_version }}
       artifact_name: ${{ needs.build.outputs.artifact_name }}
       run_coverage: ${{ inputs.run_coverage }}
       coverage_threshold: ${{ inputs.coverage_threshold }}
