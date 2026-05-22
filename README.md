@@ -214,14 +214,11 @@ feature/*              ──► compile + size check
 | `upload_reports` | Upload coverage + gas reports as artifacts | `false` |
 | `push_latest` | Also push `:latest` tag to ECR | `false` |
 
-### Prerequisites
+### ECR Repository
 
-One-time ECR repo creation:
-```bash
-aws ecr create-repository \
-  --repository-name vitxo-blockchain-contracts \
-  --region $AWS_REGION
-```
+The ECR repository is created automatically by the pipeline if it does not exist. The repository name equals the GitHub repo name (e.g., `vitxo-blockchain-contracts`). Repos are created with `MUTABLE` tags and scan-on-push enabled.
+
+The AWS IAM principal must have `ecr:DescribeRepositories` and `ecr:CreateRepository` in addition to push permissions.
 
 ### Out of scope (deliberate)
 

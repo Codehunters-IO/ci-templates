@@ -169,6 +169,26 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      - name: Ensure ECR repository exists
+        env:
+          ECR_REPOSITORY: ${{ github.event.repository.name }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          if aws ecr describe-repositories \
+              --repository-names "$ECR_REPOSITORY" \
+              --region "$AWS_REGION" >/dev/null 2>&1; then
+            echo "ECR repository '$ECR_REPOSITORY' already exists."
+          else
+            echo "Creating ECR repository '$ECR_REPOSITORY' in region '$AWS_REGION'..."
+            aws ecr create-repository \
+              --repository-name "$ECR_REPOSITORY" \
+              --region "$AWS_REGION" \
+              --image-tag-mutability MUTABLE \
+              --image-scanning-configuration scanOnPush=true \
+              --tags Key=managed-by,Value=ci-templates Key=repository,Value=$ECR_REPOSITORY
+            echo "ECR repository '$ECR_REPOSITORY' created."
+          fi
+
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2

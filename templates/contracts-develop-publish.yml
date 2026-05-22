@@ -15,8 +15,8 @@
 #   ECR:
 #   - AWS_ECR_URL: ECR registry URL
 #
-# Prerequisite (one-time):
-#   aws ecr create-repository --repository-name vitxo-blockchain-contracts --region $AWS_REGION
+# Note: ECR repository is created by the pipeline if missing (idempotent).
+#       IAM principal needs ecr:DescribeRepositories + ecr:CreateRepository.
 
 name: Publish to Develop
 
