@@ -19,9 +19,6 @@ on:
       version:
         description: 'Release version'
         value: ${{ jobs.release.outputs.version }}
-      release_branch:
-        description: 'Release branch name'
-        value: ${{ jobs.release.outputs.release_branch }}
       pr_number:
         description: 'Pull request number'
         value: ${{ jobs.release.outputs.pr_number }}

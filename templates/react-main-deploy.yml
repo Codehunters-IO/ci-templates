@@ -21,7 +21,7 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write   # required by run_tag to push vX.Y.Z tag and create GitHub Release
   id-token: write
 
 jobs:

@@ -2,7 +2,8 @@
 # Copy to: .github/workflows/develop-deploy.yml
 #
 # Triggers on push to develop branch (after PR merge)
-# Flow: build → test → artifact (ECR) → deploy (EC2) → delete branch → create release PR
+# Flow: build → test → artifact (ECR) → deploy (EC2) → delete branch → release PR (develop → main)
+# Tag vX.Y.Z is created on merge to main via run_tag in the main-deploy template.
 #
 # Required secrets:
 #   AWS:
@@ -45,8 +46,6 @@ jobs:
       run_release: true
       environment: 'develop'
       release_target_branch: 'main'
-      # release_update_strategy: 'fast-forward'   # fast-forward | recreate | fail-on-divergence
-      # release_close_superseded: false           # close older open release/* PRs when version bumps
       # extra_volumes: default mounts ./certs:/etc/krakend/certs:ro on the host.
       # Place certs at /opt/docker/<repo>/certs/ on the EC2 host before deploy.
       # Override below to add more bind mounts (one per line, leading "- "):

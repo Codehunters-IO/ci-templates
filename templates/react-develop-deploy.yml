@@ -2,7 +2,8 @@
 # Copy to: .github/workflows/develop-deploy.yml
 #
 # Triggers on push to develop branch (after PR merge)
-# Flow: build → test → deploy (S3) → delete branch → create release PR
+# Flow: build → test → deploy (S3) → delete branch → release PR (develop → main)
+# Tag vX.Y.Z is created on merge to main via run_tag in the main-deploy template.
 #
 # Required secrets:
 #   AWS:
