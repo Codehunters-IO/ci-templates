@@ -2,7 +2,10 @@
 # Copy to: .github/workflows/develop-deploy.yml
 #
 # Triggers on push to develop branch (after PR merge)
-# Flow: build -> test -> artifact (ECR) -> deploy -> delete branch -> release PR (develop -> main)
+# Flow: build -> test -> artifact (ECR) -> deploy -> delete branch
+#
+# Release PR (develop -> main) is opened in parallel by release-pr.yml
+# (copy templates/release-pr.yml into .github/workflows/ alongside this file).
 # Tag vX.Y.Z is created on merge to main via run_tag in the main-deploy template.
 # Image tag: commit SHA (7 chars)
 #
@@ -23,7 +26,7 @@
 #   - WG_PRIVATE_KEY, WG_ADDRESS, WG_PEER_PUBLIC_KEY, WG_PEER_ALLOWED_IPS, WG_PEER_ENDPOINT
 #   - WG_DNS (optional)
 #
-#   Notifications (notify_on_failure / notify_on_deploy / notify_on_release):
+#   Notifications (notify_on_failure / notify_on_deploy):
 #   - SLACK_WEBHOOK_URL: Slack incoming webhook URL
 #
 #   Optional:
@@ -61,11 +64,8 @@ jobs:
       deploy_target: 'ec2-vpn'
       environment: 'develop'
       run_cleanup: true
-      run_release: true
-      release_target_branch: 'main'
       notify_on_failure: true
       notify_on_deploy: true
-      notify_on_release: true
       # Mount TLS material/keystore from host into the container (read-only).
       # Place files at /opt/docker/<repo>/certs/ on the EC2 host before deploy.
       # Pair with container_env_vars (set in the pipeline) to point Spring Boot at them.

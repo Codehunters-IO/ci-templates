@@ -252,38 +252,12 @@ on:
         required: false
         type: string
         default: 'pipeline-deployments'
-      notify_on_release:
-        description: 'Send Slack notification when release PR is created'
-        required: false
-        type: boolean
-        default: false
-      notify_release_channel:
-        description: 'Slack channel for release PR notifications'
-        required: false
-        type: string
-        default: 'pr-review'
-
-      # Cleanup & Release
+      # Cleanup
       run_cleanup:
         description: 'Delete merged branch after deploy'
         required: false
         type: boolean
         default: false
-      run_release:
-        description: 'Create release PR after deploy'
-        required: false
-        type: boolean
-        default: false
-      release_target_branch:
-        description: 'Target branch for release PR'
-        required: false
-        type: string
-        default: 'main'
-      release_strict_flow:
-        description: 'Enforce GitFlow on release PR (base must be develop, target must be main)'
-        required: false
-        type: boolean
-        default: true
       run_tag:
         description: 'Create git tag and GitHub Release after deploy'
         required: false
@@ -315,15 +289,6 @@ on:
       deleted_branch:
         description: 'Name of deleted branch'
         value: ${{ jobs.cleanup.outputs.deleted_branch }}
-      release_version:
-        description: 'Release version created'
-        value: ${{ jobs.release.outputs.version }}
-      release_pr_url:
-        description: 'Release PR URL'
-        value: ${{ jobs.release.outputs.pr_url }}
-      release_changelog:
-        description: 'Release changelog'
-        value: ${{ jobs.release.outputs.changelog }}
       arch_test_result:
         description: 'Architecture test result'
         value: ${{ jobs.architecture.outputs.arch_test_result }}
@@ -605,28 +570,8 @@ jobs:
     secrets: inherit
 
   # ============================================
-  # RELEASE - Create release PR
-  # ============================================
-  release:
-    name: Create Release
-    if: |
-      inputs.run_release &&
-      always() &&
-      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success' ||
-       (needs.deploy-ec2.result == 'skipped' && needs.deploy-ec2-vpn.result == 'skipped' && needs.deploy-eks.result == 'skipped' &&
-        (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success' || needs.artifact-packages.result == 'success' ||
-         (needs.artifact-ecr.result == 'skipped' && needs.artifact-github.result == 'skipped' && needs.artifact-packages.result == 'skipped' &&
-          needs.test.result == 'success'))))
-    needs: [test, artifact-ecr, artifact-github, artifact-packages, deploy-ec2, deploy-ec2-vpn, deploy-eks]
-    uses: ./.github/workflows/shared-release.yml
-    with:
-      base_branch: ${{ github.ref_name }}
-      target_branch: ${{ inputs.release_target_branch }}
-      strict_flow: ${{ inputs.release_strict_flow }}
-    secrets: inherit
-
-  # ============================================
-  # CLEANUP - Delete merged branch (runs after release PR created)
+  # CLEANUP - Delete merged branch (runs after deploy)
+  # Release PR is created by the independent release-pr.yml workflow.
   # ============================================
   cleanup:
     name: Delete Branch
@@ -637,9 +582,8 @@ jobs:
        (needs.deploy-ec2.result == 'skipped' && needs.deploy-ec2-vpn.result == 'skipped' && needs.deploy-eks.result == 'skipped' &&
         (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success' || needs.artifact-packages.result == 'success' ||
          (needs.artifact-ecr.result == 'skipped' && needs.artifact-github.result == 'skipped' && needs.artifact-packages.result == 'skipped' &&
-          needs.test.result == 'success')))) &&
-      (needs.release.result == 'success' || needs.release.result == 'skipped')
-    needs: [test, artifact-ecr, artifact-github, artifact-packages, deploy-ec2, deploy-ec2-vpn, deploy-eks, release]
+          needs.test.result == 'success'))))
+    needs: [test, artifact-ecr, artifact-github, artifact-packages, deploy-ec2, deploy-ec2-vpn, deploy-eks]
     uses: ./.github/workflows/shared-delete-branch.yml
     secrets: inherit
 
@@ -655,7 +599,7 @@ jobs:
        (needs.deploy-ec2.result == 'skipped' && needs.deploy-ec2-vpn.result == 'skipped' && needs.deploy-eks.result == 'skipped' &&
         (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success' || needs.artifact-packages.result == 'success' ||
          (needs.test.result == 'success' && needs.artifact-ecr.result == 'skipped' && needs.artifact-github.result == 'skipped' && needs.artifact-packages.result == 'skipped'))))
-    needs: [build, test, artifact-ecr, artifact-github, artifact-packages, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release]
+    needs: [build, test, artifact-ecr, artifact-github, artifact-packages, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup]
     uses: ./.github/workflows/shared-tag-release.yml
     secrets: inherit
 
@@ -670,7 +614,7 @@ jobs:
       (needs.build.result == 'failure' || needs.test.result == 'failure' ||
        needs.artifact-ecr.result == 'failure' || needs.artifact-github.result == 'failure' || needs.artifact-packages.result == 'failure' ||
        needs.deploy-ec2.result == 'failure' || needs.deploy-ec2-vpn.result == 'failure' || needs.deploy-eks.result == 'failure')
-    needs: [build, test, artifact-ecr, artifact-github, artifact-packages, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release, tag]
+    needs: [build, test, artifact-ecr, artifact-github, artifact-packages, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, tag]
     uses: ./.github/workflows/shared-slack-notify.yml
     with:
       channel: ${{ inputs.notify_failure_channel }}
@@ -698,25 +642,6 @@ jobs:
     secrets: inherit
 
   # ============================================
-  # NOTIFY RELEASE - Slack notification when release PR created
-  # ============================================
-  notify-release:
-    name: Notify Release PR
-    if: |
-      inputs.notify_on_release &&
-      always() &&
-      needs.release.result == 'success'
-    needs: [release]
-    uses: ./.github/workflows/shared-slack-notify.yml
-    with:
-      channel: ${{ inputs.notify_release_channel }}
-      status: 'info'
-      title: 'Release PR created — ${{ github.repository }}'
-      version: ${{ needs.release.outputs.version }}
-      pr_url: ${{ needs.release.outputs.pr_url }}
-    secrets: inherit
-
-  # ============================================
   # CREATE ISSUE - On failure (runs last, always)
   # ============================================
   create-issue:
@@ -724,11 +649,9 @@ jobs:
     if: |
       inputs.run_create_issue_on_failure &&
       always()
-    needs: [build, test, artifact-ecr, artifact-github, artifact-packages, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release, tag]
+    needs: [build, test, artifact-ecr, artifact-github, artifact-packages, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, tag]
     uses: ./.github/workflows/shared-create-issue-on-failure.yml
     with:
       status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.artifact-ecr.result == 'failure' || needs.artifact-github.result == 'failure' || needs.artifact-packages.result == 'failure' || needs.deploy-ec2.result == 'failure' || needs.deploy-ec2-vpn.result == 'failure' || needs.deploy-eks.result == 'failure') && 'failure' || 'success' }}
       environment: ${{ inputs.environment }}
-      version: ${{ needs.release.outputs.version }}
-      changelog: ${{ needs.release.outputs.changelog }}
       labels: ${{ inputs.issue_labels }}

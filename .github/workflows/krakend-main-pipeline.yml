@@ -103,11 +103,6 @@ on:
         required: false
         type: boolean
         default: false
-      run_release:
-        description: 'Create release PR after deploy'
-        required: false
-        type: boolean
-        default: false
 
       # Test options
       audit_threshold:
@@ -178,17 +173,6 @@ on:
         type: number
         default: 1
 
-      # Release options
-      release_target_branch:
-        description: 'Target branch for release PR'
-        required: false
-        type: string
-        default: 'main'
-      release_strict_flow:
-        description: 'Enforce GitFlow on release PR (base must be develop, target must be main)'
-        required: false
-        type: boolean
-        default: true
       run_tag:
         description: 'Create git tag and GitHub Release after deploy'
         required: false
@@ -211,15 +195,6 @@ on:
       deleted_branch:
         description: 'Name of deleted branch'
         value: ${{ jobs.cleanup.outputs.deleted_branch }}
-      release_version:
-        description: 'Release version created'
-        value: ${{ jobs.release.outputs.version }}
-      release_pr_url:
-        description: 'Release PR URL'
-        value: ${{ jobs.release.outputs.pr_url }}
-      release_changelog:
-        description: 'Release changelog'
-        value: ${{ jobs.release.outputs.changelog }}
 
 jobs:
   # ============================================
@@ -375,33 +350,16 @@ jobs:
     secrets: inherit
 
   # ============================================
-  # RELEASE - Create release PR
-  # ============================================
-  release:
-    name: Create Release
-    if: |
-      inputs.run_release &&
-      always() &&
-      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success')
-    needs: [deploy-ec2, deploy-ec2-vpn, deploy-eks]
-    uses: ./.github/workflows/shared-release.yml
-    with:
-      base_branch: ${{ github.ref_name }}
-      target_branch: ${{ inputs.release_target_branch }}
-      strict_flow: ${{ inputs.release_strict_flow }}
-    secrets: inherit
-
-  # ============================================
-  # CLEANUP - Delete merged branch (runs after release PR created)
+  # CLEANUP - Delete merged branch (runs after deploy)
+  # Release PR is created by the independent release-pr.yml workflow.
   # ============================================
   cleanup:
     name: Delete Branch
     if: |
       inputs.run_cleanup &&
       always() &&
-      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success') &&
-      (needs.release.result == 'success' || needs.release.result == 'skipped')
-    needs: [deploy-ec2, deploy-ec2-vpn, deploy-eks, release]
+      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success')
+    needs: [deploy-ec2, deploy-ec2-vpn, deploy-eks]
     uses: ./.github/workflows/shared-delete-branch.yml
     secrets: inherit
 
@@ -414,7 +372,7 @@ jobs:
       inputs.run_tag &&
       always() &&
       (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success')
-    needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release]
+    needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup]
     uses: ./.github/workflows/shared-tag-release.yml
     secrets: inherit
 
@@ -426,14 +384,12 @@ jobs:
     if: |
       inputs.run_notifications &&
       always()
-    needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release, tag]
+    needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, tag]
     uses: ./.github/workflows/shared-notifications.yml
     with:
       providers: ${{ inputs.notify_providers }}
       status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.artifact.result == 'failure' || needs.deploy-ec2.result == 'failure' || needs.deploy-ec2-vpn.result == 'failure' || needs.deploy-eks.result == 'failure') && 'failure' || (needs.build.result == 'cancelled') && 'cancelled' || 'success' }}
       environment: ${{ inputs.environment }}
-      version: ${{ needs.release.outputs.version }}
-      changelog: ${{ needs.release.outputs.changelog }}
       mention_on_failure: ${{ inputs.notify_mention_on_failure }}
     secrets: inherit
 
@@ -445,11 +401,9 @@ jobs:
     if: |
       inputs.run_create_issue_on_failure &&
       always()
-    needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release, tag]
+    needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, tag]
     uses: ./.github/workflows/shared-create-issue-on-failure.yml
     with:
       status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.artifact.result == 'failure' || needs.deploy-ec2.result == 'failure' || needs.deploy-ec2-vpn.result == 'failure' || needs.deploy-eks.result == 'failure') && 'failure' || 'success' }}
       environment: ${{ inputs.environment }}
-      version: ${{ needs.release.outputs.version }}
-      changelog: ${{ needs.release.outputs.changelog }}
       labels: ${{ inputs.issue_labels }}

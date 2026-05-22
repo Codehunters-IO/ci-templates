@@ -2,7 +2,10 @@
 # Copy to: .github/workflows/develop-deploy.yml
 #
 # Triggers on push to develop branch (after PR merge)
-# Flow: build → test → deploy (S3) → delete branch → release PR (develop → main)
+# Flow: build → test → deploy (S3) → delete branch
+#
+# Release PR (develop → main) is opened in parallel by release-pr.yml
+# (copy templates/release-pr.yml into .github/workflows/ alongside this file).
 # Tag vX.Y.Z is created on merge to main via run_tag in the main-deploy template.
 #
 # Required secrets:
@@ -41,7 +44,5 @@ jobs:
       code_analysis_tool: 'sonar'
       run_deploy: true
       run_cleanup: true
-      run_release: true
       environment: 'develop'
-      release_target_branch: 'main'
     secrets: inherit
