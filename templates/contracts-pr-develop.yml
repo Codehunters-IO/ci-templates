@@ -1,0 +1,29 @@
+# Template: PR to develop validation
+# Copy to: .github/workflows/pr-develop.yml
+#
+# Triggers on pull requests targeting develop branch
+# Runs: commit-lint + compile + size check + hardhat test + coverage + gas reporter
+#
+# Required secrets:
+#   GitHub-provided GITHUB_TOKEN only (no AWS needed for PR validation)
+
+name: PR Validation
+
+on:
+  pull_request:
+    branches:
+      - develop
+
+jobs:
+  validate:
+    uses: SOLDIFE/ci-templates/.github/workflows/contracts-main-pipeline.yml@main
+    with:
+      run_commit_lint: true
+      run_dependency_review: true
+      run_build: true
+      run_test: true
+      run_coverage: true
+      coverage_threshold: 0
+      run_gas_reporter: true
+      upload_reports: true
+    secrets: inherit

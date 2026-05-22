@@ -1,0 +1,97 @@
+name: Contracts - Build & Compile
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      node_version:
+        description: 'Node.js version'
+        required: false
+        type: string
+        default: '20'
+      package_manager:
+        description: 'Package manager (npm or yarn)'
+        required: false
+        type: string
+        default: 'yarn'
+      run_size_check:
+        description: 'Run hardhat-contract-sizer (strict mode fails if any contract > 24KB)'
+        required: false
+        type: boolean
+        default: true
+      artifact_retention_days:
+        description: 'Days to retain compiled artifacts'
+        required: false
+        type: number
+        default: 1
+
+    outputs:
+      artifact_name:
+        description: 'Name of uploaded build artifact'
+        value: ${{ jobs.build.outputs.artifact_name }}
+
+jobs:
+  build:
+    name: Build & Compile
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 15
+
+    outputs:
+      artifact_name: contracts-build-${{ github.run_id }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js ${{ inputs.node_version }}
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: ${{ inputs.package_manager }}
+
+      - name: Install dependencies
+        run: |
+          if [ "${{ inputs.package_manager }}" = "yarn" ]; then
+            yarn install --frozen-lockfile
+          else
+            npm ci
+          fi
+
+      - name: Compile contracts
+        run: |
+          if [ "${{ inputs.package_manager }}" = "yarn" ]; then
+            yarn hardhat compile
+          else
+            npx hardhat compile
+          fi
+
+          echo "### Hardhat Compile" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** Passed" >> $GITHUB_STEP_SUMMARY
+
+      - name: Contract size check
+        if: inputs.run_size_check
+        run: |
+          if [ "${{ inputs.package_manager }}" = "yarn" ]; then
+            yarn hardhat size-contracts
+          else
+            npx hardhat size-contracts
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Contract Sizes" >> $GITHUB_STEP_SUMMARY
+          echo "Strict mode enabled (24KB EIP-170 limit)." >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload compiled artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: contracts-build-${{ github.run_id }}
+          path: |
+            artifacts/
+            cache/
+            typechain-types/
+          retention-days: ${{ inputs.artifact_retention_days }}
+          if-no-files-found: warn

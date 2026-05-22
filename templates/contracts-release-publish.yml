@@ -1,0 +1,29 @@
+# Template: Publish image on release branch
+# Copy to: .github/workflows/release-publish.yml
+#
+# Triggers on push to release/* branches
+# Flow: build → test → artifact (ECR, staging environment)
+#
+# Required secrets: Same as develop-publish.yml
+
+name: Publish to STAGING
+
+on:
+  push:
+    branches:
+      - 'release/**'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    uses: SOLDIFE/ci-templates/.github/workflows/contracts-main-pipeline.yml@main
+    with:
+      run_build: true
+      run_test: true
+      run_artifact: true
+      environment: 'staging'
+    secrets: inherit

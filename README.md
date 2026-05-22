@@ -1,6 +1,6 @@
 # CI Templates
 
-Reusable GitHub Actions workflows for Java, Krakend and React projects following a GitFlow branching strategy.
+Reusable GitHub Actions workflows for Java, Krakend, React and Solidity/Hardhat projects following a GitFlow branching strategy.
 
 ## Stacks
 
@@ -9,6 +9,7 @@ Reusable GitHub Actions workflows for Java, Krakend and React projects following
 | Java (Spring Boot) | `java-main-pipeline.yml` · `java-pr-pipeline.yml` | `templates/java-*.yml` |
 | Krakend | `krakend-main-pipeline.yml` | `templates/krakend-*.yml` |
 | React | `react-main-pipeline.yml` | `templates/react-*.yml` |
+| Contracts (Hardhat/Solidity) | `contracts-main-pipeline.yml` | `templates/contracts-*.yml` |
 
 ## GitFlow
 
@@ -183,6 +184,50 @@ ci-templates/
 │   └── react-*.yml
 └── README.md
 ```
+
+## Contracts (Hardhat/Solidity) Stack
+
+GitFlow flow — image is pushed to ECR only, no EC2/EKS deploy. Downstream consumers pull the image as needed (e.g., a long-lived `eth-dev-node` container started via docker-compose for integration tests).
+
+```
+feature/*              ──► compile + size check
+     │
+     ▼ (PR to develop)      commit-lint + compile + size + test + coverage + gas reporter
+     │
+     ▼ (merge to develop)   compile + test + artifact (ECR) → cleanup → release PR
+     │
+     ▼ (release/*)          compile + test + artifact (ECR, STAGING)
+     │
+     ▼ (merge to main)      compile + artifact (ECR, PRODUCTION) + tag
+```
+
+### Contracts-specific inputs
+
+| Input | Description | Default |
+|-------|-------------|---------|
+| `node_version` | Node.js version | `'20'` |
+| `package_manager` | `npm` or `yarn` | `'yarn'` |
+| `run_size_check` | Run `hardhat-contract-sizer` (24KB EIP-170 limit) | `true` |
+| `run_coverage` | Run `solidity-coverage` | `false` |
+| `coverage_threshold` | Minimum line coverage (0-100, 0 = disabled) | `0` |
+| `run_gas_reporter` | Enable `hardhat-gas-reporter` | `false` |
+| `upload_reports` | Upload coverage + gas reports as artifacts | `false` |
+| `push_latest` | Also push `:latest` tag to ECR | `false` |
+
+### Prerequisites
+
+One-time ECR repo creation:
+```bash
+aws ecr create-repository \
+  --repository-name vitxo-blockchain-contracts \
+  --region $AWS_REGION
+```
+
+### Out of scope (deliberate)
+
+- **On-chain deploy** (Sepolia / Polygon / mainnet) is NOT executed from CI. Real-network deploys must run out-of-band via a separate, gated, `workflow_dispatch` job with GitHub Environment approvals and isolated secrets.
+- **EC2 / EKS deployment** of the dev-node container is NOT performed by this pipeline; image is published to ECR only.
+- **ABI / TypeChain publishing** to downstream consumers is not yet wired (reserved for a future input).
 
 ## Requirements on the EC2 host
 

@@ -1,0 +1,20 @@
+# Template: Build on feature/bugfix branches
+# Copy to: .github/workflows/feature-build.yml
+#
+# Triggers on every push to feature/* or bugfix/* branches
+# Runs: compile + contract size check (fast feedback, no tests)
+
+name: Feature/Bugfix Build
+
+on:
+  push:
+    branches:
+      - 'feature/**'
+      - 'bugfix/**'
+
+jobs:
+  build:
+    uses: SOLDIFE/ci-templates/.github/workflows/contracts-main-pipeline.yml@main
+    with:
+      run_build: true
+    secrets: inherit

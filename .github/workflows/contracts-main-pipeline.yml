@@ -1,0 +1,376 @@
+name: Contracts - Main Pipeline
+
+on:
+  workflow_call:
+    inputs:
+      # Runner configuration
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+
+      # Node / Hardhat configuration
+      node_version:
+        description: 'Node.js version'
+        required: false
+        type: string
+        default: '20'
+      package_manager:
+        description: 'Package manager (npm or yarn)'
+        required: false
+        type: string
+        default: 'yarn'
+      dockerfile_path:
+        description: 'Path to Dockerfile (build context)'
+        required: false
+        type: string
+        default: '.'
+
+      # Pipeline steps control
+      run_commit_lint:
+        description: 'Run commit message validation'
+        required: false
+        type: boolean
+        default: false
+      run_trufflehog:
+        description: 'Run TruffleHog secret scanning'
+        required: false
+        type: boolean
+        default: false
+      trufflehog_only_verified:
+        description: 'Only report verified secrets'
+        required: false
+        type: boolean
+        default: true
+      trufflehog_fail_on_findings:
+        description: 'Fail the workflow if secrets are found'
+        required: false
+        type: boolean
+        default: true
+      run_dependency_review:
+        description: 'Run dependency review (PR only)'
+        required: false
+        type: boolean
+        default: false
+      dependency_review_severity:
+        description: 'Minimum severity to fail: low, moderate, high, critical'
+        required: false
+        type: string
+        default: 'high'
+      run_build:
+        description: 'Run build & compile job'
+        required: false
+        type: boolean
+        default: true
+      run_test:
+        description: 'Run test job (hardhat test)'
+        required: false
+        type: boolean
+        default: false
+      run_coverage:
+        description: 'Run solidity-coverage'
+        required: false
+        type: boolean
+        default: false
+      coverage_threshold:
+        description: 'Minimum coverage percentage (0-100). 0 = disabled.'
+        required: false
+        type: number
+        default: 0
+      run_gas_reporter:
+        description: 'Enable hardhat-gas-reporter'
+        required: false
+        type: boolean
+        default: false
+      upload_reports:
+        description: 'Upload coverage and gas reports as artifacts'
+        required: false
+        type: boolean
+        default: false
+      run_size_check:
+        description: 'Run hardhat-contract-sizer'
+        required: false
+        type: boolean
+        default: true
+      run_artifact:
+        description: 'Build and push Docker image to ECR'
+        required: false
+        type: boolean
+        default: false
+      run_create_issue_on_failure:
+        description: 'Create GitHub issue on pipeline failure'
+        required: false
+        type: boolean
+        default: false
+      issue_labels:
+        description: 'Labels for the failure issue (comma-separated)'
+        required: false
+        type: string
+        default: 'bug,pipeline-failure'
+      run_notifications:
+        description: 'Send notifications after pipeline completes'
+        required: false
+        type: boolean
+        default: false
+      notify_providers:
+        description: 'Notification providers (comma-separated: slack, teams)'
+        required: false
+        type: string
+        default: 'slack'
+      notify_mention_on_failure:
+        description: 'Mention on failure (Slack: @channel, Teams: @General)'
+        required: false
+        type: string
+        default: ''
+      run_cleanup:
+        description: 'Delete merged branch after artifact push'
+        required: false
+        type: boolean
+        default: false
+      run_release:
+        description: 'Create release PR after artifact push'
+        required: false
+        type: boolean
+        default: false
+
+      # Artifact options
+      image_tag:
+        description: 'Docker image tag (empty = commit SHA)'
+        required: false
+        type: string
+        default: ''
+      docker_platform:
+        description: 'Docker platform (linux/amd64, linux/arm64)'
+        required: false
+        type: string
+        default: 'linux/arm64'
+      push_latest:
+        description: 'Also push :latest tag to ECR'
+        required: false
+        type: boolean
+        default: false
+
+      # Environment for ECR push
+      environment:
+        description: 'GitHub environment (develop, staging, production)'
+        required: false
+        type: string
+        default: 'develop'
+
+      # Release options
+      release_target_branch:
+        description: 'Target branch for release PR'
+        required: false
+        type: string
+        default: 'main'
+      release_strict_flow:
+        description: 'Enforce GitFlow on release PR (base must be develop, target must be main)'
+        required: false
+        type: boolean
+        default: true
+      run_tag:
+        description: 'Create git tag and GitHub Release after artifact push'
+        required: false
+        type: boolean
+        default: false
+
+    outputs:
+      image_tag:
+        description: 'Docker image tag pushed'
+        value: ${{ jobs.artifact.outputs.image_tag }}
+      image_uri:
+        description: 'Full Docker image URI'
+        value: ${{ jobs.artifact.outputs.image_uri }}
+      coverage_percentage:
+        description: 'Line coverage percentage'
+        value: ${{ jobs.test.outputs.coverage_percentage }}
+      tests_passed:
+        description: 'Number of tests passed'
+        value: ${{ jobs.test.outputs.tests_passed }}
+      tests_failed:
+        description: 'Number of tests failed'
+        value: ${{ jobs.test.outputs.tests_failed }}
+      deleted_branch:
+        description: 'Name of deleted branch'
+        value: ${{ jobs.cleanup.outputs.deleted_branch }}
+      release_version:
+        description: 'Release version created'
+        value: ${{ jobs.release.outputs.version }}
+      release_pr_url:
+        description: 'Release PR URL'
+        value: ${{ jobs.release.outputs.pr_url }}
+      release_changelog:
+        description: 'Release changelog'
+        value: ${{ jobs.release.outputs.changelog }}
+
+jobs:
+  # ============================================
+  # COMMIT LINT (parallel, no deps)
+  # ============================================
+  commit-lint:
+    name: Commit Lint
+    if: inputs.run_commit_lint
+    uses: ./.github/workflows/shared-commit-lint.yml
+    with:
+      runner: ${{ inputs.runner }}
+
+  # ============================================
+  # SECURITY - TruffleHog (parallel, no deps)
+  # ============================================
+  security:
+    name: Security Scan
+    if: inputs.run_trufflehog
+    uses: ./.github/workflows/security-trufflehog.yml
+    with:
+      runner: ${{ inputs.runner }}
+      only_verified: ${{ inputs.trufflehog_only_verified }}
+      fail_on_findings: ${{ inputs.trufflehog_fail_on_findings }}
+    secrets: inherit
+
+  # ============================================
+  # SECURITY - Dependency Review (parallel, no deps)
+  # ============================================
+  dependency-review:
+    name: Dependency Review
+    if: inputs.run_dependency_review
+    uses: ./.github/workflows/security-dependency-review.yml
+    with:
+      runner: ${{ inputs.runner }}
+      fail_on_severity: ${{ inputs.dependency_review_severity }}
+    secrets: inherit
+
+  # ============================================
+  # BUILD (Install + Compile + Size Check)
+  # ============================================
+  build:
+    name: Build & Compile
+    if: inputs.run_build
+    uses: ./.github/workflows/contracts-build.yml
+    with:
+      runner: ${{ inputs.runner }}
+      node_version: ${{ inputs.node_version }}
+      package_manager: ${{ inputs.package_manager }}
+      run_size_check: ${{ inputs.run_size_check }}
+    secrets: inherit
+
+  # ============================================
+  # TEST (hardhat test + optional coverage + gas)
+  # ============================================
+  test:
+    name: Test & Coverage
+    if: inputs.run_test
+    needs: build
+    uses: ./.github/workflows/contracts-test.yml
+    with:
+      runner: ${{ inputs.runner }}
+      node_version: ${{ inputs.node_version }}
+      package_manager: ${{ inputs.package_manager }}
+      artifact_name: ${{ needs.build.outputs.artifact_name }}
+      run_coverage: ${{ inputs.run_coverage }}
+      coverage_threshold: ${{ inputs.coverage_threshold }}
+      run_gas_reporter: ${{ inputs.run_gas_reporter }}
+      upload_reports: ${{ inputs.upload_reports }}
+    secrets: inherit
+
+  # ============================================
+  # ARTIFACT - Build Docker & Push to ECR
+  # ============================================
+  artifact:
+    name: Build & Push ECR
+    if: |
+      inputs.run_artifact &&
+      always() &&
+      (needs.build.result == 'success' || needs.build.result == 'skipped') &&
+      (needs.test.result == 'success' || needs.test.result == 'skipped')
+    needs: [build, test]
+    uses: ./.github/workflows/shared-artifact-docker-ecr.yml
+    with:
+      runner: ${{ inputs.runner }}
+      image_tag: ${{ inputs.image_tag }}
+      docker_platform: ${{ inputs.docker_platform }}
+      dockerfile_path: ${{ inputs.dockerfile_path }}
+      environment: ${{ inputs.environment }}
+      push_latest: ${{ inputs.push_latest }}
+      build_from_source: false
+    secrets: inherit
+
+  # ============================================
+  # RELEASE - Create release PR
+  # ============================================
+  release:
+    name: Create Release
+    if: |
+      inputs.run_release &&
+      always() &&
+      needs.artifact.result == 'success'
+    needs: [artifact]
+    uses: ./.github/workflows/shared-release.yml
+    with:
+      base_branch: ${{ github.ref_name }}
+      target_branch: ${{ inputs.release_target_branch }}
+      strict_flow: ${{ inputs.release_strict_flow }}
+    secrets: inherit
+
+  # ============================================
+  # CLEANUP - Delete merged branch
+  # ============================================
+  cleanup:
+    name: Delete Branch
+    if: |
+      inputs.run_cleanup &&
+      always() &&
+      needs.artifact.result == 'success' &&
+      (needs.release.result == 'success' || needs.release.result == 'skipped')
+    needs: [artifact, release]
+    uses: ./.github/workflows/shared-delete-branch.yml
+    secrets: inherit
+
+  # ============================================
+  # TAG - Create git tag and GitHub Release
+  # ============================================
+  tag:
+    name: Tag Release
+    if: |
+      inputs.run_tag &&
+      always() &&
+      needs.artifact.result == 'success'
+    needs: [build, test, artifact, cleanup, release]
+    uses: ./.github/workflows/shared-tag-release.yml
+    secrets: inherit
+
+  # ============================================
+  # NOTIFY - Notifications (runs last, always)
+  # ============================================
+  notify:
+    name: Notify
+    if: |
+      inputs.run_notifications &&
+      always()
+    needs: [build, test, artifact, cleanup, release, tag]
+    uses: ./.github/workflows/shared-notifications.yml
+    with:
+      providers: ${{ inputs.notify_providers }}
+      status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.artifact.result == 'failure') && 'failure' || (needs.build.result == 'cancelled') && 'cancelled' || 'success' }}
+      environment: ${{ inputs.environment }}
+      version: ${{ needs.release.outputs.version }}
+      changelog: ${{ needs.release.outputs.changelog }}
+      mention_on_failure: ${{ inputs.notify_mention_on_failure }}
+    secrets: inherit
+
+  # ============================================
+  # CREATE ISSUE - On failure (runs last, always)
+  # ============================================
+  create-issue:
+    name: Create Issue
+    if: |
+      inputs.run_create_issue_on_failure &&
+      always()
+    needs: [build, test, artifact, cleanup, release, tag]
+    uses: ./.github/workflows/shared-create-issue-on-failure.yml
+    with:
+      status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.artifact.result == 'failure') && 'failure' || 'success' }}
+      environment: ${{ inputs.environment }}
+      version: ${{ needs.release.outputs.version }}
+      changelog: ${{ needs.release.outputs.changelog }}
+      labels: ${{ inputs.issue_labels }}
