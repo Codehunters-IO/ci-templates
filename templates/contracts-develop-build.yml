@@ -1,0 +1,27 @@
+# Template: Build + test on push to develop
+# Copy to: .github/workflows/develop-build.yml
+#
+# Triggers on push to develop branch.
+# Flow: build + test (no ECR push, no deploy).
+#
+# No AWS secrets required for this stage.
+
+name: Develop Build & Test
+
+on:
+  push:
+    branches:
+      - develop
+
+permissions:
+  contents: read
+
+jobs:
+  pipeline:
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    uses: SOLDIFE/ci-templates/.github/workflows/contracts-main-pipeline.yml@main
+    with:
+      run_build: true
+      run_test: true
+      run_coverage: false
+    secrets: inherit

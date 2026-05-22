@@ -1,14 +1,13 @@
-# Template: Publish image on merge to main (production)
-# Copy to: .github/workflows/main-publish.yml
+# Template: Build + test + deploy (ECR push) on push to main
+# Copy to: .github/workflows/main-deploy.yml
 #
-# Triggers on push to main branch (after release merge)
-# Flow: build → artifact (ECR, production environment) → tag
-# NOTE: No on-chain deploy from CI. Real-network deploys happen out-of-band via a separate
-#       gated workflow_dispatch job that this repo may add later.
+# Flow: build + test + artifact (ECR push, production environment) + tag.
+# ECR repository is auto-created by the pipeline if missing.
 #
-# Required secrets: Same as develop-publish.yml
+# Required secrets:
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, AWS_ECR_URL
 
-name: Publish to PRODUCTION
+name: Main Build, Test & Deploy
 
 on:
   push:
@@ -25,7 +24,7 @@ jobs:
     uses: SOLDIFE/ci-templates/.github/workflows/contracts-main-pipeline.yml@main
     with:
       run_build: true
-      run_test: false
+      run_test: true
       run_artifact: true
       push_latest: true
       environment: 'production'

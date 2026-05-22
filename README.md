@@ -194,11 +194,9 @@ feature/*              ──► compile + size check
      │
      ▼ (PR to develop)      commit-lint + compile + size + test + coverage + gas reporter
      │
-     ▼ (merge to develop)   compile + test + artifact (ECR) → cleanup → release PR
+     ▼ (merge to develop)   compile + test
      │
-     ▼ (release/*)          compile + test + artifact (ECR, STAGING)
-     │
-     ▼ (merge to main)      compile + artifact (ECR, PRODUCTION) + tag
+     ▼ (merge to main)      compile + test + artifact (ECR, PRODUCTION) + tag
 ```
 
 ### Contracts-specific inputs
