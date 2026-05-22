@@ -205,7 +205,7 @@ feature/*              ──► compile + size check
 
 | Input | Description | Default |
 |-------|-------------|---------|
-| `node_version` | Node.js version | `'20'` |
+| `node_version` | Node.js version | `'22'` |
 | `package_manager` | `npm` or `yarn` | `'yarn'` |
 | `run_size_check` | Run `hardhat-contract-sizer` (24KB EIP-170 limit) | `true` |
 | `run_coverage` | Run `solidity-coverage` | `false` |

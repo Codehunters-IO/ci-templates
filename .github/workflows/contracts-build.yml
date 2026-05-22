@@ -12,7 +12,7 @@ on:
         description: 'Node.js version'
         required: false
         type: string
-        default: '20'
+        default: '22'
       package_manager:
         description: 'Package manager (npm or yarn)'
         required: false
