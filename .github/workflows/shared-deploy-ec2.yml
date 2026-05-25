@@ -158,8 +158,8 @@ jobs:
           CONTAINER_ENV_VARS=$(echo "${CONTAINER_ENV_VARS_B64}" | base64 -d)
           EXTRA_VOLUMES=$(echo "${EXTRA_VOLUMES_B64}" | base64 -d)
 
-          # Create compose file named after the repository
-          COMPOSE_FILE_NAME="${REPO_NAME}.yml"
+          # Create docker-compose.yml (standard name)
+          COMPOSE_FILE_NAME="docker-compose.yml"
           echo "Creating ${COMPOSE_FILE_NAME}..."
           {
             echo "services:"
