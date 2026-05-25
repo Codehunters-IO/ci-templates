@@ -211,13 +211,17 @@ jobs:
             echo "    external: true"
           } > "${COMPOSE_FILE_NAME}"
 
-          # Create start.sh (overwrite to keep compose filename in sync with repo)
+          # Create start.sh (rm + recreate so ownership matches current user;
+          # avoids "chmod: Operation not permitted" on hosts where the file was
+          # left behind by a different deploy user.)
           echo "Creating start.sh..."
+          sudo rm -f start.sh
           printf "#!/usr/bin/env bash\nset -euo pipefail\nCOMPOSE_FILE=\"\${COMPOSE_FILE:-%s}\"\nPROJECT_NAME=\"\${PROJECT_NAME:-%s}\"\necho \"==> Starting stack (project: \${PROJECT_NAME})\"\ndocker compose -p \"\${PROJECT_NAME}\" -f \"\${COMPOSE_FILE}\" up -d\necho \"==> Current status:\"\ndocker compose -p \"\${PROJECT_NAME}\" -f \"\${COMPOSE_FILE}\" ps\necho \"==> App logs (last 50 lines):\"\ndocker compose -p \"\${PROJECT_NAME}\" -f \"\${COMPOSE_FILE}\" logs --tail=50\n" "${COMPOSE_FILE_NAME}" "${REPO_NAME}" > start.sh
           chmod +x start.sh
 
-          # Create stop.sh (overwrite to keep compose filename in sync with repo)
+          # Create stop.sh (rm + recreate; see start.sh note above)
           echo "Creating stop.sh..."
+          sudo rm -f stop.sh
           printf "#!/usr/bin/env bash\nset -uo pipefail\nCOMPOSE_FILE=\"\${COMPOSE_FILE:-%s}\"\nPROJECT_NAME=\"\${PROJECT_NAME:-%s}\"\necho \"==> Stopping stack (project: \${PROJECT_NAME})\"\ndocker compose -p \"\${PROJECT_NAME}\" -f \"\${COMPOSE_FILE}\" down --timeout 30 || true\necho \"==> Done.\"\n" "${COMPOSE_FILE_NAME}" "${REPO_NAME}" > stop.sh
           chmod +x stop.sh
 
