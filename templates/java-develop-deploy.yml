@@ -45,15 +45,15 @@ permissions:
 jobs:
   pipeline:
     if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
-    uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@main
+    uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@v1
     with:
       run_build: true
-      run_test: true
-      run_coverage: true
-      run_code_analysis: true
-      code_analysis_tool: 'sonar'
-      run_owasp: true
-      run_architecture: true
+      # Validation already done upstream (feature branch + PR gate) — develop only builds + deploys.
+      run_test: false
+      run_coverage: false
+      run_code_analysis: false
+      run_owasp: false
+      run_architecture: false
       run_artifact: true
       artifact_registry: 'ecr'
       run_deploy: true

@@ -369,7 +369,8 @@ jobs:
   # ============================================
   dependency-review:
     name: Dependency Review
-    if: inputs.run_dependency_review
+    # dependency-review-action only works on pull_request events; auto-skip on push.
+    if: inputs.run_dependency_review && github.event_name == 'pull_request'
     uses: ./.github/workflows/security-dependency-review.yml
     with:
       runner: ${{ inputs.runner }}

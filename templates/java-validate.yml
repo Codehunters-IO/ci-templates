@@ -1,0 +1,49 @@
+# Template: Validation for feature/bugfix/hotfix pushes AND PRs to develop
+# Copy to: .github/workflows/validate.yml
+#
+# Triggers:
+#   - push to feature/*, bugfix/*, hotfix/*  -> fast feedback on the branch head
+#   - pull_request -> develop                -> merge-ref gate (required status check)
+#
+# Runs full validation, NO deploy: build + test + coverage + security.
+# Uses java-pr-pipeline.yml (forces run_artifact/deploy/cleanup/release = false).
+# dependency_review only executes on pull_request (guarded inside the pipeline).
+#
+# Job id "validate" -> required status check context "validate / PR Quality Gates"
+# (must match the org ruleset on develop).
+#
+# Required secrets:
+#   SonarQube (run_code_analysis: true): SONAR_URL, SONAR_TOKEN
+#   OWASP (run_owasp: true): NVD_API_KEY
+
+name: Validation
+
+on:
+  push:
+    branches:
+      - 'feature/**'
+      - 'bugfix/**'
+      - 'hotfix/**'
+  pull_request:
+    branches:
+      - develop
+
+jobs:
+  validate:
+    uses: <org>/ci-templates/.github/workflows/java-pr-pipeline.yml@v1
+    with:
+      run_commit_lint: true
+      run_test: true
+      run_coverage: true
+      # Coverage gate — ADJUST PER REPO to current baseline, then ratchet up.
+      coverage_instruction_threshold: 60
+      coverage_branch_threshold: 50
+      run_code_analysis: true
+      code_analysis_tool: 'sonar'
+      run_owasp: true
+      owasp_fail_on_cvss: 7
+      run_architecture: true
+      run_trufflehog: true
+      run_dependency_review: true   # auto-skips on push (pull_request-only, guarded in pipeline)
+      dependency_review_severity: 'high'
+    secrets: inherit
