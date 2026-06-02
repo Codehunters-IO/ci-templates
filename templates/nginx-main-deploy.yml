@@ -1,0 +1,36 @@
+# Template: Deploy on merge to main (production)
+# Copy to: .github/workflows/main-deploy.yml
+#
+# Triggers on push to main branch (after release merge)
+# Runs: build + artifact + deploy (PRODUCTION)
+#
+# Required secrets: same as nginx-develop-deploy.yml
+# Note: smoke test should have passed on release branch, only build and deploy here
+
+name: Deploy to PRODUCTION
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  deploy:
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    uses: <org>/ci-templates/.github/workflows/nginx-main-pipeline.yml@main
+    with:
+      run_build: true
+      run_test: false
+      run_artifact: true
+      run_deploy: true
+      deploy_target: 'ec2-vpn'
+      environment: 'production'
+      internal_port: '8080'
+      run_tag: true
+      run_notifications: true
+      notify_mention_on_failure: '@channel'
+    secrets: inherit

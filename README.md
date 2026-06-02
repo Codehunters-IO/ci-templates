@@ -8,6 +8,7 @@ Reusable GitHub Actions workflows for Java, Krakend, React and Solidity/Hardhat 
 |-------|-----------|-----------|
 | Java (Spring Boot) | `java-main-pipeline.yml` · `java-pr-pipeline.yml` | `templates/java-*.yml` |
 | Krakend | `krakend-main-pipeline.yml` | `templates/krakend-*.yml` |
+| NGINX (ingress) | `nginx-main-pipeline.yml` | `templates/nginx-*.yml` |
 | React | `react-main-pipeline.yml` | `templates/react-*.yml` |
 | Contracts (Hardhat/Solidity) | `contracts-main-pipeline.yml` | `templates/contracts-*.yml` |
 

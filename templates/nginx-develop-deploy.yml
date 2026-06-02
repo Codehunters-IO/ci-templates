@@ -1,0 +1,58 @@
+# Template: Deploy on merge to develop
+# Copy to: .github/workflows/develop-deploy.yml
+#
+# Triggers on push to develop branch (after PR merge)
+# Flow: build → test → artifact (ECR) → deploy (EC2) → delete branch → create release PR
+#
+# Required secrets:
+#   AWS:
+#   - AWS_ACCESS_KEY_ID
+#   - AWS_SECRET_ACCESS_KEY
+#   - AWS_REGION
+#
+#   ECR:
+#   - AWS_ECR_URL
+#
+#   EC2:
+#   - AWS_EC2_HOST
+#   - AWS_EC2_USER
+#   - AWS_EC2_SSH_KEY
+#   - AWS_APP_PORT (external port mapped to nginx 8080)
+
+name: Deploy to Develop
+
+on:
+  push:
+    branches:
+      - develop
+
+permissions:
+  contents: write
+  id-token: write
+  checks: write
+  pull-requests: write
+
+jobs:
+  pipeline:
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    uses: <org>/ci-templates/.github/workflows/nginx-main-pipeline.yml@main
+    with:
+      run_build: true
+      run_test: true
+      run_artifact: true
+      run_deploy: true
+      run_cleanup: true
+      run_release: true
+      deploy_target: 'ec2-vpn'
+      environment: 'develop'
+      release_target_branch: 'main'
+      internal_port: '8080'
+      # WS / HTTP upstream wiring — override via container_env_vars:
+      # container_env_vars: |
+      #   WS_UPSTREAM_HOST=ws-svc
+      #   WS_UPSTREAM_PORT=8090
+      #   HTTP_UPSTREAM_HOST=krakend
+      #   HTTP_UPSTREAM_PORT=8080
+      # extra_volumes: default mounts ./certs:/etc/nginx/certs:ro on the host.
+      # Place certs at /opt/docker/<repo>/certs/ on the EC2 host before deploy.
+    secrets: inherit

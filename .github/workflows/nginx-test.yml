@@ -1,0 +1,82 @@
+name: NGINX - Test (Smoke)
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      dockerfile_path:
+        description: 'Path to Dockerfile (build context)'
+        required: false
+        type: string
+        default: '.'
+      health_path:
+        description: 'Health endpoint path'
+        required: false
+        type: string
+        default: '/__health'
+
+    outputs:
+      result:
+        description: 'Test result (success/failure)'
+        value: ${{ jobs.test.outputs.result }}
+
+jobs:
+  test:
+    name: Smoke Test
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 10
+
+    outputs:
+      result: ${{ steps.smoke.outputs.result }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Build Docker image
+        run: docker build -t nginx-app:ci ${{ inputs.dockerfile_path }}
+
+      - name: Start container
+        run: |
+          docker run -d --name nginx-ci \
+            -p 18080:8080 \
+            -e NGINX_PORT=8080 \
+            -e SERVER_NAME=_ \
+            -e WS_UPSTREAM_HOST=127.0.0.1 \
+            -e WS_UPSTREAM_PORT=8080 \
+            -e HTTP_UPSTREAM_HOST=127.0.0.1 \
+            -e HTTP_UPSTREAM_PORT=8080 \
+            -e CLIENT_MAX_BODY_SIZE=10m \
+            -e PROXY_READ_TIMEOUT=3600s \
+            nginx-app:ci
+
+      - name: Wait for health endpoint
+        id: smoke
+        run: |
+          set -uo pipefail
+          for i in $(seq 1 30); do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:18080${{ inputs.health_path }}" || true)
+            if [ "$CODE" = "200" ]; then
+              echo "Health OK on attempt $i"
+              echo "result=success" >> $GITHUB_OUTPUT
+              echo "### NGINX Smoke Test" >> $GITHUB_STEP_SUMMARY
+              echo "**Status:** Passed (200 on ${{ inputs.health_path }})" >> $GITHUB_STEP_SUMMARY
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "::error::Health endpoint did not return 200 within 30s"
+          docker logs nginx-ci || true
+          echo "result=failure" >> $GITHUB_OUTPUT
+          exit 1
+
+      - name: Stop container
+        if: always()
+        run: |
+          docker logs nginx-ci || true
+          docker rm -f nginx-ci || true

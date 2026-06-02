@@ -1,0 +1,55 @@
+name: NGINX - Build & Validate
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      dockerfile_path:
+        description: 'Path to Dockerfile (build context)'
+        required: false
+        type: string
+        default: '.'
+
+jobs:
+  build:
+    name: Build & Validate
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Build Docker image
+        run: |
+          docker build -t nginx-app:ci ${{ inputs.dockerfile_path }}
+
+          echo "### NGINX Build" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** Image built" >> $GITHUB_STEP_SUMMARY
+
+      - name: Validate nginx config (envsubst + nginx -t)
+        run: |
+          set -euo pipefail
+
+          # Render templates through the official entrypoint, then run nginx -t.
+          # Defaults match the Dockerfile so the test mirrors production rendering.
+          # 127.0.0.1 is always resolvable at validation time. Real upstream
+          # hostnames are wired in via container_env_vars at deploy time.
+          docker run --rm \
+            -e NGINX_PORT=8080 \
+            -e SERVER_NAME=_ \
+            -e WS_UPSTREAM_HOST=127.0.0.1 \
+            -e WS_UPSTREAM_PORT=8080 \
+            -e HTTP_UPSTREAM_HOST=127.0.0.1 \
+            -e HTTP_UPSTREAM_PORT=8080 \
+            -e CLIENT_MAX_BODY_SIZE=10m \
+            -e PROXY_READ_TIMEOUT=3600s \
+            --entrypoint /bin/sh \
+            nginx-app:ci \
+            -c '/docker-entrypoint.sh nginx -t'
+
+          echo "**Config validation:** Passed (nginx -t)" >> $GITHUB_STEP_SUMMARY

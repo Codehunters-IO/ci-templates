@@ -1,0 +1,466 @@
+name: NGINX - Main Pipeline
+
+on:
+  workflow_call:
+    inputs:
+      # Runner configuration
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+
+      # NGINX configuration
+      dockerfile_path:
+        description: 'Path to Dockerfile'
+        required: false
+        type: string
+        default: '.'
+
+      # Pipeline steps control
+      run_commit_lint:
+        description: 'Run commit message validation'
+        required: false
+        type: boolean
+        default: false
+      run_trufflehog:
+        description: 'Run TruffleHog secret scanning'
+        required: false
+        type: boolean
+        default: false
+      trufflehog_only_verified:
+        description: 'Only report verified secrets'
+        required: false
+        type: boolean
+        default: true
+      trufflehog_fail_on_findings:
+        description: 'Fail the workflow if secrets are found'
+        required: false
+        type: boolean
+        default: true
+      run_dependency_review:
+        description: 'Run dependency review (PR only)'
+        required: false
+        type: boolean
+        default: false
+      dependency_review_severity:
+        description: 'Minimum severity to fail: low, moderate, high, critical'
+        required: false
+        type: string
+        default: 'high'
+      run_build:
+        description: 'Run build job (image build + nginx -t)'
+        required: false
+        type: boolean
+        default: true
+      run_test:
+        description: 'Run test job (smoke /__health)'
+        required: false
+        type: boolean
+        default: false
+      run_artifact:
+        description: 'Build and push Docker image to ECR'
+        required: false
+        type: boolean
+        default: false
+      run_deploy:
+        description: 'Deploy after artifact build'
+        required: false
+        type: boolean
+        default: false
+      deploy_target:
+        description: 'Deploy target: ec2, ec2-vpn, or eks'
+        required: false
+        type: string
+        default: 'ec2'
+      run_create_issue_on_failure:
+        description: 'Create GitHub issue on pipeline failure'
+        required: false
+        type: boolean
+        default: false
+      issue_labels:
+        description: 'Labels for the failure issue (comma-separated)'
+        required: false
+        type: string
+        default: 'bug,pipeline-failure'
+      run_notifications:
+        description: 'Send notifications after pipeline completes'
+        required: false
+        type: boolean
+        default: false
+      notify_providers:
+        description: 'Notification providers (comma-separated: slack, teams)'
+        required: false
+        type: string
+        default: 'slack'
+      notify_mention_on_failure:
+        description: 'Mention on failure (Slack: @channel, Teams: @General)'
+        required: false
+        type: string
+        default: ''
+      run_cleanup:
+        description: 'Delete merged branch after deploy'
+        required: false
+        type: boolean
+        default: false
+      run_release:
+        description: 'Create release PR after deploy'
+        required: false
+        type: boolean
+        default: false
+
+      # Test options
+      health_path:
+        description: 'Health endpoint path (smoke test)'
+        required: false
+        type: string
+        default: '/__health'
+
+      # Artifact & Deploy options
+      image_tag:
+        description: 'Docker image tag (empty = commit SHA)'
+        required: false
+        type: string
+        default: ''
+      docker_platform:
+        description: 'Docker platform (linux/amd64, linux/arm64)'
+        required: false
+        type: string
+        default: 'linux/arm64'
+
+      # Deploy options
+      environment:
+        description: 'GitHub environment (develop, prod)'
+        required: false
+        type: string
+        default: 'develop'
+      memory_limit:
+        description: 'Container memory limit (e.g., 512m/512Mi)'
+        required: false
+        type: string
+        default: '256m'
+      memory_reservation:
+        description: 'Container memory reservation (e.g., 256m/256Mi)'
+        required: false
+        type: string
+        default: '128m'
+      internal_port:
+        description: 'Container internal port exposed by nginx'
+        required: false
+        type: string
+        default: '8080'
+      container_env_vars:
+        description: 'Additional environment variables block for docker-compose (one per line: KEY=VALUE)'
+        required: false
+        type: string
+        default: ''
+      extra_volumes:
+        description: 'Additional docker-compose volume mounts (one per line, including the leading "- ")'
+        required: false
+        type: string
+        default: |
+          - ./certs:/etc/nginx/certs:ro
+
+      # EKS-specific options
+      eks_cluster_name:
+        description: 'EKS cluster name (required when deploy_target: eks)'
+        required: false
+        type: string
+        default: ''
+      eks_namespace:
+        description: 'Kubernetes namespace'
+        required: false
+        type: string
+        default: 'default'
+      eks_use_helm:
+        description: 'Use Helm for EKS deployment'
+        required: false
+        type: boolean
+        default: false
+      eks_helm_chart_path:
+        description: 'Path to Helm chart'
+        required: false
+        type: string
+        default: './helm'
+      eks_replicas:
+        description: 'Number of EKS replicas'
+        required: false
+        type: number
+        default: 1
+
+      # Release options
+      release_target_branch:
+        description: 'Target branch for release PR'
+        required: false
+        type: string
+        default: 'main'
+      release_strict_flow:
+        description: 'Enforce GitFlow on release PR (base must be develop, target must be main)'
+        required: false
+        type: boolean
+        default: true
+      run_tag:
+        description: 'Create git tag and GitHub Release after deploy'
+        required: false
+        type: boolean
+        default: false
+
+    outputs:
+      image_tag:
+        description: 'Docker image tag pushed'
+        value: ${{ jobs.artifact.outputs.image_tag }}
+      image_uri:
+        description: 'Full Docker image URI'
+        value: ${{ jobs.artifact.outputs.image_uri }}
+      deploy_status:
+        description: 'Deployment status'
+        value: ${{ jobs.deploy-ec2.outputs.deploy_status || jobs.deploy-ec2-vpn.outputs.deploy_status || jobs.deploy-eks.outputs.deploy_status }}
+      deleted_branch:
+        description: 'Name of deleted branch'
+        value: ${{ jobs.cleanup.outputs.deleted_branch }}
+      release_version:
+        description: 'Release version created'
+        value: ${{ jobs.release.outputs.version }}
+      release_pr_url:
+        description: 'Release PR URL'
+        value: ${{ jobs.release.outputs.pr_url }}
+      release_changelog:
+        description: 'Release changelog'
+        value: ${{ jobs.release.outputs.changelog }}
+
+jobs:
+  # ============================================
+  # COMMIT LINT (parallel, no deps)
+  # ============================================
+  commit-lint:
+    name: Commit Lint
+    if: inputs.run_commit_lint
+    uses: ./.github/workflows/shared-commit-lint.yml
+    with:
+      runner: ${{ inputs.runner }}
+
+  # ============================================
+  # SECURITY - TruffleHog (parallel, no deps)
+  # ============================================
+  security:
+    name: Security Scan
+    if: inputs.run_trufflehog
+    uses: ./.github/workflows/security-trufflehog.yml
+    with:
+      runner: ${{ inputs.runner }}
+      only_verified: ${{ inputs.trufflehog_only_verified }}
+      fail_on_findings: ${{ inputs.trufflehog_fail_on_findings }}
+    secrets: inherit
+
+  # ============================================
+  # SECURITY - Dependency Review (parallel, no deps)
+  # ============================================
+  dependency-review:
+    name: Dependency Review
+    if: inputs.run_dependency_review
+    uses: ./.github/workflows/security-dependency-review.yml
+    with:
+      runner: ${{ inputs.runner }}
+      fail_on_severity: ${{ inputs.dependency_review_severity }}
+    secrets: inherit
+
+  # ============================================
+  # BUILD (Image build + nginx -t)
+  # ============================================
+  build:
+    name: Build
+    if: inputs.run_build
+    uses: ./.github/workflows/nginx-build.yml
+    with:
+      runner: ${{ inputs.runner }}
+      dockerfile_path: ${{ inputs.dockerfile_path }}
+    secrets: inherit
+
+  # ============================================
+  # TEST (Smoke /__health)
+  # ============================================
+  test:
+    name: Test (Smoke)
+    if: inputs.run_test
+    needs: build
+    uses: ./.github/workflows/nginx-test.yml
+    with:
+      runner: ${{ inputs.runner }}
+      dockerfile_path: ${{ inputs.dockerfile_path }}
+      health_path: ${{ inputs.health_path }}
+    secrets: inherit
+
+  # ============================================
+  # ARTIFACT - Build Docker & Push to ECR
+  # ============================================
+  artifact:
+    name: Build & Push ECR
+    if: |
+      inputs.run_artifact &&
+      always() &&
+      needs.build.result == 'success' &&
+      (needs.test.result == 'success' || needs.test.result == 'skipped')
+    needs: [build, test]
+    uses: ./.github/workflows/shared-artifact-docker-ecr.yml
+    with:
+      runner: ${{ inputs.runner }}
+      image_tag: ${{ inputs.image_tag }}
+      docker_platform: ${{ inputs.docker_platform }}
+      dockerfile_path: ${{ inputs.dockerfile_path }}
+      environment: ${{ inputs.environment }}
+      build_from_source: false
+    secrets: inherit
+
+  # ============================================
+  # DEPLOY - EC2
+  # ============================================
+  deploy-ec2:
+    name: Deploy EC2
+    if: |
+      inputs.run_deploy &&
+      inputs.deploy_target == 'ec2' &&
+      always() &&
+      needs.artifact.result == 'success'
+    needs: [artifact]
+    uses: ./.github/workflows/shared-deploy-ec2.yml
+    with:
+      runner: ${{ inputs.runner }}
+      image_tag: ${{ needs.artifact.outputs.image_tag }}
+      docker_platform: ${{ inputs.docker_platform }}
+      environment: ${{ inputs.environment }}
+      memory_limit: ${{ inputs.memory_limit }}
+      memory_reservation: ${{ inputs.memory_reservation }}
+      internal_port: ${{ inputs.internal_port }}
+      container_env_vars: ${{ inputs.container_env_vars }}
+      extra_volumes: ${{ inputs.extra_volumes }}
+    secrets: inherit
+
+  # ============================================
+  # DEPLOY - EC2 via WireGuard VPN
+  # ============================================
+  deploy-ec2-vpn:
+    name: Deploy EC2 (VPN)
+    if: |
+      inputs.run_deploy &&
+      inputs.deploy_target == 'ec2-vpn' &&
+      always() &&
+      needs.artifact.result == 'success'
+    needs: [artifact]
+    uses: ./.github/workflows/shared-deploy-ec2-vpn.yml
+    with:
+      runner: ${{ inputs.runner }}
+      image_tag: ${{ needs.artifact.outputs.image_tag }}
+      docker_platform: ${{ inputs.docker_platform }}
+      environment: ${{ inputs.environment }}
+      memory_limit: ${{ inputs.memory_limit }}
+      memory_reservation: ${{ inputs.memory_reservation }}
+      internal_port: ${{ inputs.internal_port }}
+      container_env_vars: ${{ inputs.container_env_vars }}
+      extra_volumes: ${{ inputs.extra_volumes }}
+    secrets: inherit
+
+  # ============================================
+  # DEPLOY - EKS
+  # ============================================
+  deploy-eks:
+    name: Deploy EKS
+    if: |
+      inputs.run_deploy &&
+      inputs.deploy_target == 'eks' &&
+      always() &&
+      needs.artifact.result == 'success'
+    needs: [artifact]
+    uses: ./.github/workflows/shared-deploy-eks.yml
+    with:
+      runner: ${{ inputs.runner }}
+      image_tag: ${{ needs.artifact.outputs.image_tag }}
+      environment: ${{ inputs.environment }}
+      cluster_name: ${{ inputs.eks_cluster_name }}
+      namespace: ${{ inputs.eks_namespace }}
+      replicas: ${{ inputs.eks_replicas }}
+      use_helm: ${{ inputs.eks_use_helm }}
+      helm_chart_path: ${{ inputs.eks_helm_chart_path }}
+      memory_limit: ${{ inputs.memory_limit }}
+      memory_request: ${{ inputs.memory_reservation }}
+      health_check_path: ${{ inputs.health_path }}
+    secrets: inherit
+
+  # ============================================
+  # RELEASE - Create release PR
+  # ============================================
+  release:
+    name: Create Release
+    if: |
+      inputs.run_release &&
+      always() &&
+      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success')
+    needs: [deploy-ec2, deploy-ec2-vpn, deploy-eks]
+    uses: ./.github/workflows/shared-release.yml
+    with:
+      base_branch: ${{ github.ref_name }}
+      target_branch: ${{ inputs.release_target_branch }}
+      strict_flow: ${{ inputs.release_strict_flow }}
+    secrets: inherit
+
+  # ============================================
+  # CLEANUP - Delete merged branch (after release PR created)
+  # ============================================
+  cleanup:
+    name: Delete Branch
+    if: |
+      inputs.run_cleanup &&
+      always() &&
+      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success') &&
+      (needs.release.result == 'success' || needs.release.result == 'skipped')
+    needs: [deploy-ec2, deploy-ec2-vpn, deploy-eks, release]
+    uses: ./.github/workflows/shared-delete-branch.yml
+    secrets: inherit
+
+  # ============================================
+  # TAG - Create git tag and GitHub Release
+  # ============================================
+  tag:
+    name: Tag Release
+    if: |
+      inputs.run_tag &&
+      always() &&
+      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success')
+    needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release]
+    uses: ./.github/workflows/shared-tag-release.yml
+    secrets: inherit
+
+  # ============================================
+  # NOTIFY - Notifications (runs last, always)
+  # ============================================
+  notify:
+    name: Notify
+    if: |
+      inputs.run_notifications &&
+      always()
+    needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release, tag]
+    uses: ./.github/workflows/shared-notifications.yml
+    with:
+      providers: ${{ inputs.notify_providers }}
+      status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.artifact.result == 'failure' || needs.deploy-ec2.result == 'failure' || needs.deploy-ec2-vpn.result == 'failure' || needs.deploy-eks.result == 'failure') && 'failure' || (needs.build.result == 'cancelled') && 'cancelled' || 'success' }}
+      environment: ${{ inputs.environment }}
+      version: ${{ needs.release.outputs.version }}
+      changelog: ${{ needs.release.outputs.changelog }}
+      mention_on_failure: ${{ inputs.notify_mention_on_failure }}
+    secrets: inherit
+
+  # ============================================
+  # CREATE ISSUE - On failure (runs last, always)
+  # ============================================
+  create-issue:
+    name: Create Issue
+    if: |
+      inputs.run_create_issue_on_failure &&
+      always()
+    needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release, tag]
+    uses: ./.github/workflows/shared-create-issue-on-failure.yml
+    with:
+      status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.artifact.result == 'failure' || needs.deploy-ec2.result == 'failure' || needs.deploy-ec2-vpn.result == 'failure' || needs.deploy-eks.result == 'failure') && 'failure' || 'success' }}
+      environment: ${{ inputs.environment }}
+      version: ${{ needs.release.outputs.version }}
+      changelog: ${{ needs.release.outputs.changelog }}
+      labels: ${{ inputs.issue_labels }}
