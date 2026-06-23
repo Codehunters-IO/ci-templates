@@ -1,13 +1,15 @@
-# Template: Deploy on merge to main (production)
+# Template: Deploy on merge to main (CERT environment)
 # Copy to: .github/workflows/main-deploy.yml
 #
 # Triggers on push to main branch (after release merge)
-# Runs: build + artifact + deploy (PRODUCTION environment)
-# Tests should have passed in release branch, only build and deploy here
+# Runs: build + artifact + deploy (CERT environment)
+#
+# Production is NOT deployed here. Promotion to prod is a MANUAL git tag (vX.Y.Z)
+# handled by tag-deploy.yml — do NOT enable run_tag here (tags must be created by a human).
 #
 # Required secrets: Same as develop-deploy.yml (including SLACK_WEBHOOK_URL for notify_on_failure / notify_on_deploy)
 
-name: Deploy to Production
+name: Deploy to Cert
 
 on:
   push:
@@ -15,7 +17,7 @@ on:
       - main
 
 permissions:
-  contents: write   # required by run_tag to push vX.Y.Z tag and create GitHub Release
+  contents: read
   id-token: write
 
 jobs:
@@ -29,9 +31,9 @@ jobs:
       artifact_registry: 'ecr'
       run_deploy: true
       deploy_target: 'ec2-vpn'
-      environment: 'prod'
-      spring_profiles: 'production'
-      run_tag: true
+      environment: 'cert'
+      # spring_profiles: additional profiles only (concatenated with the environment 'cert'). None needed here.
+      # run_tag intentionally omitted: prod promotion is a manual tag (see tag-deploy.yml)
       notify_on_failure: true
       notify_failure_mention: '@channel'
       notify_on_deploy: true

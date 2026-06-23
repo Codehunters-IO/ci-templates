@@ -21,13 +21,26 @@ feature/* ──► build
      │                       └── uses java-pr-pipeline.yml (quality gates only)
      │
      ▼ (merge to develop)   build → test → coverage → sonar → owasp → architecture
-     │                              → artifact (ECR) → deploy (DEV) → cleanup → release PR
+     │                              → artifact (ECR) → deploy (DEV) → cleanup
+     │                              → auto-create branch release/vX.Y.Z (semver) → PR to main
      │                       └── uses java-main-pipeline.yml
      │
-     ▼ (release/*)          build → test → artifact (ECR) → deploy (STAGING)
+     ▼ (release/vX.Y.Z)     PR to main only — NO deploy (stabilization branch)
      │
-     ▼ (merge to main)      build → artifact (ECR) → deploy (PRODUCTION)
+     ▼ (merge to main)      build → artifact (ECR) → deploy (CERT)
+     │
+     ▼ (manual tag vX.Y.Z)  build → artifact (ECR, tag=vX.Y.Z) → deploy (PROD, requires Environment approval)
 ```
+
+> **Environments map to branches/tags, not the other way around.** `develop` → `develop`,
+> `main` → `cert`, semver tag `vX.Y.Z` → `prod`. Production is reached only by a **manual tag**
+> created by a human (`git tag v1.4.0 && git push origin v1.4.0`); the `prod` GitHub Environment
+> should have *required reviewers* so the deployment also waits for manual approval.
+>
+> **Release flow:** every merge to `develop` automatically cuts a `release/vX.Y.Z` branch (semver
+> computed from commit messages) and opens a PR to `main`. The release branch is a stabilization
+> branch only — it does **not** deploy. Merging its PR to `main` deploys to `cert`; promotion to
+> `prod` is the subsequent manual tag.
 
 ## Quick Start
 
@@ -35,9 +48,9 @@ feature/* ──► build
    ```bash
    cp templates/java-feature-build.yml   .github/workflows/
    cp templates/java-pr-develop.yml      .github/workflows/
-   cp templates/java-develop-deploy.yml  .github/workflows/
-   cp templates/java-release-deploy.yml  .github/workflows/
-   cp templates/java-main-deploy.yml     .github/workflows/
+   cp templates/java-develop-deploy.yml  .github/workflows/   # develop → develop (+ auto release branch/PR)
+   cp templates/java-main-deploy.yml     .github/workflows/   # main → cert
+   cp templates/java-tag-deploy.yml      .github/workflows/   # tag vX.Y.Z → prod (manual)
    ```
 
 2. Replace `<org>` with your GitHub organization in each template:
@@ -163,6 +176,7 @@ with:
 |--------|---------|
 | `NVD_API_KEY` | OWASP Dependency Check (`run_owasp: true`) |
 | `QODANA_TOKEN` | Qodana (`code_analysis: 'qodana'`) |
+| `RELEASE_PAT` | Release flow (`run_release: true`) — PAT/GitHub App token so the `release/*` branch + PR trigger the required `validate / PR Quality Gates` check on `main`. Without it the release PR is still created via `GITHUB_TOKEN` but its checks won't auto-run. Recommended: org-level secret. |
 
 ## Directory Structure
 
@@ -204,7 +218,7 @@ feature/*              ──► compile + size check
 
 | Input | Description | Default |
 |-------|-------------|---------|
-| `node_version` | Node.js version | `'22'` |
+| `node_version` | Node.js version | `'24'` |
 | `package_manager` | `npm`, `yarn`, or `pnpm` | `'pnpm'` |
 | `pnpm_version` | pnpm version (when `package_manager: pnpm`) | `'10'` |
 | `run_size_check` | Run `hardhat-contract-sizer` (24KB EIP-170 limit) | `true` |
@@ -225,6 +239,30 @@ The AWS IAM principal must have `ecr:DescribeRepositories` and `ecr:CreateReposi
 - **On-chain deploy** (Sepolia / Polygon / mainnet) is NOT executed from CI. Real-network deploys must run out-of-band via a separate, gated, `workflow_dispatch` job with GitHub Environment approvals and isolated secrets.
 - **EC2 / EKS deployment** of the dev-node container is NOT performed by this pipeline; image is published to ECR only.
 - **ABI / TypeChain publishing** to downstream consumers is not yet wired (reserved for a future input).
+
+## Environments
+
+Each consuming repo must declare these GitHub Environments (**Settings → Environments**):
+
+| Environment | Reached by | Protection |
+|-------------|-----------|------------|
+| `develop` | push to `develop` | none |
+| `cert` | push to `main` | optional |
+| `prod` | manual semver tag `vX.Y.Z` | **required reviewers** (manual approval gate) |
+
+> `release/vX.Y.Z` branches do not map to an environment — they only carry the PR to `main`.
+
+- The deploy jobs bind `environment: <name>` at job level, so GitHub Environment protection rules
+  (required reviewers, wait timers, branch/tag restrictions) apply automatically — no workflow code change.
+- **Production promotion is manual**: a human creates and pushes a `vX.Y.Z` tag. A tag pushed by
+  `GITHUB_TOKEN` does NOT trigger workflows, so auto-tagging cannot reach prod by accident.
+  Do **not** enable `run_tag` on the `main` pipeline.
+- Restrict the `prod` Environment to tags matching `v*.*.*`, and add a tag protection ruleset so only
+  authorized users can create release tags.
+- `release/vX.Y.Z` branches are stabilization branches only — they do **not** deploy. They are
+  auto-created on every merge to `develop` (semver from commits) and open a PR to `main`.
+- `spring_profiles` is for **additional** Spring profiles only; the pipeline concatenates them with the
+  environment as `SPRING_PROFILES_ACTIVE=<spring_profiles>,<environment>`. Do not set it equal to the env.
 
 ## Requirements on the EC2 host
 

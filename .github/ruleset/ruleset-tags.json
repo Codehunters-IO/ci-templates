@@ -1,0 +1,25 @@
+{
+  "name": "Java • Protect release tags (vX.Y.Z immutable, restricted creation)",
+  "target": "tag",
+  "enforcement": "evaluate",
+  "conditions": {
+    "ref_name": {
+      "include": ["refs/tags/v[0-9]*.[0-9]*.[0-9]*"],
+      "exclude": []
+    },
+    "repository_name": {
+      "include": ["vitxo-ms-*", "vitxo-sdk-*"],
+      "exclude": ["vitxo-ms-managment"],
+      "protected": false
+    }
+  },
+  "rules": [
+    { "type": "creation" },
+    { "type": "deletion" },
+    { "type": "non_fast_forward" },
+    { "type": "update" }
+  ],
+  "bypass_actors": [
+    { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" }
+  ]
+}

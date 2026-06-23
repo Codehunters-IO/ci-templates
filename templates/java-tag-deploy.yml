@@ -1,0 +1,53 @@
+# Template: Deploy to PRODUCTION on a manual semver tag
+# Copy to: .github/workflows/tag-deploy.yml
+#
+# Triggers ONLY on a manually pushed semver tag (vMAJOR.MINOR.PATCH) on main.
+# Promotion to production is a deliberate human action: create and push the tag.
+#   git tag v1.4.0 && git push origin v1.4.0
+#
+# Flow: build -> artifact (ECR, tagged with the git tag) -> deploy (PROD)
+# The Docker image is tagged with the git tag (github.ref_name) instead of the commit SHA.
+#
+# GATE: configure a GitHub Environment named 'prod' with REQUIRED REVIEWERS
+# (Settings -> Environments -> prod). The deploy job binds `environment: prod`,
+# so the deployment pauses for manual approval before it runs. Double gate:
+# a human creates the tag, a human approves the deployment.
+#
+# NOTE: a tag pushed by GITHUB_TOKEN does NOT trigger this workflow (GitHub prevents
+# recursive triggers). The tag must be pushed by a person or a PAT — which is exactly
+# the intended manual promotion.
+#
+# Required secrets: Same as develop-deploy.yml (including SLACK_WEBHOOK_URL for notify_on_failure / notify_on_deploy)
+
+name: Deploy to Production
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  pipeline:
+    uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@main
+    with:
+      run_build: true
+      run_test: false
+      run_artifact: true
+      artifact_registry: 'ecr'
+      image_tag: ${{ github.ref_name }}   # use the git tag (vX.Y.Z) as the image tag
+      run_deploy: true
+      deploy_target: 'ec2-vpn'
+      environment: 'prod'
+      # spring_profiles: additional profiles only (concatenated with the environment 'prod'). None needed here.
+      run_tag: false   # tag already exists (this run was triggered by it)
+      notify_on_failure: true
+      notify_failure_mention: '@channel'
+      notify_on_deploy: true
+      # Mount TLS material/keystore from host into the container (read-only).
+      # extra_volumes: |
+      #   - ./certs:/etc/ssl/app:ro
+    secrets: inherit
