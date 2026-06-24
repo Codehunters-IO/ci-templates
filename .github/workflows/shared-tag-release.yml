@@ -50,7 +50,7 @@ jobs:
           tag_prefix: ${{ inputs.tag_prefix }}
           major_pattern: ${{ inputs.major_pattern }}
           minor_pattern: ${{ inputs.minor_pattern }}
-          format: "${major}.${minor}.${patch}"
+          version_format: "${major}.${minor}.${patch}"
           namespace: ""
           change_path: ""
           bump_each_commit: false

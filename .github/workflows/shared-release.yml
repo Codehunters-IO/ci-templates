@@ -117,7 +117,7 @@ jobs:
           tag_prefix: "v"
           major_pattern: "(MAJOR|BREAKING CHANGE)"
           minor_pattern: "(feat)"
-          format: "${major}.${minor}.${patch}"
+          version_format: "${major}.${minor}.${patch}"
 
       - name: Guard against already-released version
         id: guard
