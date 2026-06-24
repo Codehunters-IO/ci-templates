@@ -167,7 +167,10 @@ jobs:
         env:
           GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME }}
           GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
-        run: ./gradlew clean build test jacocoTestReport --no-daemon --build-cache --parallel || true
+        # No 'clean build': compileJava is served FROM-CACHE (produced by the build job via
+        # --build-cache). Only test sources compile here, then tests + coverage run. The jar
+        # is NOT re-assembled (the build job already built and uploaded it).
+        run: ./gradlew test jacocoTestReport --no-daemon --build-cache --parallel || true
 
       - name: Run tests (Maven)
         id: test-run-maven

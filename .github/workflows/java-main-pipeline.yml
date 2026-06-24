@@ -389,6 +389,8 @@ jobs:
       java_version: ${{ inputs.java_version }}
       java_distribution: ${{ inputs.java_distribution }}
       build_tool: ${{ inputs.build_tool }}
+      # Only upload the JAR when an artifact/deploy step will consume it (skips PR/validation runs).
+      upload_artifact: ${{ inputs.run_artifact }}
     secrets: inherit
 
   # ============================================
@@ -476,6 +478,9 @@ jobs:
       image_tag: ${{ inputs.image_tag }}
       docker_platform: ${{ inputs.docker_platform }}
       environment: ${{ inputs.environment }}
+      # Reuse the JAR already built (and gated by passing tests) instead of recompiling.
+      # build_from_source stays true only as a fallback when no artifact was uploaded.
+      artifact_name: ${{ needs.build.outputs.artifact_name }}
       build_from_source: true
       java_version: ${{ inputs.java_version }}
       java_distribution: ${{ inputs.java_distribution }}
@@ -502,7 +507,7 @@ jobs:
       java_distribution: ${{ inputs.java_distribution }}
       image_tag: ${{ inputs.image_tag }}
       docker_platform: ${{ inputs.docker_platform }}
-      artifact_name: ${{ needs.test.outputs.artifact_name }}
+      artifact_name: ${{ needs.build.outputs.artifact_name }}
       environment: ${{ inputs.environment }}
     secrets: inherit
 
@@ -703,10 +708,13 @@ jobs:
   # ============================================
   notify-release:
     name: Notify Release PR
+    # Only notify when a PR was actually created/updated — the release job also "succeeds"
+    # when it SKIPS (version unchanged / tag exists), and we must not send a false "PR created".
     if: |
       inputs.notify_on_release &&
       always() &&
-      needs.release.result == 'success'
+      needs.release.result == 'success' &&
+      needs.release.outputs.pr_url != ''
     needs: [release]
     uses: ./.github/workflows/shared-slack-notify.yml
     with:

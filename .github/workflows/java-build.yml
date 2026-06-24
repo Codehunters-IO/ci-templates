@@ -28,12 +28,35 @@ on:
         required: false
         type: string
         default: 'gradle'
+      upload_artifact:
+        description: 'Upload the built JAR so downstream jobs (Docker/ECR) reuse it instead of recompiling'
+        required: false
+        type: boolean
+        default: true
+      jar_path:
+        description: 'Directory to search for the bootable JAR'
+        required: false
+        type: string
+        default: 'bootstrap/build/libs'
+      artifact_retention_days:
+        description: 'Days to retain the uploaded JAR artifact'
+        required: false
+        type: number
+        default: 1
+
+    outputs:
+      artifact_name:
+        description: 'Name of the uploaded JAR artifact (empty when upload_artifact is false)'
+        value: ${{ jobs.build.outputs.artifact_name }}
 
 jobs:
   build:
     name: Build
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 15
+
+    outputs:
+      artifact_name: ${{ steps.jar-info.outputs.name }}
 
     steps:
       - name: Checkout
@@ -49,7 +72,9 @@ jobs:
         if: inputs.build_tool == 'gradle'
         uses: gradle/actions/setup-gradle@v4
         with:
-          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' }}
+          # Build is the cache PRODUCER: always write so the downstream test job reuses
+          # compileJava outputs from the Gradle build cache instead of recompiling.
+          cache-read-only: false
 
       - name: Build (Gradle)
         if: inputs.build_tool == 'gradle'
@@ -68,6 +93,32 @@ jobs:
       - name: Spotless check
         if: inputs.run_spotless && inputs.build_tool == 'gradle'
         run: ./gradlew spotlessCheck --no-daemon --build-cache
+
+      # ============================================
+      # UPLOAD JAR — reused by the Docker/ECR job (no recompile downstream)
+      # ============================================
+      - name: Locate bootable JAR
+        id: jar-info
+        if: inputs.upload_artifact
+        run: |
+          JAR_FILE="$(find "${{ inputs.jar_path }}" -name '*.jar' -not -name '*-plain.jar' | head -1)"
+          if [ -z "$JAR_FILE" ]; then
+            echo "::error::No bootable JAR found under '${{ inputs.jar_path }}'."
+            exit 1
+          fi
+          echo "name=build-artifact-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+          echo "file=$JAR_FILE" >> "$GITHUB_OUTPUT"
+          echo "Bootable JAR: $JAR_FILE"
+
+      - name: Upload JAR artifact
+        if: inputs.upload_artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ steps.jar-info.outputs.name }}
+          path: ${{ steps.jar-info.outputs.file }}
+          retention-days: ${{ inputs.artifact_retention_days }}
+          if-no-files-found: error
+          compression-level: 0   # JAR is already a compressed zip; recompressing wastes runner time
 
       # ============================================
       # CLEANUP
