@@ -119,7 +119,10 @@ jobs:
           mkdir -p ~/.ssh
           echo "$AWS_EC2_SSH_KEY" > ~/.ssh/deploy_key
           chmod 400 ~/.ssh/deploy_key
-          ssh-keyscan -H $AWS_EC2_HOST >> ~/.ssh/known_hosts 2>/dev/null
+          # '|| true': ssh-keyscan returns nonzero when the host is unreachable; under `bash -e`
+          # that would abort the step silently (stderr hidden) before the scp retry/skip logic runs.
+          # StrictHostKeyChecking=no is used for the actual connection, so known_hosts is best-effort.
+          ssh-keyscan -H $AWS_EC2_HOST >> ~/.ssh/known_hosts 2>/dev/null || true
 
           # Encode multiline env vars to preserve newlines over SSH
           CONTAINER_ENV_VARS_B64=$(echo "$CONTAINER_ENV_VARS" | base64 | tr -d '\n')
