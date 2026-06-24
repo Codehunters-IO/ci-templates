@@ -1,0 +1,41 @@
+# Template: Deploy KrakenD to PRODUCTION on a manual semver tag
+# Copy to: .github/workflows/tag-deploy.yml
+#
+# Triggers ONLY on a manually pushed semver tag (vMAJOR.MINOR.PATCH).
+# Promotion to production is a deliberate human action:
+#   git tag v1.4.0 && git push origin v1.4.0
+#
+# The Docker image is tagged with the git tag (github.ref_name) instead of the commit SHA.
+#
+# GATE: configure a GitHub Environment named 'prod' with REQUIRED REVIEWERS
+# (Settings -> Environments -> prod). The deploy job binds `environment: prod`,
+# so the deployment pauses for manual approval. Double gate: human creates the tag,
+# human approves the deployment.
+#
+# Required secrets: Same as develop-deploy.yml
+
+name: Deploy to Production
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    uses: <org>/ci-templates/.github/workflows/krakend-main-pipeline.yml@main
+    with:
+      run_build: true
+      run_test: false
+      run_artifact: true
+      image_tag: ${{ github.ref_name }}   # use the git tag (vX.Y.Z) as the image tag
+      run_deploy: true
+      deploy_target: 'ec2-vpn'
+      environment: 'prod'
+      run_notifications: true
+      notify_mention_on_failure: '@channel'
+    secrets: inherit

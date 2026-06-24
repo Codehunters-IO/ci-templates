@@ -1,13 +1,15 @@
-# Template: Deploy on merge to main (production)
+# Template: Deploy on merge to main (CERT environment)
 # Copy to: .github/workflows/main-deploy.yml
 #
 # Triggers on push to main branch (after release merge)
-# Runs: build + artifact + deploy (PRODUCTION environment)
+# Runs: build + artifact + deploy (CERT environment)
+#
+# Production is NOT deployed here. Promotion to prod is a MANUAL git tag (vX.Y.Z)
+# handled by tag-deploy.yml — do NOT enable run_tag here (tags must be created by a human).
 #
 # Required secrets: Same as develop-deploy.yml
-# Note: Audit should have passed in release branch, only build and deploy here
 
-name: Deploy to PRODUCTION
+name: Deploy to Cert
 
 on:
   push:
@@ -15,7 +17,7 @@ on:
       - main
 
 permissions:
-  contents: write   # required by run_tag to push vX.Y.Z tag and create GitHub Release
+  contents: read
   id-token: write
 
 jobs:
@@ -27,8 +29,8 @@ jobs:
       run_test: false
       run_artifact: true
       run_deploy: true
-      environment: 'production'
-      run_tag: true
+      deploy_target: 'ec2-vpn'
+      environment: 'cert'
       run_notifications: true
       notify_mention_on_failure: '@channel'
       # extra_volumes: default mounts ./certs:/etc/krakend/certs:ro on the host.
