@@ -14,7 +14,7 @@ on:
         type: boolean
         default: false
       fail_on_protected:
-        description: 'Hard-fail when target branch is protected (develop/main/master/release/*). Default true for explicit branch_name inputs.'
+        description: 'Hard-fail when target branch is protected (develop/main). Default true for explicit branch_name inputs.'
         required: false
         type: boolean
         default: true
@@ -50,8 +50,8 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
           FAIL_ON_PROTECTED: ${{ inputs.fail_on_protected }}
         run: |
-          # Protected branches - never delete
-          PROTECTED_BRANCHES="main master develop"
+          # Protected branches - never delete. Only develop and main are protected.
+          PROTECTED_BRANCHES="main develop"
 
           # Determine branch to delete
           EXPLICIT_INPUT=false
@@ -86,7 +86,8 @@ jobs:
 
           echo "Detected branch: $BRANCH"
 
-          # Check if branch is protected
+          # Check if branch is protected. NOTE: release/* is intentionally NOT protected —
+          # a release/vX.Y.Z branch is transient and must be deleted once merged to main.
           IS_PROTECTED=false
           for protected in $PROTECTED_BRANCHES; do
             if [ "$BRANCH" = "$protected" ]; then
@@ -94,12 +95,9 @@ jobs:
               break
             fi
           done
-          if echo "$BRANCH" | grep -q "^release/"; then
-            IS_PROTECTED=true
-          fi
 
           if [ "$IS_PROTECTED" = "true" ]; then
-            echo "::warning::Branch '$BRANCH' is protected (main/master/develop/release/*) — refusing to delete."
+            echo "::warning::Branch '$BRANCH' is protected (develop/main) — refusing to delete."
             echo "status=protected" >> $GITHUB_OUTPUT
             echo "branch=$BRANCH" >> $GITHUB_OUTPUT
             if [ "$EXPLICIT_INPUT" = "true" ] && [ "$FAIL_ON_PROTECTED" = "true" ]; then

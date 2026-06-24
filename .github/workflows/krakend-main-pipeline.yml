@@ -396,12 +396,9 @@ jobs:
   # ============================================
   cleanup:
     name: Delete Branch
-    if: |
-      inputs.run_cleanup &&
-      always() &&
-      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success') &&
-      (needs.release.result == 'success' || needs.release.result == 'skipped')
-    needs: [deploy-ec2, deploy-ec2-vpn, deploy-eks, release]
+    # ALWAYS runs on a push/merge (no input flag, no deps, no success gating). Deletes the merged
+    # source branch regardless of build/deploy outcome.
+    if: github.event_name == 'push'
     uses: ./.github/workflows/shared-delete-branch.yml
     secrets: inherit
 

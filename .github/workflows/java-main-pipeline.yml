@@ -636,16 +636,9 @@ jobs:
   # ============================================
   cleanup:
     name: Delete Branch
-    if: |
-      inputs.run_cleanup &&
-      always() &&
-      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success' ||
-       (needs.deploy-ec2.result == 'skipped' && needs.deploy-ec2-vpn.result == 'skipped' && needs.deploy-eks.result == 'skipped' &&
-        (needs.artifact-ecr.result == 'success' || needs.artifact-github.result == 'success' || needs.artifact-packages.result == 'success' ||
-         (needs.artifact-ecr.result == 'skipped' && needs.artifact-github.result == 'skipped' && needs.artifact-packages.result == 'skipped' &&
-          needs.test.result == 'success')))) &&
-      (needs.release.result == 'success' || needs.release.result == 'skipped')
-    needs: [test, artifact-ecr, artifact-github, artifact-packages, deploy-ec2, deploy-ec2-vpn, deploy-eks, release]
+    # ALWAYS runs on a push/merge (no input flag, no deps, no success gating). Deletes the merged
+    # source branch (feature/* on develop, release/vX.Y.Z on main) regardless of build/deploy outcome.
+    if: github.event_name == 'push'
     uses: ./.github/workflows/shared-delete-branch.yml
     secrets: inherit
 
