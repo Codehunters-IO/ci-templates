@@ -42,7 +42,11 @@ jobs:
       - name: Check version format and uniqueness
         env:
           VERSION: ${{ inputs.version }}
+          REF: ${{ github.ref_name }}
         run: |
+          if [ "$REF" != "main" ]; then
+            echo "::error::Release must be dispatched from 'main' (got '$REF')."; exit 1
+          fi
           if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::version must match vX.Y.Z (got '$VERSION')"; exit 1
           fi
