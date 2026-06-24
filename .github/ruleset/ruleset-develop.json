@@ -9,7 +9,7 @@
     },
     "repository_name": {
       "include": ["vitxo-ms-*", "vitxo-sdk-*"],
-      "exclude": ["vitxo-ms-managment"],
+      "exclude": [],
       "protected": false
     }
   },

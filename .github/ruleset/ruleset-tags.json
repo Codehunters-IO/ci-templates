@@ -8,8 +8,8 @@
       "exclude": []
     },
     "repository_name": {
-      "include": ["vitxo-ms-*", "vitxo-sdk-*"],
-      "exclude": ["vitxo-ms-managment"],
+      "include": ["vitxo-ms-*", "vitxo-sdk-*", "vitxo-gw-*"],
+      "exclude": [],
       "protected": false
     }
   },

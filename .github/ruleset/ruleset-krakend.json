@@ -1,14 +1,14 @@
 {
-  "name": "Java • Protect main (PR-only, 2 approvals, linear, squash)",
+  "name": "KrakenD • Protect develop+main (PR-only, 2 approvals, linear, squash)",
   "target": "branch",
   "enforcement": "evaluate",
   "conditions": {
     "ref_name": {
-      "include": ["refs/heads/main"],
+      "include": ["refs/heads/develop", "refs/heads/main"],
       "exclude": []
     },
     "repository_name": {
-      "include": ["vitxo-ms-*", "vitxo-sdk-*"],
+      "include": ["vitxo-gw-*"],
       "exclude": [],
       "protected": false
     }
@@ -33,7 +33,7 @@
       "parameters": {
         "strict_required_status_checks_policy": true,
         "required_status_checks": [
-          { "context": "validate / PR Quality Gates" }
+          { "context": "validate / Test & Audit" }
         ]
       }
     }
