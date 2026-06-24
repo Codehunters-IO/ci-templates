@@ -17,30 +17,39 @@ Reusable GitHub Actions workflows for Java, Krakend, React and Solidity/Hardhat 
 ```
 feature/* ──► build
      │
-     ▼ (PR to develop)      build → test → coverage → sonar → owasp → architecture
+     ▼ (PR to develop)      build → test → coverage → owasp → architecture
      │                       └── uses java-pr-pipeline.yml (quality gates only)
      │
-     ▼ (merge to develop)   build → test → coverage → sonar → owasp → architecture
-     │                              → artifact (ECR) → deploy (DEV) → cleanup
-     │                              → auto-create branch release/vX.Y.Z (semver) → PR to main
+     ▼ (merge to develop)   build → test → coverage → owasp
+     │                              → artifact (ECR) → deploy (DEVELOP)
+     │                              → delete merged feature branch
+     │                              → auto-create branch release/vX.Y.Z (semver)   ← no PR, no deploy
      │                       └── uses java-main-pipeline.yml
      │
-     ▼ (release/vX.Y.Z)     PR to main only — NO deploy (stabilization branch)
+     ▼ (release/vX.Y.Z)     open a PR to main manually (stabilization branch — no deploy)
      │
      ▼ (merge to main)      build → artifact (ECR) → deploy (CERT)
+     │                              → delete merged release branch
      │
-     ▼ (manual tag vX.Y.Z)  build → artifact (ECR, tag=vX.Y.Z) → deploy (PROD, requires Environment approval)
+     ▼ ("Release to Production"  │  workflow_dispatch from main, input: version vX.Y.Z)
+            validate (from main, vX.Y.Z, unused) → deploy (PROD, Environment approval)
+                                                  → create tag vX.Y.Z + GitHub Release
 ```
 
-> **Environments map to branches/tags, not the other way around.** `develop` → `develop`,
-> `main` → `cert`, semver tag `vX.Y.Z` → `prod`. Production is reached only by a **manual tag**
-> created by a human (`git tag v1.4.0 && git push origin v1.4.0`); the `prod` GitHub Environment
-> should have *required reviewers* so the deployment also waits for manual approval.
+> **Environments map to branches/tags.** `develop` → `develop`, `main` → `cert`, prod release → `prod`.
 >
-> **Release flow:** every merge to `develop` automatically cuts a `release/vX.Y.Z` branch (semver
-> computed from commit messages) and opens a PR to `main`. The release branch is a stabilization
-> branch only — it does **not** deploy. Merging its PR to `main` deploys to `cert`; promotion to
-> `prod` is the subsequent manual tag.
+> **Release branch:** every merge to `develop` auto-creates a `release/vX.Y.Z` branch (semver from
+> commit messages). It does **not** deploy and **no PR is opened automatically** — open the PR to
+> `main` manually when ready. Merging it to `main` deploys to `cert`.
+>
+> **Production:** promoted via the manual **`Release to Production`** workflow (`workflow_dispatch`,
+> run **only from `main`** with a `version` input). It deploys to `prod` behind the `prod` Environment's
+> *required reviewers*, then creates the git tag `vX.Y.Z` + GitHub Release **only after** a successful
+> approved deploy (no orphan tags, no hand-pushed tags).
+>
+> **Branch cleanup** runs on every merge (develop/main): the merged `feature/*` or `release/vX.Y.Z`
+> branch is deleted — but only after verifying its PR was actually merged. `develop`/`main` are never
+> deleted. Cleanup never fails the pipeline.
 
 ## Quick Start
 
@@ -48,9 +57,9 @@ feature/* ──► build
    ```bash
    cp templates/java-feature-build.yml   .github/workflows/
    cp templates/java-pr-develop.yml      .github/workflows/
-   cp templates/java-develop-deploy.yml  .github/workflows/   # develop → develop (+ auto release branch/PR)
+   cp templates/java-develop-deploy.yml  .github/workflows/   # develop → develop (+ auto release branch)
    cp templates/java-main-deploy.yml     .github/workflows/   # main → cert
-   cp templates/java-tag-deploy.yml      .github/workflows/   # tag vX.Y.Z → prod (manual)
+   cp templates/java-tag-deploy.yml      .github/workflows/   # prod (manual: workflow_dispatch from main)
    ```
 
 2. Replace `<org>` with your GitHub organization in each template:
@@ -97,7 +106,7 @@ Configure in **Settings → Secrets and variables → Actions**.
 | `AWS_ACCESS_KEY_ID` | AWS access key for ECR push and runtime (injected into the container) |
 | `AWS_SECRET_ACCESS_KEY` | AWS secret key |
 | `AWS_REGION` | AWS region (e.g. `us-east-1`) |
-| `AWS_ECR_URL` | ECR registry URL (e.g. `123456789.dkr.ecr.us-east-1.amazonaws.com`) |
+| `AWS_ECR_URL` | ECR registry URL (e.g. `123456789.dkr.ecr.us-east-1.amazonaws.com`). **Must be the SAME AWS account as the access key** — the artifact job pushes to the creds' account registry and deploy pulls from this URL; a mismatch causes a cross-account `pull access denied`. |
 
 ### EC2 (`deploy_target: ec2` or `ec2-vpn`)
 
@@ -176,7 +185,10 @@ with:
 |--------|---------|
 | `NVD_API_KEY` | OWASP Dependency Check (`run_owasp: true`) |
 | `QODANA_TOKEN` | Qodana (`code_analysis: 'qodana'`) |
-| `RELEASE_PAT` | Release flow (`run_release: true`) — PAT/GitHub App token so the `release/*` branch + PR trigger the required `validate / PR Quality Gates` check on `main`. Without it the release PR is still created via `GITHUB_TOKEN` but its checks won't auto-run. Recommended: org-level secret. |
+
+> The release flow only **creates a branch** (`release/vX.Y.Z`) via `GITHUB_TOKEN` — no PAT is needed
+> (the PR to `main` is opened manually). The prod release tag is created by GitHub Actions, which
+> bypasses the tag ruleset (see Rulesets below).
 
 ## Directory Structure
 
@@ -194,9 +206,11 @@ ci-templates/
 │   ├── shared-slack-notify.yml
 │   └── ...
 ├── templates/                    # Copy these to your repo
-│   ├── java-*.yml
+│   ├── java-*.yml                #   develop-deploy · main-deploy · tag-deploy (workflow_dispatch)
 │   ├── krakend-*.yml
 │   └── react-*.yml
+├── .github/ruleset/              # Org rulesets (import to GitHub): develop · main · krakend · tags
+├── scripts/                      # clone-environments.sh · ssh-deploy-debug.sh
 └── README.md
 ```
 
@@ -248,21 +262,47 @@ Each consuming repo must declare these GitHub Environments (**Settings → Envir
 |-------------|-----------|------------|
 | `develop` | push to `develop` | none |
 | `cert` | push to `main` | optional |
-| `prod` | manual semver tag `vX.Y.Z` | **required reviewers** (manual approval gate) |
+| `prod` | `Release to Production` workflow (`workflow_dispatch` from `main`) | **required reviewers** (the gate) |
 
-> `release/vX.Y.Z` branches do not map to an environment — they only carry the PR to `main`.
+> `release/vX.Y.Z` branches do not map to an environment — they only carry the (manual) PR to `main`.
 
 - The deploy jobs bind `environment: <name>` at job level, so GitHub Environment protection rules
-  (required reviewers, wait timers, branch/tag restrictions) apply automatically — no workflow code change.
-- **Production promotion is manual**: a human creates and pushes a `vX.Y.Z` tag. A tag pushed by
-  `GITHUB_TOKEN` does NOT trigger workflows, so auto-tagging cannot reach prod by accident.
-  Do **not** enable `run_tag` on the `main` pipeline.
-- Restrict the `prod` Environment to tags matching `v*.*.*`, and add a tag protection ruleset so only
-  authorized users can create release tags.
-- `release/vX.Y.Z` branches are stabilization branches only — they do **not** deploy. They are
-  auto-created on every merge to `develop` (semver from commits) and open a PR to `main`.
+  (required reviewers, wait timers) apply automatically — no workflow code change.
+- **Production promotion is manual + approval-gated**: run the `Release to Production` workflow
+  (Actions → *Run workflow*) **from `main`** with a `version` (`vX.Y.Z`). The `prod` Environment's
+  required reviewers approve the deploy; the git tag + GitHub Release are created **only after** the
+  approved deploy succeeds. The reviewer **is** the gate — configure it (an empty reviewer list = no gate).
+- Each repo must declare `develop` / `cert` / `prod` Environments with their **own** `AWS_*` / `AWS_EC2_*`
+  / `WG_*` secrets (values differ per environment). Use `scripts/clone-environments.sh` to provision
+  `cert` / `prod` from `develop`.
 - `spring_profiles` is for **additional** Spring profiles only; the pipeline concatenates them with the
   environment as `SPRING_PROFILES_ACTIVE=<spring_profiles>,<environment>`. Do not set it equal to the env.
+
+## Rulesets
+
+Org-level rulesets live in [`.github/ruleset/`](.github/ruleset/). They are **source files** — apply
+them to the org via the GitHub UI (Settings → Rules → Rulesets → Import) or the API; editing the JSON
+does not change live rules until imported.
+
+| Ruleset | Target | Scope | Enforces |
+|---------|--------|-------|----------|
+| `ruleset-develop.json` | branch `develop` | `vitxo-ms-*`, `vitxo-sdk-*` | PR-only, 2 approvals, linear, squash, check `validate / PR Quality Gates` |
+| `ruleset-main.json` | branch `main` | `vitxo-ms-*`, `vitxo-sdk-*` | same as develop |
+| `ruleset-krakend.json` | branches `develop`+`main` | `vitxo-gw-*` | same, but check `validate / Test & Audit` (KrakenD pipeline) |
+| `ruleset-tags.json` | tag `v*.*.*` | `vitxo-ms-*`, `vitxo-sdk-*`, `vitxo-gw-*` | immutable tags (creation/deletion/update/non-fast-forward) |
+
+- **Bypass:** repo admins (RepositoryRole 5) and **GitHub Actions** (Integration `15368`) bypass the tag
+  rules — the latter lets the `Release to Production` workflow create the `vX.Y.Z` tag.
+- KrakenD needs a **separate** ruleset because its PR check name differs from the Java pipeline.
+- Roll out in `evaluate` first → run once to confirm the exact required-check context → switch to `active`
+  (enabling an `active` ruleset whose check never reports = a merge deadlock).
+
+## Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/clone-environments.sh` | Provision `cert`/`prod` Environments per repo: clones **variables** from `develop` and sets **secrets** from per-env `.env` files you fill (secret values are not readable, so they are never copied blindly). Run `--template` first to generate the secret-name files. |
+| `scripts/ssh-deploy-debug.sh` | Reproduce the EC2 SSH deploy stages locally (connectivity, ECR login, image pull, network/volume) to isolate a deploy failure. The first failing stage is the cause. |
 
 ## Requirements on the EC2 host
 
