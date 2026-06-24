@@ -1,20 +1,13 @@
-name: Shared - Create Release
+name: Shared - Create Release Branch
 
-# Automatic release-branch flow (triggered on merge to develop):
-#   develop --(semver)--> creates branch release/vX.Y.Z --> opens PR to main
-# Merging that PR to main deploys to CERT. Production is reached only by a MANUAL
-# semver tag vX.Y.Z (see tag-deploy / tag-pipeline). The release branch itself does
-# NOT deploy anywhere.
+# Simple release-branch flow (triggered on merge to develop):
+#   develop --(semver)--> creates branch release/vX.Y.Z (pushed, targets main)
+# This ONLY creates the branch. No PR is opened automatically — open the PR to main
+# manually (or via your own process) when ready. Merging that branch to main deploys to
+# CERT; production is reached only by a MANUAL semver tag vX.Y.Z (see tag-deploy / tag-pipeline).
 #
 # Required caller permissions:
 #   contents: write        # create/push the release/vX.Y.Z branch
-#   pull-requests: write   # create / edit the release PR
-#
-# IMPORTANT: set the org/repo secret RELEASE_PAT (a PAT or GitHub App token) and pass it via
-# `secrets: inherit`. Branches/PRs created with the default GITHUB_TOKEN do NOT trigger other
-# workflows, so the release/* -> main PR would skip the required `validate / PR Quality Gates`
-# check and stay unmergeable. RELEASE_PAT makes the PR trigger that check. Falls back to
-# github.token when RELEASE_PAT is unset (PR still created, but checks won't auto-run).
 
 on:
   workflow_call:
@@ -25,7 +18,7 @@ on:
         type: string
         default: 'develop'
       target_branch:
-        description: 'Target branch for the release PR (PR base)'
+        description: 'Branch the release is intended for (used to detect "anything to release")'
         required: false
         type: string
         default: 'main'
@@ -42,15 +35,6 @@ on:
       release_branch:
         description: 'Release branch created (release/vX.Y.Z)'
         value: ${{ jobs.release.outputs.release_branch }}
-      pr_number:
-        description: 'Pull request number'
-        value: ${{ jobs.release.outputs.pr_number }}
-      pr_url:
-        description: 'Pull request URL'
-        value: ${{ jobs.release.outputs.pr_url }}
-      changelog:
-        description: 'Release changelog (commit list)'
-        value: ${{ jobs.release.outputs.changelog }}
 
 concurrency:
   group: shared-release-${{ github.repository }}-${{ inputs.base_branch }}
@@ -58,15 +42,12 @@ concurrency:
 
 jobs:
   release:
-    name: Create Release Branch + PR
+    name: Create Release Branch
     runs-on: ubuntu-latest
 
     outputs:
       version: ${{ steps.semver.outputs.version }}
       release_branch: ${{ steps.branch.outputs.release_branch }}
-      pr_number: ${{ steps.upsert-pr.outputs.pr_number }}
-      pr_url: ${{ steps.upsert-pr.outputs.pr_url }}
-      changelog: ${{ steps.changelog.outputs.changelog }}
 
     steps:
       - name: Validate release flow
@@ -75,13 +56,11 @@ jobs:
           TARGET_BRANCH: ${{ inputs.target_branch }}
           STRICT_FLOW: ${{ inputs.strict_flow }}
         run: |
-          echo "Release flow: $BASE_BRANCH -> release/vX.Y.Z -> $TARGET_BRANCH (strict=$STRICT_FLOW)"
-
+          echo "Release flow: $BASE_BRANCH -> release/vX.Y.Z (intended for $TARGET_BRANCH, strict=$STRICT_FLOW)"
           if [ "$STRICT_FLOW" != "true" ]; then
             echo "Strict flow disabled, skipping validation."
             exit 0
           fi
-
           ERRORS=0
           if [ "$BASE_BRANCH" != "develop" ]; then
             echo "::error::Release base_branch must be 'develop' under strict flow. Got: '$BASE_BRANCH'."
@@ -91,15 +70,8 @@ jobs:
             echo "::error::Release target_branch must be 'main' under strict flow. Got: '$TARGET_BRANCH'."
             ERRORS=1
           fi
-
-          if [ "$ERRORS" -ne 0 ]; then
-            echo ""
-            echo "Strict GitFlow requires release branches to flow develop -> main."
-            echo "Set strict_flow: false to opt out (custom GitFlow only)."
-            exit 1
-          fi
-
-          echo "Release flow validated: develop -> release/vX.Y.Z -> main."
+          [ "$ERRORS" -eq 0 ] || { echo "Strict GitFlow requires develop -> main."; exit 1; }
+          echo "Release flow validated."
 
       - name: Checkout
         uses: actions/checkout@v5
@@ -107,8 +79,6 @@ jobs:
           ref: ${{ inputs.base_branch }}
           fetch-depth: 0
           persist-credentials: true
-          # PAT so the pushed release branch / PR trigger downstream workflows (falls back to GITHUB_TOKEN)
-          token: ${{ secrets.RELEASE_PAT || github.token }}
 
       - name: Calculate semantic version
         id: semver
@@ -128,11 +98,6 @@ jobs:
           if git rev-parse "refs/tags/${TAG}" >/dev/null 2>&1; then
             echo "::warning::Tag ${TAG} already exists; this version was already released. Skipping."
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            {
-              echo "### Release skipped"
-              echo ""
-              echo "Tag \`${TAG}\` already exists. Commit a \`feat:\` or breaking change to bump the version."
-            } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
@@ -146,7 +111,6 @@ jobs:
         run: |
           git fetch --no-tags origin "${BASE_BRANCH}" "${TARGET_BRANCH}"
           AHEAD="$(git rev-list --count "origin/${TARGET_BRANCH}..origin/${BASE_BRANCH}")"
-          echo "ahead=${AHEAD}" >> "$GITHUB_OUTPUT"
           if [ "${AHEAD}" -eq 0 ]; then
             echo "::warning::${BASE_BRANCH} has no commits ahead of ${TARGET_BRANCH}; nothing to release."
             echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -165,103 +129,21 @@ jobs:
           echo "release_branch=${RELEASE_BRANCH}" >> "$GITHUB_OUTPUT"
 
           if git ls-remote --exit-code --heads origin "${RELEASE_BRANCH}" >/dev/null 2>&1; then
-            # Branch already exists: leave it untouched to preserve any stabilization commits.
             echo "::notice::Branch ${RELEASE_BRANCH} already exists; leaving it as-is."
           else
-            # Cut a fresh release branch from the current base branch (develop) HEAD.
             git push origin "origin/${BASE_BRANCH}:refs/heads/${RELEASE_BRANCH}"
             echo "::notice::Created ${RELEASE_BRANCH} from ${BASE_BRANCH}."
           fi
 
-      - name: Generate changelog
-        id: changelog
-        if: steps.guard.outputs.skip == 'false' && steps.diff.outputs.skip == 'false'
-        env:
-          RELEASE_BRANCH: ${{ steps.branch.outputs.release_branch }}
-          TARGET_BRANCH: ${{ inputs.target_branch }}
-        run: |
-          git fetch --no-tags origin "${RELEASE_BRANCH}" "${TARGET_BRANCH}"
-          CHANGELOG="$(git log "origin/${TARGET_BRANCH}..origin/${RELEASE_BRANCH}" --pretty=format:'- %s (%h)' | head -30)"
-          if [ -z "${CHANGELOG}" ]; then
-            CHANGELOG="- (no commits)"
-          fi
           {
-            echo "changelog<<EOF"
-            echo "${CHANGELOG}"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Create or update Pull Request
-        id: upsert-pr
-        if: steps.guard.outputs.skip == 'false' && steps.diff.outputs.skip == 'false'
-        env:
-          VERSION: ${{ steps.semver.outputs.version }}
-          RELEASE_BRANCH: ${{ steps.branch.outputs.release_branch }}
-          TARGET_BRANCH: ${{ inputs.target_branch }}
-          CHANGELOG: ${{ steps.changelog.outputs.changelog }}
-          RUN_NUMBER: ${{ github.run_number }}
-          RUN_ID: ${{ github.run_id }}
-          REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ secrets.RELEASE_PAT || github.token }}
-        run: |
-          PR_BODY_FILE="$(mktemp)"
-          {
-            echo "## Release v${VERSION}"
-            echo ""
-            echo "Cut from \`develop\` as branch \`${RELEASE_BRANCH}\`."
-            echo "Merging this PR to \`${TARGET_BRANCH}\` deploys to **cert**."
-            echo ""
-            echo "Production is NOT reached by this merge. To promote to prod, an admin creates and"
-            echo "pushes the **manual** semver tag \`v${VERSION}\` after validating in cert."
-            echo ""
-            echo "### Changes"
-            echo "${CHANGELOG}"
-            echo ""
-            echo "### Checklist"
-            echo "- [ ] Review changes"
-            echo "- [ ] Approve and merge to \`${TARGET_BRANCH}\` (deploys to cert)"
-            echo "- [ ] After cert validation, create tag \`v${VERSION}\` to promote to prod"
-            echo ""
-            echo "---"
-            echo "_Last updated by run [#${RUN_NUMBER}](https://github.com/${REPO}/actions/runs/${RUN_ID}) at $(date -u +%FT%TZ)._"
-          } > "${PR_BODY_FILE}"
-
-          EXISTING_PR_JSON="$(gh pr list \
-            --state open \
-            --head "${RELEASE_BRANCH}" \
-            --base "${TARGET_BRANCH}" \
-            --json number,url \
-            --jq '.[0] // empty')"
-
-          if [ -z "${EXISTING_PR_JSON}" ]; then
-            gh pr create \
-              --title "Release v${VERSION}" \
-              --body-file "${PR_BODY_FILE}" \
-              --base "${TARGET_BRANCH}" \
-              --head "${RELEASE_BRANCH}" >/dev/null
-            PR_NUMBER="$(gh pr list --head "${RELEASE_BRANCH}" --base "${TARGET_BRANCH}" --state open --json number --jq '.[0].number')"
-            PR_URL="$(gh pr view "${PR_NUMBER}" --json url --jq '.url')"
-            ACTION="created"
-          else
-            PR_NUMBER="$(echo "${EXISTING_PR_JSON}" | jq -r '.number')"
-            PR_URL="$(echo "${EXISTING_PR_JSON}" | jq -r '.url')"
-            gh pr edit "${PR_NUMBER}" \
-              --title "Release v${VERSION}" \
-              --body-file "${PR_BODY_FILE}" >/dev/null
-            ACTION="updated"
-          fi
-
-          echo "pr_number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
-          echo "pr_url=${PR_URL}" >> "$GITHUB_OUTPUT"
-
-          {
-            echo "### Release PR ${ACTION}"
+            echo "### Release branch"
             echo ""
             echo "| Property | Value |"
             echo "|----------|-------|"
             echo "| Version | v${VERSION} |"
-            echo "| Head | ${RELEASE_BRANCH} |"
-            echo "| Base | ${TARGET_BRANCH} |"
-            echo "| PR | #${PR_NUMBER} |"
-            echo "| URL | ${PR_URL} |"
+            echo "| Branch | ${RELEASE_BRANCH} |"
+            echo "| From | ${BASE_BRANCH} |"
+            echo "| Intended target | ${{ inputs.target_branch }} |"
+            echo ""
+            echo "_Open a PR to \`${{ inputs.target_branch }}\` when ready (no PR is created automatically)._"
           } >> "$GITHUB_STEP_SUMMARY"
