@@ -1,53 +1,92 @@
-# Template: Deploy to PRODUCTION on a manual semver tag
+# Template: Release to PRODUCTION (manual, button-triggered)
 # Copy to: .github/workflows/tag-deploy.yml
 #
-# Triggers ONLY on a manually pushed semver tag (vMAJOR.MINOR.PATCH) on main.
-# Promotion to production is a deliberate human action: create and push the tag.
-#   git tag v1.4.0 && git push origin v1.4.0
+# Trigger: workflow_dispatch (Actions tab -> "Run workflow") with an explicit version.
+# Flow:
+#   validate version (vX.Y.Z, not already tagged)
+#     -> deploy to PROD  (gated by the 'prod' GitHub Environment required reviewers)
+#       -> create git tag vX.Y.Z + GitHub Release  (only AFTER a successful, approved deploy)
 #
-# Flow: build -> artifact (ECR, tagged with the git tag) -> deploy (PROD)
-# The Docker image is tagged with the git tag (github.ref_name) instead of the commit SHA.
+# Single approval gate: the reusable deploy job binds `environment: prod`, so the deploy
+# pauses for manual approval. The tag/Release is created only after that succeeds — no
+# orphan tags for rejected releases.
 #
-# GATE: configure a GitHub Environment named 'prod' with REQUIRED REVIEWERS
-# (Settings -> Environments -> prod). The deploy job binds `environment: prod`,
-# so the deployment pauses for manual approval before it runs. Double gate:
-# a human creates the tag, a human approves the deployment.
+# NOTE: the tag is pushed by GITHUB_TOKEN. The tag-protection ruleset must list the
+# GitHub Actions app in its bypass actors (see .github/ruleset/ruleset-tags.json), otherwise
+# tag creation is blocked once the ruleset is enforced (active).
 #
-# NOTE: a tag pushed by GITHUB_TOKEN does NOT trigger this workflow (GitHub prevents
-# recursive triggers). The tag must be pushed by a person or a PAT — which is exactly
-# the intended manual promotion.
-#
-# Required secrets: Same as develop-deploy.yml (including SLACK_WEBHOOK_URL for notify_on_failure / notify_on_deploy)
+# Required secrets: Same as develop-deploy.yml
 
-name: Deploy to Production
+name: Release to Production
 
 on:
-  push:
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version to cut and deploy (format vX.Y.Z, e.g. v1.4.0)'
+        required: true
+        type: string
 
 permissions:
-  contents: read
+  contents: write   # create tag + GitHub Release
   id-token: write
 
 jobs:
-  pipeline:
+  validate:
+    name: Validate version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Check version format and uniqueness
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must match vX.Y.Z (got '$VERSION')"; exit 1
+          fi
+          if git rev-parse "refs/tags/${VERSION}" >/dev/null 2>&1; then
+            echo "::error::tag ${VERSION} already exists (releases are immutable)"; exit 1
+          fi
+          echo "Version ${VERSION} is valid and unused."
+
+  deploy:
+    name: Deploy to prod
+    needs: validate
     uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@main
     with:
       run_build: true
       run_test: false
       run_artifact: true
-      artifact_registry: 'ecr'
-      image_tag: ${{ github.ref_name }}   # use the git tag (vX.Y.Z) as the image tag
+      image_tag: ${{ inputs.version }}     # image tagged with the release version
       run_deploy: true
       deploy_target: 'ec2-vpn'
-      environment: 'prod'
-      # spring_profiles: additional profiles only (concatenated with the environment 'prod'). None needed here.
-      run_tag: false   # tag already exists (this run was triggered by it)
+      environment: 'prod'                  # <- Environment required reviewers gate the deploy
       notify_on_failure: true
       notify_failure_mention: '@channel'
       notify_on_deploy: true
-      # Mount TLS material/keystore from host into the container (read-only).
-      # extra_volumes: |
-      #   - ./certs:/etc/ssl/app:ro
     secrets: inherit
+
+  tag:
+    name: Tag + GitHub Release
+    needs: deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Create tag and release
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! git rev-parse "refs/tags/${VERSION}" >/dev/null 2>&1; then
+            git tag "${VERSION}"
+            git push origin "${VERSION}"
+            echo "::notice::Created tag ${VERSION}."
+          fi
+          gh release view "${VERSION}" >/dev/null 2>&1 \
+            || gh release create "${VERSION}" --title "${VERSION}" --generate-notes
