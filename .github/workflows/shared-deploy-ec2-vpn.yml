@@ -221,12 +221,12 @@ jobs:
           echo "Environment: ${ENVIRONMENT}"
           echo "=========================================="
 
-          # Create directories if not exists
-          if [ ! -d "$DEPLOY_DIR" ]; then
-            echo "Creating directory: $DEPLOY_DIR"
-            sudo mkdir -p "$DEPLOY_DIR"
-            sudo chown ${USER}:${USER} "$DEPLOY_DIR"
-          fi
+          # Ensure deploy dir exists AND is owned by the deploy user — EVERY run, not just on
+          # creation. A pre-existing dir left by root/another user (e.g. a copied AMI) would make
+          # 'start.sh'/'stop.sh' writes fail with "Permission denied".
+          echo "Ensuring deploy dir ownership: $DEPLOY_DIR"
+          sudo mkdir -p "$DEPLOY_DIR"
+          sudo chown -R "$(id -un):$(id -gn)" "$DEPLOY_DIR"
 
           cd "$DEPLOY_DIR"
 
