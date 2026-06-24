@@ -207,7 +207,8 @@ jobs:
           # Create deployment script
           cat > /tmp/deploy.sh << 'DEPLOY_SCRIPT'
           #!/bin/bash
-          set -e
+          set -Eeo pipefail
+          trap 'echo "::error::deploy.sh failed at line ${LINENO}: ${BASH_COMMAND} (exit ${?})"' ERR
 
           DEPLOY_DIR="/opt/docker/${REPO_NAME}"
 
