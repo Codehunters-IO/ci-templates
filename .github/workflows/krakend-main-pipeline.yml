@@ -398,9 +398,9 @@ jobs:
     name: Delete Branch
     # ALWAYS runs on a push/merge (no input flag, no deps, no success gating). Deletes the merged
     # source branch regardless of build/deploy outcome.
-    # continue-on-error: a missing/already-deleted branch (or any cleanup hiccup) must NEVER fail the pipeline.
+    # (Non-fatal handling lives inside shared-delete-branch — continue-on-error is not allowed on a
+    # reusable-workflow `uses:` job.)
     if: github.event_name == 'push'
-    continue-on-error: true
     uses: ./.github/workflows/shared-delete-branch.yml
     secrets: inherit
 

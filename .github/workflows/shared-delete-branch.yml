@@ -31,6 +31,9 @@ jobs:
   delete:
     name: Delete Branch
     runs-on: ubuntu-latest
+    # A cleanup hiccup must never fail the calling pipeline (valid here: this is a normal job,
+    # unlike the reusable-workflow caller).
+    continue-on-error: true
 
     outputs:
       branch: ${{ steps.delete.outputs.branch }}
