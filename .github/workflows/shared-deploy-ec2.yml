@@ -282,10 +282,11 @@ jobs:
           }
 
           # Copy script to EC2 (with retry)
+          # Unreachable host = HARD FAILURE (no silent skip): a green-but-not-deployed pipeline hides problems.
           run_with_retry bash -c "scp $SSH_COMMON_OPTS /tmp/deploy.sh ${AWS_EC2_USER}@${AWS_EC2_HOST}:~/deploy.sh" || {
-            echo "::warning::scp failed after retries — server may be unreachable. Skipping remote deploy."
-            echo "status=skipped_unreachable" >> $GITHUB_OUTPUT
-            exit 0
+            echo "::error::scp failed after retries — host '${AWS_EC2_HOST}' is unreachable. Verify AWS_EC2_HOST (use an IP, not an unresolvable DNS name) and connectivity."
+            echo "status=failed_unreachable" >> $GITHUB_OUTPUT
+            exit 1
           }
 
           # Execute deploy script (with retry on transport error)
