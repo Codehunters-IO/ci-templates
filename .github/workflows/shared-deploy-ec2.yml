@@ -117,7 +117,9 @@ jobs:
         run: |
           # Setup SSH
           mkdir -p ~/.ssh
-          echo "$AWS_EC2_SSH_KEY" > ~/.ssh/deploy_key
+          # Write key: sed converts literal \n (from secrets stored as one-liners) to real newlines;
+          # tr strips \r to guard against Windows-style line endings.
+          printf '%s\n' "$AWS_EC2_SSH_KEY" | sed 's/\\n/\n/g' | tr -d '\r' > ~/.ssh/deploy_key
           chmod 400 ~/.ssh/deploy_key
           # '|| true': ssh-keyscan returns nonzero when the host is unreachable; under `bash -e`
           # that would abort the step silently (stderr hidden) before the scp retry/skip logic runs.
