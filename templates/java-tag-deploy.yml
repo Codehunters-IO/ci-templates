@@ -67,9 +67,6 @@ jobs:
       run_deploy: true
       deploy_target: 'ec2-vpn'
       environment: 'prod'                  # <- Environment required reviewers gate the deploy
-      notify_on_failure: true
-      notify_failure_mention: '@channel'
-      notify_on_deploy: true
     secrets: inherit
 
   tag:

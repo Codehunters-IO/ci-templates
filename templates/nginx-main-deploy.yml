@@ -31,6 +31,4 @@ jobs:
       environment: 'production'
       internal_port: '8080'
       run_tag: true
-      run_notifications: true
-      notify_mention_on_failure: '@channel'
     secrets: inherit

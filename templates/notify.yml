@@ -1,0 +1,19 @@
+# Slack notifications — copy into your repo's .github/workflows/.
+#
+# Fires after the listed pipeline workflow(s) complete and sends a Slack message.
+# Status, branch, actor and any associated Pull Request are auto-derived from the
+# workflow_run event — no parameters. Requires the org variable SLACK_WEBHOOK_URL.
+#
+# Replace the workflow name(s) below with your repo's pipeline workflow name(s)
+# (the `name:` at the top of each pipeline file), and <org> with your GitHub org.
+name: Notify
+
+on:
+  workflow_run:
+    workflows: ["Java - Main Pipeline", "Java - Pull Request Pipeline"]
+    types: [completed]
+
+jobs:
+  notify:
+    uses: <org>/ci-templates/.github/workflows/shared-notifications.yml@main
+    secrets: inherit

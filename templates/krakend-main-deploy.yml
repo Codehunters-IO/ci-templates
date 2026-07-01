@@ -31,8 +31,6 @@ jobs:
       run_deploy: true
       deploy_target: 'ec2-vpn'
       environment: 'cert'
-      run_notifications: true
-      notify_mention_on_failure: '@channel'
       # extra_volumes: default mounts ./certs:/etc/krakend/certs:ro on the host.
       # Place certs at /opt/docker/<repo>/certs/ on the EC2 host before deploy.
       # Override below to add more bind mounts (one per line, leading "- "):

@@ -7,7 +7,8 @@
 # Production is NOT deployed here. Promotion to prod is a MANUAL git tag (vX.Y.Z)
 # handled by tag-deploy.yml — do NOT enable run_tag here (tags must be created by a human).
 #
-# Required secrets: Same as develop-deploy.yml (including SLACK_WEBHOOK_URL for notify_on_failure / notify_on_deploy)
+# Required secrets: Same as develop-deploy.yml. Slack notifications are handled by a
+# separate workflow_run notifier (templates/notify.yml) via the org variable SLACK_WEBHOOK_URL.
 
 name: Deploy to Cert
 
@@ -34,9 +35,6 @@ jobs:
       environment: 'cert'
       # spring_profiles: additional profiles only (concatenated with the environment 'cert'). None needed here.
       # run_tag intentionally omitted: prod promotion is a manual tag (see tag-deploy.yml)
-      notify_on_failure: true
-      notify_failure_mention: '@channel'
-      notify_on_deploy: true
       # Mount TLS material/keystore from host into the container (read-only).
       # Place files at /opt/docker/<repo>/certs/ on the EC2 host before deploy.
       # Pair with container_env_vars (set in the pipeline) to point Spring Boot at them.

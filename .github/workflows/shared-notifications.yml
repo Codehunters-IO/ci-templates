@@ -1,265 +1,104 @@
 name: Shared - Notifications
 
+# Zero-parameter Slack notifier. Everything is auto-derived from the triggering
+# `workflow_run` event that the caller was fired on — status, branch, actor, run URL
+# and any associated Pull Request. SLACK_WEBHOOK_URL is read from org-level `vars`.
 on:
-  workflow_call:
-    inputs:
-      # Providers (comma-separated): slack, teams
-      providers:
-        description: 'Notification providers (comma-separated: slack, teams)'
-        required: true
-        type: string
-
-      # Common inputs
-      status:
-        description: 'Pipeline status: success, failure, cancelled'
-        required: true
-        type: string
-      environment:
-        description: 'Deployment environment (develop, prod)'
-        required: false
-        type: string
-        default: ''
-      version:
-        description: 'Release version (e.g., 1.2.3)'
-        required: false
-        type: string
-        default: ''
-      changelog:
-        description: 'Release changelog (commit list)'
-        required: false
-        type: string
-        default: ''
-      message:
-        description: 'Custom message (overrides default template)'
-        required: false
-        type: string
-        default: ''
-      mention_on_failure:
-        description: 'Mention on failure (Slack: @channel, Teams: @General)'
-        required: false
-        type: string
-        default: ''
-
-      # Channel override (Slack/Teams)
-      channel:
-        description: 'Channel name for Slack/Teams (overrides webhook default)'
-        required: false
-        type: string
-        default: ''
-
-    secrets:
-      SLACK_WEBHOOK_URL:
-        description: 'Slack incoming webhook URL'
-        required: false
-      TEAMS_WEBHOOK_URL:
-        description: 'Microsoft Teams incoming webhook URL'
-        required: false
+  workflow_call: {}
 
 jobs:
   notify:
-    name: Send Notifications
+    name: Send Notification
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     steps:
-      - name: Prepare common context
-        id: context
-        env:
-          STATUS: ${{ inputs.status }}
-          VERSION: ${{ inputs.version }}
-          REPO: ${{ github.repository }}
-        run: |
-          case "$STATUS" in
-            success)   echo "emoji=✅" >> $GITHUB_OUTPUT; echo "color=#36a64f" >> $GITHUB_OUTPUT ;;
-            failure)   echo "emoji=❌" >> $GITHUB_OUTPUT; echo "color=#E01E5A" >> $GITHUB_OUTPUT ;;
-            cancelled) echo "emoji=⚠️" >> $GITHUB_OUTPUT; echo "color=#ECB22E" >> $GITHUB_OUTPUT ;;
-            *)         echo "emoji=ℹ️" >> $GITHUB_OUTPUT; echo "color=#1264A3" >> $GITHUB_OUTPUT ;;
-          esac
-
-          if [ -n "$VERSION" ]; then
-            echo "title=Release v${VERSION} — ${REPO##*/}" >> $GITHUB_OUTPUT
-          else
-            echo "title=Pipeline ${STATUS} — ${REPO##*/}" >> $GITHUB_OUTPUT
-          fi
-
-      # ============================================
-      # SLACK
-      # ============================================
       - name: Send Slack notification
-        if: contains(inputs.providers, 'slack')
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          STATUS: ${{ inputs.status }}
-          ENVIRONMENT: ${{ inputs.environment }}
-          VERSION: ${{ inputs.version }}
-          CHANGELOG: ${{ inputs.changelog }}
-          CUSTOM_MESSAGE: ${{ inputs.message }}
-          MENTION_ON_FAILURE: ${{ inputs.mention_on_failure }}
+          SLACK_WEBHOOK_URL: ${{ vars.SLACK_WEBHOOK_URL }}
+          GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          BRANCH: ${{ github.ref_name }}
-          ACTOR: ${{ github.actor }}
           SERVER_URL: ${{ github.server_url }}
-          RUN_ID: ${{ github.run_id }}
-          CHANNEL: ${{ inputs.channel }}
-          EMOJI: ${{ steps.context.outputs.emoji }}
-          COLOR: ${{ steps.context.outputs.color }}
-          TITLE: ${{ steps.context.outputs.title }}
+          WF_NAME: ${{ github.event.workflow_run.name }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          ACTOR: ${{ github.event.workflow_run.actor.login }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
         run: |
           set -euo pipefail
 
           if [ -z "$SLACK_WEBHOOK_URL" ]; then
-            echo "::warning::Slack provider enabled but SLACK_WEBHOOK_URL secret is not set"
+            echo "::warning::SLACK_WEBHOOK_URL variable is not set, skipping notification"
             exit 0
           fi
 
-          BLOCKS=$(cat <<BLOCKS_EOF
-          [
-            {
-              "type": "header",
-              "text": {"type": "plain_text", "text": "${EMOJI} ${TITLE}", "emoji": true}
-            },
-            {
-              "type": "section",
-              "fields": [
-                {"type": "mrkdwn", "text": "*Repository:*\n<${SERVER_URL}/${REPO}|${REPO}>"},
-                {"type": "mrkdwn", "text": "*Branch:*\n\`${BRANCH}\`"},
-                {"type": "mrkdwn", "text": "*Environment:*\n${ENVIRONMENT:-N/A}"},
-                {"type": "mrkdwn", "text": "*Actor:*\n${ACTOR}"}
-              ]
-            }
-          ]
-          BLOCKS_EOF
-          )
+          # Status → emoji / color
+          case "$CONCLUSION" in
+            success)   EMOJI="✅"; COLOR="#36a64f" ;;
+            failure)   EMOJI="❌"; COLOR="#E01E5A" ;;
+            cancelled) EMOJI="⚠️"; COLOR="#ECB22E" ;;
+            *)         EMOJI="ℹ️"; COLOR="#1264A3" ;;
+          esac
 
-          if [ -n "$CUSTOM_MESSAGE" ]; then
-            BLOCKS=$(echo "$BLOCKS" | jq --arg msg "$CUSTOM_MESSAGE" \
-              '. += [{"type":"section","text":{"type":"mrkdwn","text":$msg}}]')
+          # Pull Request context — populated for same-repo pull_request runs.
+          # Title/author aren't in the workflow_run payload, so fetch them.
+          PR_URL=""; PR_TITLE=""; PR_AUTHOR=""
+          if [ -n "${PR_NUMBER:-}" ]; then
+            PR_JSON=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" 2>/dev/null || echo '{}')
+            PR_URL=$(echo "$PR_JSON" | jq -r '.html_url // ""')
+            PR_TITLE=$(echo "$PR_JSON" | jq -r '.title // ""')
+            PR_AUTHOR=$(echo "$PR_JSON" | jq -r '.user.login // ""')
+            EMOJI="🔀"
           fi
 
-          if [ -n "$VERSION" ] && [ -n "$CHANGELOG" ]; then
-            BLOCKS=$(echo "$BLOCKS" | jq --arg cl "*Changelog:*\n${CHANGELOG}" \
-              '. += [{"type":"section","text":{"type":"mrkdwn","text":$cl}}]')
-          fi
-
-          if [ "$STATUS" = "failure" ] && [ -n "$MENTION_ON_FAILURE" ]; then
-            BLOCKS=$(echo "$BLOCKS" | jq --arg m "${MENTION_ON_FAILURE} Pipeline failed — attention needed" \
-              '. += [{"type":"section","text":{"type":"mrkdwn","text":$m}}]')
-          fi
-
-          BLOCKS=$(echo "$BLOCKS" | jq --arg url "${SERVER_URL}/${REPO}/actions/runs/${RUN_ID}" \
-            '. += [{"type":"actions","elements":[{"type":"button","text":{"type":"plain_text","text":"View Run"},"url":$url}]}]')
-
-          # Build payload with optional channel override
-          if [ -n "$CHANNEL" ]; then
-            PAYLOAD=$(jq -n --argjson blocks "$BLOCKS" --arg color "$COLOR" --arg ch "$CHANNEL" \
-              '{channel: $ch, blocks: $blocks, attachments: [{color: $color, blocks: []}]}')
+          if [ -n "$PR_URL" ]; then
+            TITLE="Pull Request #${PR_NUMBER} — ${REPO##*/}"
           else
-            PAYLOAD=$(jq -n --argjson blocks "$BLOCKS" --arg color "$COLOR" \
-              '{blocks: $blocks, attachments: [{color: $color, blocks: []}]}')
+            TITLE="${WF_NAME} ${CONCLUSION} — ${REPO##*/}"
           fi
+
+          BLOCKS=$(jq -n --arg h "${EMOJI} ${TITLE}" \
+            '[{"type":"header","text":{"type":"plain_text","text":$h,"emoji":true}}]')
+
+          BLOCKS=$(echo "$BLOCKS" | jq \
+            --arg repo "<${SERVER_URL}/${REPO}|${REPO}>" \
+            --arg branch "\`${BRANCH}\`" \
+            --arg status "${CONCLUSION}" \
+            --arg actor "${ACTOR}" \
+            '. += [{"type":"section","fields":[
+              {"type":"mrkdwn","text":("*Repository:*\n" + $repo)},
+              {"type":"mrkdwn","text":("*Branch:*\n" + $branch)},
+              {"type":"mrkdwn","text":("*Status:*\n" + $status)},
+              {"type":"mrkdwn","text":("*Actor:*\n" + $actor)}
+            ]}]')
+
+          if [ -n "$PR_URL" ]; then
+            BLOCKS=$(echo "$BLOCKS" | jq \
+              --arg pr "*Pull Request:*\n<${PR_URL}|#${PR_NUMBER} ${PR_TITLE}>" \
+              --arg author "*Author:*\n${PR_AUTHOR:-N/A}" \
+              '. += [{"type":"section","fields":[
+                {"type":"mrkdwn","text":$pr},
+                {"type":"mrkdwn","text":$author}
+              ]}]')
+            BTN_TEXT="View PR"; BTN_URL="$PR_URL"
+          else
+            BTN_TEXT="View Run"; BTN_URL="$RUN_URL"
+          fi
+
+          BLOCKS=$(echo "$BLOCKS" | jq --arg url "$BTN_URL" --arg t "$BTN_TEXT" \
+            '. += [{"type":"actions","elements":[{"type":"button","text":{"type":"plain_text","text":$t},"url":$url}]}]')
+
+          PAYLOAD=$(jq -n --argjson blocks "$BLOCKS" --arg color "$COLOR" \
+            '{blocks: $blocks, attachments: [{color: $color, blocks: []}]}')
 
           HTTP_CODE=$(curl -s -o /tmp/slack_response.txt -w "%{http_code}" \
             -X POST -H "Content-Type: application/json" \
             -d "$PAYLOAD" "$SLACK_WEBHOOK_URL")
 
-          if [ "$HTTP_CODE" -ne 200 ]; then
-            echo "::warning::Slack notification failed with HTTP $HTTP_CODE"
+          if [ "$HTTP_CODE" -eq 200 ]; then
+            echo "Slack notification sent"
+          else
+            echo "::warning::Slack notification failed (HTTP $HTTP_CODE)"
             cat /tmp/slack_response.txt
-          else
-            echo "Slack notification sent successfully"
           fi
-
-      # ============================================
-      # MICROSOFT TEAMS
-      # ============================================
-      - name: Send Teams notification
-        if: contains(inputs.providers, 'teams')
-        env:
-          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
-          STATUS: ${{ inputs.status }}
-          ENVIRONMENT: ${{ inputs.environment }}
-          VERSION: ${{ inputs.version }}
-          CHANGELOG: ${{ inputs.changelog }}
-          CUSTOM_MESSAGE: ${{ inputs.message }}
-          MENTION_ON_FAILURE: ${{ inputs.mention_on_failure }}
-          REPO: ${{ github.repository }}
-          BRANCH: ${{ github.ref_name }}
-          ACTOR: ${{ github.actor }}
-          SERVER_URL: ${{ github.server_url }}
-          RUN_ID: ${{ github.run_id }}
-          EMOJI: ${{ steps.context.outputs.emoji }}
-          COLOR: ${{ steps.context.outputs.color }}
-          TITLE: ${{ steps.context.outputs.title }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "$TEAMS_WEBHOOK_URL" ]; then
-            echo "::warning::Teams provider enabled but TEAMS_WEBHOOK_URL secret is not set"
-            exit 0
-          fi
-
-          # Build facts array
-          FACTS=$(jq -n \
-            --arg repo "$REPO" \
-            --arg branch "$BRANCH" \
-            --arg env "${ENVIRONMENT:-N/A}" \
-            --arg actor "$ACTOR" \
-            '[
-              {"name": "Repository", "value": $repo},
-              {"name": "Branch", "value": $branch},
-              {"name": "Environment", "value": $env},
-              {"name": "Actor", "value": $actor}
-            ]')
-
-          # Build sections
-          SECTIONS=$(jq -n --argjson facts "$FACTS" \
-            '[{"activityTitle": "Pipeline Details", "facts": $facts}]')
-
-          if [ -n "$VERSION" ] && [ -n "$CHANGELOG" ]; then
-            SECTIONS=$(echo "$SECTIONS" | jq --arg cl "$CHANGELOG" \
-              '. += [{"activityTitle": "Changelog", "text": $cl}]')
-          fi
-
-          if [ -n "$CUSTOM_MESSAGE" ]; then
-            SECTIONS=$(echo "$SECTIONS" | jq --arg msg "$CUSTOM_MESSAGE" \
-              '. += [{"activityTitle": "Message", "text": $msg}]')
-          fi
-
-          TEXT=""
-          if [ "$STATUS" = "failure" ] && [ -n "$MENTION_ON_FAILURE" ]; then
-            TEXT="${MENTION_ON_FAILURE} Pipeline failed — attention needed"
-          fi
-
-          # Build MessageCard payload
-          PAYLOAD=$(jq -n \
-            --arg color "$COLOR" \
-            --arg title "${EMOJI} ${TITLE}" \
-            --arg text "$TEXT" \
-            --argjson sections "$SECTIONS" \
-            --arg url "${SERVER_URL}/${REPO}/actions/runs/${RUN_ID}" \
-            '{
-              "@type": "MessageCard",
-              "@context": "https://schema.org/extensions",
-              "themeColor": ($color | ltrimstr("#")),
-              "summary": $title,
-              "title": $title,
-              "text": $text,
-              "sections": $sections,
-              "potentialAction": [{
-                "@type": "OpenUri",
-                "name": "View Run",
-                "targets": [{"os": "default", "uri": $url}]
-              }]
-            }')
-
-          HTTP_CODE=$(curl -s -o /tmp/teams_response.txt -w "%{http_code}" \
-            -X POST -H "Content-Type: application/json" \
-            -d "$PAYLOAD" "$TEAMS_WEBHOOK_URL")
-
-          if [ "$HTTP_CODE" -ne 200 ]; then
-            echo "::warning::Teams notification failed with HTTP $HTTP_CODE"
-            cat /tmp/teams_response.txt
-          else
-            echo "Teams notification sent successfully"
-          fi
-

@@ -83,21 +83,6 @@ on:
         required: false
         type: string
         default: 'bug,pipeline-failure'
-      run_notifications:
-        description: 'Send notifications after pipeline completes'
-        required: false
-        type: boolean
-        default: false
-      notify_providers:
-        description: 'Notification providers (comma-separated: slack, teams)'
-        required: false
-        type: string
-        default: 'slack'
-      notify_mention_on_failure:
-        description: 'Mention on failure (Slack: @channel, Teams: @General)'
-        required: false
-        type: string
-        default: ''
       run_cleanup:
         description: 'Delete merged branch after deploy'
         required: false
@@ -427,25 +412,6 @@ jobs:
       (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success')
     needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release]
     uses: ./.github/workflows/shared-tag-release.yml
-    secrets: inherit
-
-  # ============================================
-  # NOTIFY - Notifications (runs last, always)
-  # ============================================
-  notify:
-    name: Notify
-    if: |
-      inputs.run_notifications &&
-      always()
-    needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release, tag]
-    uses: ./.github/workflows/shared-notifications.yml
-    with:
-      providers: ${{ inputs.notify_providers }}
-      status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.artifact.result == 'failure' || needs.deploy-ec2.result == 'failure' || needs.deploy-ec2-vpn.result == 'failure' || needs.deploy-eks.result == 'failure') && 'failure' || (needs.build.result == 'cancelled') && 'cancelled' || 'success' }}
-      environment: ${{ inputs.environment }}
-      version: ${{ needs.release.outputs.version }}
-      changelog: ${{ needs.release.outputs.changelog }}
-      mention_on_failure: ${{ inputs.notify_mention_on_failure }}
     secrets: inherit
 
   # ============================================
