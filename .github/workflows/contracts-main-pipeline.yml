@@ -417,6 +417,19 @@ jobs:
     secrets: inherit
 
   # ============================================
+  # NOTIFY - Slack notification (final, auto-derived)
+  # ============================================
+  notify:
+    name: Notify
+    if: always()
+    needs: [commit-lint, security, dependency-review, build, test, artifact, deploy-ec2, deploy-ec2-vpn, release, cleanup, tag]
+    uses: ./.github/workflows/shared-notifications.yml
+    with:
+      status: ${{ contains(needs.*.result, 'failure') && 'failure' || contains(needs.*.result, 'cancelled') && 'cancelled' || 'success' }}
+      environment: ${{ inputs.environment }}
+    secrets: inherit
+
+  # ============================================
   # CREATE ISSUE - On failure (runs last, always)
   # ============================================
   create-issue:

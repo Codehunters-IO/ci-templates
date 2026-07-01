@@ -140,27 +140,25 @@ Configure in **Settings → Secrets and variables → Actions**.
 
 ### Notifications (Slack)
 
-Notifications are decoupled from the pipelines. Copy `templates/notify.yml` into your repo;
-it fires `on: workflow_run` after your pipeline(s) finish and posts a Slack message. Everything
-(status, branch, actor, run link, and any associated Pull Request) is auto-derived from the
-`workflow_run` event — the reusable `shared-notifications.yml` takes **no inputs**.
+Notifications are **built into the pipelines** — consumer repos add nothing. Each
+`*-main-pipeline` ends with a `notify` job (`if: always()`) that calls the reusable
+`shared-notifications.yml` with the aggregate `status`; everything else (kind, branch,
+actor, PR title/author/reviewers, commit description, failed stage on failure,
+environment) is auto-derived from context. PR runs flow through `*-main-pipeline` too,
+so the same job covers deploys and PRs.
 
-- **Webhook:** org-level **variable** `SLACK_WEBHOOK_URL` (not a secret) — auto-propagated to
-  reusable workflows via the `vars` context. If unset, the notifier warns and skips.
-- **Pull Requests:** for same-repo PR runs, the message links the PR (`#N`, title, author).
+Delivery uses a **Slack bot token** via `chat.postMessage`, with the channel chosen by
+run kind:
 
-```yaml
-# .github/workflows/notify.yml
-name: Notify
-on:
-  workflow_run:
-    workflows: ["Java - Main Pipeline", "Java - Pull Request Pipeline"]
-    types: [completed]
-jobs:
-  notify:
-    uses: <org>/ci-templates/.github/workflows/shared-notifications.yml@main
-    secrets: inherit
-```
+| What | Where | Value |
+|------|-------|-------|
+| `SLACK_BOT_TOKEN` | org **secret** | Bot User OAuth token `xoxb-…`, scope `chat:write` (+ `chat:write.public`) |
+| `SLACK_CHANNEL_PR` | org **variable** | channel for PR runs (e.g. `pipeline-prs`) |
+| `SLACK_CHANNEL_DEPLOY` | org **variable** | channel for deploy runs (e.g. `deployments`) |
+| `SLACK_CHANNEL` | org **variable** | fallback channel |
+
+The token propagates into the reusable via `secrets: inherit` (already set on every
+pipeline job). If the token or the matching channel is unset, the notifier warns and skips.
 
 ### Issue Tracking
 
@@ -203,7 +201,7 @@ ci-templates/
 │   ├── shared-deploy-ec2.yml
 │   ├── shared-deploy-ec2-vpn.yml
 │   ├── shared-deploy-eks.yml
-│   ├── shared-notifications.yml    # zero-param Slack notifier (workflow_run driven)
+│   ├── shared-notifications.yml    # in-pipeline Slack notifier (bot token, chat.postMessage)
 │   └── ...
 ├── templates/                    # Copy these to your repo
 │   ├── java-*.yml                #   develop-deploy · main-deploy · tag-deploy (workflow_dispatch)
