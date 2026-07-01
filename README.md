@@ -23,10 +23,11 @@ feature/* ──► build
      ▼ (merge to develop)   build → test → coverage → owasp
      │                              → artifact (ECR) → deploy (DEVELOP)
      │                              → delete merged feature branch
-     │                              → auto-create branch release/vX.Y.Z (semver)   ← no PR, no deploy
+     │                              → auto-create branch release/vX.Y.Z (semver)   ← no deploy
+     │                              → auto-open PR release/vX.Y.Z -> main, changelog in body
      │                       └── uses java-main-pipeline.yml
      │
-     ▼ (release/vX.Y.Z)     open a PR to main manually (stabilization branch — no deploy)
+     ▼ (release/vX.Y.Z)     PR is already open — review & merge when ready (stabilization branch — no deploy)
      │
      ▼ (merge to main)      build → artifact (ECR) → deploy (CERT)
      │                              → delete merged release branch
@@ -39,8 +40,10 @@ feature/* ──► build
 > **Environments map to branches/tags.** `develop` → `develop`, `main` → `cert`, prod release → `prod`.
 >
 > **Release branch:** every merge to `develop` auto-creates a `release/vX.Y.Z` branch (semver from
-> commit messages). It does **not** deploy and **no PR is opened automatically** — open the PR to
-> `main` manually when ready. Merging it to `main` deploys to `cert`.
+> commit messages) and **opens a PR** `release/vX.Y.Z -> main` with the changelog (commit subjects
+> since `main`) in the PR body, so whoever approves it sees what's shipping. It does **not** deploy.
+> If a PR for that branch is already open, it's reused (not duplicated) on subsequent pushes to
+> `develop`. Merging it to `main` deploys to `cert`.
 >
 > **Production:** promoted via the manual **`Release to Production`** workflow (`workflow_dispatch`,
 > run **only from `main`** with a `version` input). It deploys to `prod` behind the `prod` Environment's
@@ -186,8 +189,8 @@ with:
 | `NVD_API_KEY` | OWASP Dependency Check (`run_owasp: true`) |
 | `QODANA_TOKEN` | Qodana (`code_analysis: 'qodana'`) |
 
-> The release flow only **creates a branch** (`release/vX.Y.Z`) via `GITHUB_TOKEN` — no PAT is needed
-> (the PR to `main` is opened manually). The prod release tag is created by GitHub Actions, which
+> The release flow **creates the `release/vX.Y.Z` branch and opens its PR to `main`** via
+> `GITHUB_TOKEN` — no PAT is needed. The prod release tag is created by GitHub Actions, which
 > bypasses the tag ruleset (see Rulesets below).
 
 ## Directory Structure

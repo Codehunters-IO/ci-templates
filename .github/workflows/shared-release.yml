@@ -2,12 +2,13 @@ name: Shared - Create Release Branch
 
 # Simple release-branch flow (triggered on merge to develop):
 #   develop --(semver)--> creates branch release/vX.Y.Z (pushed, targets main)
-# This ONLY creates the branch. No PR is opened automatically — open the PR to main
-# manually (or via your own process) when ready. Merging that branch to main deploys to
-# CERT; production is reached only by a MANUAL semver tag vX.Y.Z (see tag-deploy / tag-pipeline).
+#                       --> opens a PR release/vX.Y.Z -> main with the changelog in the body
+# Merging that PR to main deploys to CERT; production is reached only by a MANUAL semver
+# tag vX.Y.Z (see tag-deploy / tag-pipeline).
 #
 # Required caller permissions:
 #   contents: write        # create/push the release/vX.Y.Z branch
+#   pull-requests: write   # open the release PR
 
 on:
   workflow_call:
@@ -35,6 +36,12 @@ on:
       release_branch:
         description: 'Release branch created (release/vX.Y.Z)'
         value: ${{ jobs.release.outputs.release_branch }}
+      pr_url:
+        description: 'Release PR URL (release/vX.Y.Z -> target_branch)'
+        value: ${{ jobs.release.outputs.pr_url }}
+      changelog:
+        description: 'Changelog (commit subjects) included in the release PR'
+        value: ${{ jobs.release.outputs.changelog }}
 
 concurrency:
   group: shared-release-${{ github.repository }}-${{ inputs.base_branch }}
@@ -48,6 +55,8 @@ jobs:
     outputs:
       version: ${{ steps.semver.outputs.version }}
       release_branch: ${{ steps.branch.outputs.release_branch }}
+      pr_url: ${{ steps.pr.outputs.pr_url }}
+      changelog: ${{ steps.changelog.outputs.changelog }}
 
     steps:
       - name: Validate release flow
@@ -135,6 +144,52 @@ jobs:
             echo "::notice::Created ${RELEASE_BRANCH} from ${BASE_BRANCH}."
           fi
 
+      - name: Generate changelog
+        id: changelog
+        if: steps.guard.outputs.skip == 'false' && steps.diff.outputs.skip == 'false'
+        env:
+          BASE_BRANCH: ${{ inputs.base_branch }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+        run: |
+          {
+            echo "changelog<<CHANGELOG_EOF"
+            git log --pretty=format:'- %s (%h)' "origin/${TARGET_BRANCH}..origin/${BASE_BRANCH}"
+            echo ""
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open release PR
+        id: pr
+        if: steps.guard.outputs.skip == 'false' && steps.diff.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.semver.outputs.version }}
+          RELEASE_BRANCH: ${{ steps.branch.outputs.release_branch }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+          CHANGELOG: ${{ steps.changelog.outputs.changelog }}
+        run: |
+          EXISTING_PR="$(gh pr list --state open --head "${RELEASE_BRANCH}" --base "${TARGET_BRANCH}" --json url --jq '.[0].url // empty')"
+          if [ -n "${EXISTING_PR}" ]; then
+            echo "::notice::Release PR already open: ${EXISTING_PR}"
+            echo "pr_url=${EXISTING_PR}" >> "$GITHUB_OUTPUT"
+          else
+            printf '## Changelog\n\n%s\n' "${CHANGELOG}" > /tmp/release-pr-body.md
+            PR_URL="$(gh pr create \
+              --title "Release v${VERSION}" \
+              --base "${TARGET_BRANCH}" \
+              --head "${RELEASE_BRANCH}" \
+              --body-file /tmp/release-pr-body.md)"
+            echo "::notice::Created release PR: ${PR_URL}"
+            echo "pr_url=${PR_URL}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Write summary
+        if: steps.guard.outputs.skip == 'false' && steps.diff.outputs.skip == 'false'
+        env:
+          VERSION: ${{ steps.semver.outputs.version }}
+          RELEASE_BRANCH: ${{ steps.branch.outputs.release_branch }}
+          PR_URL: ${{ steps.pr.outputs.pr_url }}
+        run: |
           {
             echo "### Release branch"
             echo ""
@@ -142,8 +197,7 @@ jobs:
             echo "|----------|-------|"
             echo "| Version | v${VERSION} |"
             echo "| Branch | ${RELEASE_BRANCH} |"
-            echo "| From | ${BASE_BRANCH} |"
-            echo "| Intended target | ${{ inputs.target_branch }} |"
-            echo ""
-            echo "_Open a PR to \`${{ inputs.target_branch }}\` when ready (no PR is created automatically)._"
+            echo "| From | ${{ inputs.base_branch }} |"
+            echo "| Target | ${{ inputs.target_branch }} |"
+            echo "| PR | ${PR_URL} |"
           } >> "$GITHUB_STEP_SUMMARY"
