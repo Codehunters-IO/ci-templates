@@ -1,8 +1,12 @@
 name: Shared - Notifications
 
 # Zero-parameter Slack notifier. Everything is auto-derived from the triggering
-# `workflow_run` event that the caller was fired on — status, branch, actor, run URL
-# and any associated Pull Request. SLACK_WEBHOOK_URL is read from org-level `vars`.
+# `workflow_run` event — status, branch, actor, commit message and any associated PR.
+#
+# Webhook routing (org-level `vars`, auto-propagated to reusable workflows):
+#   - PR runs      -> vars.SLACK_WEBHOOK_URL_PR
+#   - deploy runs  -> vars.SLACK_WEBHOOK_URL_DEPLOY
+#   - fallback     -> vars.SLACK_WEBHOOK_URL   (used if the specific one is unset)
 on:
   workflow_call: {}
 
@@ -15,7 +19,9 @@ jobs:
     steps:
       - name: Send Slack notification
         env:
-          SLACK_WEBHOOK_URL: ${{ vars.SLACK_WEBHOOK_URL }}
+          WEBHOOK_PR: ${{ vars.SLACK_WEBHOOK_URL_PR }}
+          WEBHOOK_DEPLOY: ${{ vars.SLACK_WEBHOOK_URL_DEPLOY }}
+          WEBHOOK_DEFAULT: ${{ vars.SLACK_WEBHOOK_URL }}
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           SERVER_URL: ${{ github.server_url }}
@@ -24,16 +30,24 @@ jobs:
           BRANCH: ${{ github.event.workflow_run.head_branch }}
           ACTOR: ${{ github.event.workflow_run.actor.login }}
           RUN_URL: ${{ github.event.workflow_run.html_url }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          COMMIT_MSG: ${{ github.event.workflow_run.head_commit.message }}
           PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
         run: |
           set -euo pipefail
 
+          # --- classify PR vs deploy, pick webhook ---
+          if [ -n "${PR_NUMBER:-}" ]; then
+            KIND=pr;     SLACK_WEBHOOK_URL="${WEBHOOK_PR:-$WEBHOOK_DEFAULT}"
+          else
+            KIND=deploy; SLACK_WEBHOOK_URL="${WEBHOOK_DEPLOY:-$WEBHOOK_DEFAULT}"
+          fi
           if [ -z "$SLACK_WEBHOOK_URL" ]; then
-            echo "::warning::SLACK_WEBHOOK_URL variable is not set, skipping notification"
+            echo "::warning::No Slack webhook variable set for kind=$KIND, skipping"
             exit 0
           fi
 
-          # Status → emoji / color
+          # --- status → emoji / color ---
           case "$CONCLUSION" in
             success)   EMOJI="✅"; COLOR="#36a64f" ;;
             failure)   EMOJI="❌"; COLOR="#E01E5A" ;;
@@ -41,51 +55,89 @@ jobs:
             *)         EMOJI="ℹ️"; COLOR="#1264A3" ;;
           esac
 
-          # Pull Request context — populated for same-repo pull_request runs.
-          # Title/author aren't in the workflow_run payload, so fetch them.
-          PR_URL=""; PR_TITLE=""; PR_AUTHOR=""
-          if [ -n "${PR_NUMBER:-}" ]; then
+          # --- derive environment from the pipeline name (deploys) ---
+          case "$WF_NAME" in
+            *"Deploy to Cert"*)                             ENVIRON="cert" ;;
+            *"Deploy to Production"*|*"Release to Production"*) ENVIRON="prod" ;;
+            *"Develop Pipeline"*|*"Develop Build"*)         ENVIRON="develop" ;;
+            *"Publish to Main"*|*"Main Build"*)             ENVIRON="main" ;;
+            *)                                              ENVIRON="" ;;
+          esac
+
+          # --- PR context (title/author/reviewers not in workflow_run payload → fetch) ---
+          PR_URL=""; PR_TITLE=""; PR_AUTHOR=""; PR_REVIEWERS=""
+          if [ "$KIND" = pr ]; then
             PR_JSON=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" 2>/dev/null || echo '{}')
             PR_URL=$(echo "$PR_JSON" | jq -r '.html_url // ""')
             PR_TITLE=$(echo "$PR_JSON" | jq -r '.title // ""')
             PR_AUTHOR=$(echo "$PR_JSON" | jq -r '.user.login // ""')
+            PR_REVIEWERS=$(echo "$PR_JSON" | jq -r \
+              '([.requested_reviewers[]?.login] + [.requested_teams[]?.slug]) | join(", ")')
             EMOJI="🔀"
           fi
 
-          if [ -n "$PR_URL" ]; then
+          # --- on failure, list the stage(s) that failed ---
+          FAILED_JOBS=""
+          if [ "$CONCLUSION" = failure ] && [ -n "${RUN_ID:-}" ]; then
+            FAILED_JOBS=$(gh api "repos/${REPO}/actions/runs/${RUN_ID}/jobs" --paginate 2>/dev/null \
+              | jq -r '[.jobs[] | select(.conclusion=="failure") | .name] | join(", ")' 2>/dev/null || echo "")
+          fi
+
+          if [ "$KIND" = pr ]; then
             TITLE="Pull Request #${PR_NUMBER} — ${REPO##*/}"
           else
             TITLE="${WF_NAME} ${CONCLUSION} — ${REPO##*/}"
           fi
 
+          # --- header + info fields ---
           BLOCKS=$(jq -n --arg h "${EMOJI} ${TITLE}" \
             '[{"type":"header","text":{"type":"plain_text","text":$h,"emoji":true}}]')
 
-          BLOCKS=$(echo "$BLOCKS" | jq \
+          FIELDS=$(jq -n \
             --arg repo "<${SERVER_URL}/${REPO}|${REPO}>" \
             --arg branch "\`${BRANCH}\`" \
             --arg status "${CONCLUSION}" \
             --arg actor "${ACTOR}" \
-            '. += [{"type":"section","fields":[
-              {"type":"mrkdwn","text":("*Repository:*\n" + $repo)},
-              {"type":"mrkdwn","text":("*Branch:*\n" + $branch)},
-              {"type":"mrkdwn","text":("*Status:*\n" + $status)},
-              {"type":"mrkdwn","text":("*Actor:*\n" + $actor)}
-            ]}]')
+            '[{"type":"mrkdwn","text":("*Repository:*\n"+$repo)},
+              {"type":"mrkdwn","text":("*Branch:*\n"+$branch)},
+              {"type":"mrkdwn","text":("*Status:*\n"+$status)},
+              {"type":"mrkdwn","text":("*Actor:*\n"+$actor)}]')
+          if [ -n "$ENVIRON" ]; then
+            FIELDS=$(echo "$FIELDS" | jq --arg e "$ENVIRON" '. += [{"type":"mrkdwn","text":("*Environment:*\n"+$e)}]')
+          fi
+          BLOCKS=$(echo "$BLOCKS" | jq --argjson f "$FIELDS" '. += [{"type":"section","fields":$f}]')
 
-          if [ -n "$PR_URL" ]; then
+          # --- description: PR title for PRs, else the commit message (first line) ---
+          if [ "$KIND" = pr ] && [ -n "$PR_URL" ]; then
             BLOCKS=$(echo "$BLOCKS" | jq \
               --arg pr "*Pull Request:*\n<${PR_URL}|#${PR_NUMBER} ${PR_TITLE}>" \
               --arg author "*Author:*\n${PR_AUTHOR:-N/A}" \
+              --arg rev "*Reviewers:*\n${PR_REVIEWERS:-—}" \
               '. += [{"type":"section","fields":[
                 {"type":"mrkdwn","text":$pr},
-                {"type":"mrkdwn","text":$author}
+                {"type":"mrkdwn","text":$author},
+                {"type":"mrkdwn","text":$rev}
               ]}]')
+          else
+            DESC=$(printf '%s' "$COMMIT_MSG" | head -n1)
+            if [ -n "$DESC" ]; then
+              BLOCKS=$(echo "$BLOCKS" | jq --arg d "*Description:*\n${DESC}" \
+                '. += [{"type":"section","text":{"type":"mrkdwn","text":$d}}]')
+            fi
+          fi
+
+          # --- failed stage(s) on failure ---
+          if [ -n "$FAILED_JOBS" ]; then
+            BLOCKS=$(echo "$BLOCKS" | jq --arg s "*Failed stage(s):*\n${FAILED_JOBS}" \
+              '. += [{"type":"section","text":{"type":"mrkdwn","text":$s}}]')
+          fi
+
+          # --- action button ---
+          if [ "$KIND" = pr ] && [ -n "$PR_URL" ]; then
             BTN_TEXT="View PR"; BTN_URL="$PR_URL"
           else
             BTN_TEXT="View Run"; BTN_URL="$RUN_URL"
           fi
-
           BLOCKS=$(echo "$BLOCKS" | jq --arg url "$BTN_URL" --arg t "$BTN_TEXT" \
             '. += [{"type":"actions","elements":[{"type":"button","text":{"type":"plain_text","text":$t},"url":$url}]}]')
 
@@ -97,7 +149,7 @@ jobs:
             -d "$PAYLOAD" "$SLACK_WEBHOOK_URL")
 
           if [ "$HTTP_CODE" -eq 200 ]; then
-            echo "Slack notification sent"
+            echo "Slack notification sent (kind=$KIND)"
           else
             echo "::warning::Slack notification failed (HTTP $HTTP_CODE)"
             cat /tmp/slack_response.txt
