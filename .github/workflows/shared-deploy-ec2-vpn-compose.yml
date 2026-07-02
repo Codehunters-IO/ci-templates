@@ -1,0 +1,225 @@
+name: Shared - Deploy Compose Stack to EC2 (WireGuard VPN)
+
+# Deploys a MULTI-SERVICE docker-compose stack (e.g. the observability LGTM stack)
+# to an EC2 host over WireGuard. Unlike shared-deploy-ec2-vpn.yml (single ECR image),
+# this syncs the repository (compose file + config dirs) to the host and runs
+# `docker compose up -d`. Upstream images are pulled by compose; no ECR build needed.
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      environment:
+        description: 'GitHub environment (develop, prod)'
+        required: false
+        type: string
+        default: 'develop'
+      compose_file:
+        description: 'Compose file name at the repo root'
+        required: false
+        type: string
+        default: 'docker-compose.yml'
+      external_networks:
+        description: 'External docker networks to ensure exist (space-separated)'
+        required: false
+        type: string
+        default: 'soldife_net'
+      external_volumes:
+        description: 'External docker volumes to ensure exist (space-separated)'
+        required: false
+        type: string
+        default: 'shared_logs'
+      verify_vpn_connectivity:
+        description: 'Run ping check to EC2 host before deploying'
+        required: false
+        type: boolean
+        default: false
+
+    secrets:
+      AWS_EC2_HOST:
+        required: true
+      AWS_EC2_USER:
+        required: true
+      AWS_EC2_SSH_KEY:
+        required: true
+      WG_PRIVATE_KEY:
+        required: true
+      WG_ADDRESS:
+        required: true
+      WG_DNS:
+        required: false
+      WG_PEER_PUBLIC_KEY:
+        required: true
+      WG_PEER_ALLOWED_IPS:
+        required: true
+      WG_PEER_ENDPOINT:
+        required: true
+      # Optional: contents written to <deploy_dir>/.env before `compose up`
+      # (e.g. Grafana admin password, OIDC client secret). Left empty = compose defaults.
+      STACK_ENV_FILE:
+        required: false
+
+    outputs:
+      deploy_status:
+        description: 'Deployment status'
+        value: ${{ jobs.deploy.outputs.status }}
+
+jobs:
+  deploy:
+    name: Deploy compose stack via WireGuard
+    runs-on: ${{ inputs.runner }}
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 20
+
+    outputs:
+      status: ${{ steps.deploy.outputs.status }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set repository name
+        id: repo
+        run: |
+          REPO_NAME="${{ github.repository }}"
+          REPO_NAME="${REPO_NAME##*/}"
+          echo "name=$REPO_NAME" >> $GITHUB_OUTPUT
+          echo "Repository name: $REPO_NAME"
+
+      - name: Install WireGuard
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq wireguard wireguard-tools resolvconf rsync
+          wg --version
+
+      - name: Setup WireGuard tunnel
+        id: wg
+        env:
+          WG_IFACE: wg0
+          WG_PRIVATE_KEY: ${{ secrets.WG_PRIVATE_KEY }}
+          WG_ADDRESS: ${{ secrets.WG_ADDRESS }}
+          WG_DNS: ${{ secrets.WG_DNS }}
+          WG_PEER_PUBLIC_KEY: ${{ secrets.WG_PEER_PUBLIC_KEY }}
+          WG_PEER_ALLOWED_IPS: ${{ secrets.WG_PEER_ALLOWED_IPS }}
+          WG_PEER_ENDPOINT: ${{ secrets.WG_PEER_ENDPOINT }}
+        run: |
+          set -e
+          WG_CONF_PATH="/etc/wireguard/${WG_IFACE}.conf"
+          sudo mkdir -p /etc/wireguard
+          {
+            echo "[Interface]"
+            echo "PrivateKey = ${WG_PRIVATE_KEY}"
+            echo "Address = ${WG_ADDRESS}"
+            if [ -n "${WG_DNS}" ]; then echo "DNS = ${WG_DNS}"; fi
+            echo ""
+            echo "[Peer]"
+            echo "PublicKey = ${WG_PEER_PUBLIC_KEY}"
+            echo "AllowedIPs = ${WG_PEER_ALLOWED_IPS}"
+            echo "Endpoint = ${WG_PEER_ENDPOINT}"
+            echo "PersistentKeepalive = 25"
+          } | sudo tee "$WG_CONF_PATH" > /dev/null
+          sudo chmod 600 "$WG_CONF_PATH"
+          sudo wg-quick up "$WG_IFACE"
+          sudo wg show "$WG_IFACE"
+          echo "started=true" >> $GITHUB_OUTPUT
+
+      - name: Verify VPN connectivity to EC2
+        if: inputs.verify_vpn_connectivity
+        env:
+          AWS_EC2_HOST: ${{ secrets.AWS_EC2_HOST }}
+        run: |
+          for i in 1 2 3 4 5; do
+            if ping -c 1 -W 3 "${AWS_EC2_HOST}" >/dev/null 2>&1; then
+              echo "VPN connectivity OK (attempt $i)"; exit 0
+            fi
+            echo "Attempt $i failed, retrying..."; sleep 2
+          done
+          echo "WARNING: ping failed, will still try SSH"
+
+      - name: Deploy compose stack via SSH
+        id: deploy
+        env:
+          AWS_EC2_HOST: ${{ secrets.AWS_EC2_HOST }}
+          AWS_EC2_USER: ${{ secrets.AWS_EC2_USER }}
+          AWS_EC2_SSH_KEY: ${{ secrets.AWS_EC2_SSH_KEY }}
+          STACK_ENV_FILE: ${{ secrets.STACK_ENV_FILE }}
+          REPO_NAME: ${{ steps.repo.outputs.name }}
+          COMPOSE_FILE: ${{ inputs.compose_file }}
+          EXTERNAL_NETWORKS: ${{ inputs.external_networks }}
+          EXTERNAL_VOLUMES: ${{ inputs.external_volumes }}
+        run: |
+          set -Eeo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$AWS_EC2_SSH_KEY" | sed 's/\\n/\n/g' | tr -d '\r' > ~/.ssh/deploy_key
+          chmod 400 ~/.ssh/deploy_key
+          ssh-keyscan -H "$AWS_EC2_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+          SSH_OPTS="-i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=20"
+          DEPLOY_DIR="/opt/docker/${REPO_NAME}"
+
+          echo "Ensuring deploy dir ${DEPLOY_DIR}..."
+          ssh $SSH_OPTS "${AWS_EC2_USER}@${AWS_EC2_HOST}" \
+            "sudo mkdir -p '${DEPLOY_DIR}' && sudo chown -R \$(id -un):\$(id -gn) '${DEPLOY_DIR}'"
+
+          echo "Syncing repository to ${DEPLOY_DIR}..."
+          rsync -az --delete \
+            --exclude '.git' --exclude '.github' --exclude '.env' \
+            -e "ssh $SSH_OPTS" ./ "${AWS_EC2_USER}@${AWS_EC2_HOST}:${DEPLOY_DIR}/"
+
+          # Optional .env (secrets) written on the host, never committed
+          if [ -n "${STACK_ENV_FILE}" ]; then
+            echo "Writing ${DEPLOY_DIR}/.env from secret..."
+            printf '%s' "${STACK_ENV_FILE}" | ssh $SSH_OPTS "${AWS_EC2_USER}@${AWS_EC2_HOST}" \
+              "cat > '${DEPLOY_DIR}/.env' && chmod 600 '${DEPLOY_DIR}/.env'"
+          fi
+
+          echo "Bringing up stack on host..."
+          ssh $SSH_OPTS "${AWS_EC2_USER}@${AWS_EC2_HOST}" bash -s <<REMOTE
+          set -Eeo pipefail
+          cd '${DEPLOY_DIR}'
+          for net in ${EXTERNAL_NETWORKS}; do
+            docker network inspect "\$net" >/dev/null 2>&1 || docker network create "\$net"
+          done
+          for vol in ${EXTERNAL_VOLUMES}; do
+            docker volume inspect "\$vol" >/dev/null 2>&1 || docker volume create "\$vol"
+          done
+          docker compose -p '${REPO_NAME}' -f '${COMPOSE_FILE}' pull --quiet || true
+          docker compose -p '${REPO_NAME}' -f '${COMPOSE_FILE}' up -d --remove-orphans
+          docker compose -p '${REPO_NAME}' -f '${COMPOSE_FILE}' ps
+          REMOTE
+
+          echo "Verifying stack..."
+          RUNNING=$(ssh $SSH_OPTS "${AWS_EC2_USER}@${AWS_EC2_HOST}" \
+            "cd '${DEPLOY_DIR}' && docker compose -p '${REPO_NAME}' -f '${COMPOSE_FILE}' ps --services --filter status=running | wc -l" || echo 0)
+          echo "Running services: $RUNNING"
+          if [ "$RUNNING" -gt 0 ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "::error::No services running after compose up."
+            echo "status=failure" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          {
+            echo "### Compose Stack Deployed (via WireGuard VPN)"
+            echo ""
+            echo "| Property | Value |"
+            echo "|----------|-------|"
+            echo "| **Server** | ${AWS_EC2_HOST} |"
+            echo "| **Stack** | ${REPO_NAME} |"
+            echo "| **Compose** | ${COMPOSE_FILE} |"
+            echo "| **Services running** | $RUNNING |"
+            echo "| **Directory** | ${DEPLOY_DIR} |"
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: Teardown WireGuard tunnel
+        if: always() && steps.wg.outputs.started == 'true'
+        env:
+          WG_IFACE: wg0
+        run: |
+          sudo wg-quick down "$WG_IFACE" || true
+          sudo rm -f "/etc/wireguard/${WG_IFACE}.conf"
