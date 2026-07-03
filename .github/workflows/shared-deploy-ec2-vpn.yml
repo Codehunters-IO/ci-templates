@@ -338,7 +338,7 @@ jobs:
           echo "Deployment completed successfully!"
           DEPLOY_SCRIPT
 
-          SSH_COMMON_OPTS="-i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=20"
+          SSH_COMMON_OPTS="-i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=60 -o ServerAliveInterval=15 -o ServerAliveCountMax=20"
 
           # Retry helper: SSH transport can drop transiently. Retry up to 3 times.
           run_with_retry() {
