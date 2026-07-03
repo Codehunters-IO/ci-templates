@@ -24,7 +24,7 @@ services:
     mem_limit: 2g
     mem_reservation: 1g
     networks:
-      - soldife_net
+      - codehunters_net
     logging:
       driver: "json-file"
       options:
@@ -36,5 +36,5 @@ volumes:
     driver: local
 
 networks:
-  soldife_net:
+  codehunters_net:
     external: true

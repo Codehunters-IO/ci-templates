@@ -230,7 +230,7 @@ The AWS IAM principal must have `ecr:DescribeRepositories` and `ecr:CreateReposi
 
 - Docker + Docker Compose V2
 - AWS CLI (for ECR login)
-- External Docker network `soldife_net` and volume `shared_logs` (auto-created if missing)
+- External Docker network `codehunters_net` and volume `shared_logs` (auto-created if missing)
 - SSH access for the configured `AWS_EC2_USER`
 
 ## License

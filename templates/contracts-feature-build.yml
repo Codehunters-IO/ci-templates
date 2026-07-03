@@ -14,7 +14,7 @@ on:
 
 jobs:
   build:
-    uses: SOLDIFE/ci-templates/.github/workflows/contracts-main-pipeline.yml@main
+    uses: Codehunters-IO/ci-templates/.github/workflows/contracts-main-pipeline.yml@main
     with:
       run_build: true
     secrets: inherit

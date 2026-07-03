@@ -19,7 +19,7 @@ permissions:
 jobs:
   pipeline:
     if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
-    uses: SOLDIFE/ci-templates/.github/workflows/contracts-main-pipeline.yml@main
+    uses: Codehunters-IO/ci-templates/.github/workflows/contracts-main-pipeline.yml@main
     with:
       run_build: true
       run_test: true

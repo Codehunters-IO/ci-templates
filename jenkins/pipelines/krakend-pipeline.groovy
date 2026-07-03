@@ -112,7 +112,7 @@ ${envBlock}
     mem_limit: ${params.MEMORY_LIMIT}
     mem_reservation: ${params.MEMORY_RESERVATION}
     networks:
-      - soldife_net
+      - codehunters_net
     logging:
       driver: "json-file"
       options:
@@ -124,7 +124,7 @@ volumes:
     external: true
 
 networks:
-  soldife_net:
+  codehunters_net:
     external: true"""
 
     sh """
