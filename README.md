@@ -216,7 +216,7 @@ feature/*              ──► compile + size check
 
 ### ECR Repository
 
-The ECR repository is created automatically by the pipeline if it does not exist. The repository name equals the GitHub repo name (e.g., `vitxo-blockchain-contracts`). Repos are created with `MUTABLE` tags and scan-on-push enabled.
+The ECR repository is created automatically by the pipeline if it does not exist. The repository name equals the GitHub repo name (e.g., `codehunters-blockchain-contracts`). Repos are created with `MUTABLE` tags and scan-on-push enabled.
 
 The AWS IAM principal must have `ecr:DescribeRepositories` and `ecr:CreateRepository` in addition to push permissions.
 
