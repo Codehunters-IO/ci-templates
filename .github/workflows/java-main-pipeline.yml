@@ -352,8 +352,10 @@ jobs:
       java_version: ${{ inputs.java_version }}
       java_distribution: ${{ inputs.java_distribution }}
       build_tool: ${{ inputs.build_tool }}
-      # Only upload the JAR when an artifact/deploy step will consume it (skips PR/validation runs).
-      upload_artifact: ${{ inputs.run_artifact }}
+      # Only upload the bootable JAR when a Docker artifact/deploy step will consume it.
+      # The 'packages' registry publishes a library via `./gradlew publish` (no bootstrap
+      # bootJar exists), so skip the JAR locate/upload to avoid a false build failure.
+      upload_artifact: ${{ inputs.run_artifact && inputs.artifact_registry != 'packages' }}
     secrets: inherit
 
   # ============================================
