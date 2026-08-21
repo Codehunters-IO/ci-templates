@@ -1,0 +1,172 @@
+name: Contracts - End-to-End
+
+# Contract tests and SDK tests both pass against mocks of each other. This job
+# is the one that runs them against the real thing: a local chain, a real
+# deployment, and the SDK talking to it over RPC.
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      container_image:
+        description: >-
+          Run the job inside this image (e.g.
+          ghcr.io/codehunters/ci-base-images:v1.0.0-node). Empty = plain runner
+          with actions/setup-node.
+        required: false
+        type: string
+        default: ''
+      node_version:
+        description: 'Node.js version (ignored when container_image is set)'
+        required: false
+        type: string
+        default: '22'
+      package_manager:
+        description: 'Package manager (npm, yarn, or pnpm)'
+        required: false
+        type: string
+        default: 'pnpm'
+      build_command:
+        description: 'Command run before the chain starts (e.g. compile the SDK). Empty = skip.'
+        required: false
+        type: string
+        default: ''
+      node_command:
+        description: 'Command that starts the local chain'
+        required: false
+        type: string
+        default: 'npx hardhat node'
+      deploy_command:
+        description: 'Command that deploys the contracts to the local chain'
+        required: true
+        type: string
+      e2e_command:
+        description: 'Command that runs the end-to-end suite'
+        required: true
+        type: string
+      rpc_url:
+        description: 'RPC endpoint to poll before deploying'
+        required: false
+        type: string
+        default: 'http://127.0.0.1:8545'
+      rpc_timeout_seconds:
+        description: 'How long to wait for the chain to answer before failing'
+        required: false
+        type: number
+        default: 60
+
+    outputs:
+      result:
+        description: 'E2E result (success/failure)'
+        value: ${{ jobs.e2e.outputs.result }}
+
+jobs:
+  e2e:
+    name: End-to-End
+    runs-on: ${{ inputs.runner }}
+    container: ${{ inputs.container_image != '' && fromJSON(format('{{"image":"{0}"}}', inputs.container_image)) || fromJSON('null') }}
+    timeout-minutes: 30
+
+    outputs:
+      result: ${{ steps.e2e-run.outcome }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        if: inputs.package_manager == 'pnpm' && inputs.container_image == ''
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js ${{ inputs.node_version }}
+        if: inputs.container_image == ''
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: ${{ inputs.package_manager }}
+
+      - name: Install dependencies
+        run: |
+          case "${{ inputs.package_manager }}" in
+            pnpm) pnpm install --frozen-lockfile ;;
+            yarn) yarn install --frozen-lockfile ;;
+            *)    npm ci ;;
+          esac
+
+      - name: Build
+        if: inputs.build_command != ''
+        env:
+          BUILD_COMMAND: ${{ inputs.build_command }}
+        run: eval "${BUILD_COMMAND}"
+
+      - name: Start local chain
+        env:
+          NODE_COMMAND: ${{ inputs.node_command }}
+        run: |
+          nohup bash -c "${NODE_COMMAND}" > chain.log 2>&1 &
+          echo "$!" > chain.pid
+
+      - name: Wait for the chain to answer
+        env:
+          RPC_URL: ${{ inputs.rpc_url }}
+          RPC_TIMEOUT: ${{ inputs.rpc_timeout_seconds }}
+        run: |
+          # Poll eth_chainId rather than sleeping: a fixed sleep is either
+          # slower than the chain or shorter than it, and the second one fails
+          # intermittently, which is the worst way for CI to be wrong.
+          deadline=$(( $(date +%s) + RPC_TIMEOUT ))
+          until curl -sf -X POST -H 'Content-Type: application/json' \
+                --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
+                "${RPC_URL}" > /dev/null; do
+            if [ "$(date +%s)" -ge "${deadline}" ]; then
+              echo "::error::No RPC answer from ${RPC_URL} after ${RPC_TIMEOUT}s"
+              cat chain.log || true
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "Chain answering at ${RPC_URL}."
+
+      - name: Deploy to the local chain
+        env:
+          DEPLOY_COMMAND: ${{ inputs.deploy_command }}
+        run: eval "${DEPLOY_COMMAND}"
+
+      - name: Run end-to-end suite
+        id: e2e-run
+        env:
+          E2E_COMMAND: ${{ inputs.e2e_command }}
+        run: |
+          set -o pipefail
+          eval "${E2E_COMMAND}" 2>&1 | tee e2e-output.log
+
+      - name: Stop local chain
+        if: always()
+        run: |
+          if [ -f chain.pid ]; then
+            kill "$(cat chain.pid)" 2>/dev/null || true
+          fi
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "### End-to-End"
+            echo ""
+            echo "**Result:** ${{ steps.e2e-run.outcome }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload chain log
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: contracts-e2e-chain-log-${{ github.run_id }}
+          path: |
+            chain.log
+            e2e-output.log
+          retention-days: 7
+          if-no-files-found: warn

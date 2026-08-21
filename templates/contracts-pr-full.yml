@@ -1,0 +1,59 @@
+# Template: PR validation for a contracts repository that also ships an SDK
+# Copy to: .github/workflows/pr-validation.yml
+#
+# Every gate the repository owns, all blocking:
+#   compile → contract tests → coverage (the repository's own threshold script)
+#   SDK build + suite → end-to-end against a local chain → solhint + slither
+#
+# The commands are the repository's own npm scripts on purpose. A gate that
+# lives in CI and nowhere else cannot be run before pushing, so it gets
+# discovered on a red pipeline instead of on a laptop.
+#
+# Required secrets: none (GITHUB_TOKEN only).
+
+name: PR Validation
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+
+jobs:
+  validate:
+    uses: Codehunters-IO/ci-templates/.github/workflows/contracts-main-pipeline.yml@main
+    with:
+      # Node comes from the image, not from a per-run download. The tag pins
+      # the version a repository declares in `engines` / `.nvmrc`.
+      container_image: 'ghcr.io/codehunters/ci-base-images:v1.0.0-node'
+      package_manager: 'npm'
+
+      run_commit_lint: true
+      run_dependency_review: true
+
+      run_build: true
+      # hardhat-contract-sizer is a plugin, not a default. Leave this off
+      # unless the repository actually installs it.
+      run_size_check: false
+
+      run_test: true
+      run_coverage: true
+      # The repository's script decides what "covered enough" means — a branch
+      # threshold on one directory, say. Its exit code fails this job.
+      coverage_command: 'npm run coverage'
+      run_gas_reporter: true
+      upload_reports: true
+
+      run_sdk: true
+      sdk_build_command: 'npm run build:sdk'
+      sdk_test_command: 'npm run test:sdk'
+
+      run_e2e: true
+      e2e_build_command: 'npm run build:sdk'
+      e2e_deploy_command: 'npm run deploy:local'
+      e2e_command: 'npm run test:e2e'
+
+      run_analysis: true
+      solhint_command: "npm run lint:sol"
+      slither_fail_on: 'high'
+    secrets: inherit

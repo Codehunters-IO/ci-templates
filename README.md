@@ -171,6 +171,10 @@ ci-templates/
 ├── .github/workflows/            # Reusable workflows
 │   ├── java-main-pipeline.yml
 │   ├── java-pr-pipeline.yml
+│   ├── contracts-main-pipeline.yml
+│   ├── contracts-sdk-test.yml
+│   ├── contracts-e2e.yml
+│   ├── contracts-analysis.yml
 │   ├── krakend-main-pipeline.yml
 │   ├── react-main-pipeline.yml
 │   ├── shared-deploy-ec2.yml
@@ -182,6 +186,7 @@ ci-templates/
 ├── templates/                    # Copy these to your repo
 │   ├── java-*.yml
 │   ├── krakend-*.yml
+│   ├── contracts-*.yml
 │   └── react-*.yml
 └── README.md
 ```
@@ -194,25 +199,65 @@ GitFlow flow — image is pushed to ECR only, no EC2/EKS deploy. Downstream cons
 feature/*              ──► compile + size check
      │
      ▼ (PR to develop)      commit-lint + compile + size + test + coverage + gas reporter
+     │                       (+ SDK, e2e and static analysis where enabled)
      │
      ▼ (merge to develop)   compile + test
      │
      ▼ (merge to main)      compile + test + artifact (ECR) + deploy (EC2 via VPN) + tag
 ```
 
+Jobs behind the pipeline:
+
+| Reusable workflow | Runs |
+|---|---|
+| `contracts-build.yml` | `hardhat compile`, optional size check, uploads artifacts |
+| `contracts-test.yml` | Contract tests, optional coverage and gas reporter |
+| `contracts-sdk-test.yml` | Builds and tests a client SDK shipped from the same repo |
+| `contracts-e2e.yml` | Starts a local chain, deploys, runs the end-to-end suite |
+| `contracts-analysis.yml` | solhint + slither |
+
 ### Contracts-specific inputs
 
 | Input | Description | Default |
 |-------|-------------|---------|
-| `node_version` | Node.js version | `'22'` |
+| `container_image` | Run the Node jobs in this image instead of `actions/setup-node` (e.g. `ghcr.io/codehunters/ci-base-images:v1.0.0-node`) | `''` |
+| `node_version` | Node.js version (ignored when `container_image` is set) | `'22'` |
 | `package_manager` | `npm`, `yarn`, or `pnpm` | `'pnpm'` |
 | `pnpm_version` | pnpm version (when `package_manager: pnpm`) | `'10'` |
 | `run_size_check` | Run `hardhat-contract-sizer` (24KB EIP-170 limit) | `true` |
+| `test_command` | Command that runs the contract tests (empty = `hardhat test`) | `''` |
 | `run_coverage` | Run `solidity-coverage` | `false` |
-| `coverage_threshold` | Minimum line coverage (0-100, 0 = disabled) | `0` |
+| `coverage_command` | Command that produces **and may gate** coverage; a non-zero exit fails the job | `''` |
+| `coverage_threshold` | Minimum **line** coverage checked by the pipeline itself (0 = disabled) | `0` |
 | `run_gas_reporter` | Enable `hardhat-gas-reporter` | `false` |
 | `upload_reports` | Upload coverage + gas reports as artifacts | `false` |
+| `run_sdk` | Run the SDK build + test job | `false` |
+| `sdk_build_command` / `sdk_test_command` | Commands for that job | `''` |
+| `run_e2e` | Run the end-to-end job against a local chain | `false` |
+| `e2e_node_command` / `e2e_deploy_command` / `e2e_command` | Commands for that job | `npx hardhat node` / `''` / `''` |
+| `run_analysis` | Run solhint + slither | `false` |
+| `solhint_command` | Command that runs solhint (empty = `solhint 'contracts/**/*.sol'`) | `''` |
+| `slither_fail_on` | Severity that fails the job: `none`, `low`, `medium`, `high` | `'high'` |
 | `push_latest` | Also push `:latest` tag to ECR | `false` |
+
+### Two coverage gates, and which one to use
+
+`coverage_threshold` is checked by the pipeline against **line** coverage read
+from `coverage/coverage-summary.json`. It is the quick option and it is often
+the wrong one: a repository whose real rule is "branch coverage on
+`contracts/core` stays above 95%" cannot express that here, and lines will
+happily read 100% while the rule is broken.
+
+Such a repository already owns a script that checks its rule. Pass it as
+`coverage_command` — its exit code fails the job, and the same command runs on
+a laptop before the push.
+
+### Consuming the base image
+
+Setting `container_image` replaces `actions/setup-node` in every Node job with
+a prebuilt image, which pins the toolchain to a tag rather than to whatever the
+runner defaults to. The slither job ignores it: `crytic/slither-action` brings
+its own image with python, solc and crytic-compile already matched.
 
 ### ECR Repository
 
