@@ -8,11 +8,21 @@ on:
         required: false
         type: string
         default: 'ubuntu-latest'
-      node_version:
-        description: 'Node.js version'
+      container_image:
+        description: >-
+          Run the job inside this image (e.g.
+          ghcr.io/codehunters-io/ci-base-images:1.0.0-node). Empty = plain
+          runner with actions/setup-node. A container already carrying the
+          toolchain skips the per-run Node download and pins the version to
+          the tag.
         required: false
         type: string
-        default: '22'
+        default: ''
+      node_version:
+        description: 'Node.js version (ignored when container_image is set)'
+        required: false
+        type: string
+        default: '20'
       package_manager:
         description: 'Package manager (npm, yarn, or pnpm)'
         required: false
@@ -43,6 +53,9 @@ jobs:
   build:
     name: Build & Compile
     runs-on: ${{ inputs.runner }}
+    # `container:` takes an object or nothing at all, and there is no way to
+    # write "no container" as a string. fromJSON('null') is how you say it.
+    container: ${{ inputs.container_image != '' && fromJSON(format('{{"image":"{0}"}}', inputs.container_image)) || fromJSON('null') }}
     timeout-minutes: 15
 
     outputs:
@@ -53,14 +66,22 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup pnpm
-        if: inputs.package_manager == 'pnpm'
+        if: inputs.package_manager == 'pnpm' && inputs.container_image == ''
         uses: pnpm/action-setup@v4
 
       - name: Setup Node.js ${{ inputs.node_version }}
+        if: inputs.container_image == ''
         uses: actions/setup-node@v5
         with:
           node-version: ${{ inputs.node_version }}
           cache: ${{ inputs.package_manager }}
+
+      - name: Report toolchain (container)
+        if: inputs.container_image != ''
+        run: |
+          echo "Container: ${{ inputs.container_image }}"
+          node --version
+          npm --version
 
       - name: Install dependencies
         run: |
