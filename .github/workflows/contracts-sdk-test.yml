@@ -1,0 +1,140 @@
+name: Contracts - SDK Build & Test
+
+# A contracts repository that also ships a client SDK has a second suite the
+# contract jobs know nothing about: it compiles TypeScript, it has its own
+# coverage gate, and it is what downstream consumers actually import. This
+# workflow runs that half.
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      container_image:
+        description: >-
+          Run the job inside this image (e.g.
+          ghcr.io/codehunters/ci-base-images:v1.0.0-node). Empty = plain runner
+          with actions/setup-node.
+        required: false
+        type: string
+        default: ''
+      node_version:
+        description: 'Node.js version (ignored when container_image is set)'
+        required: false
+        type: string
+        default: '22'
+      package_manager:
+        description: 'Package manager (npm, yarn, or pnpm)'
+        required: false
+        type: string
+        default: 'pnpm'
+      build_command:
+        description: >-
+          Command that compiles the SDK. Empty = skip. A build that fails here
+          is a published package whose entry points dangle.
+        required: false
+        type: string
+        default: ''
+      test_command:
+        description: >-
+          Command that runs the SDK suite. Run it with coverage: the gate is
+          only enforced by the command that carries it.
+        required: true
+        type: string
+      upload_reports:
+        description: 'Upload the SDK coverage directory as an artifact'
+        required: false
+        type: boolean
+        default: false
+      coverage_path:
+        description: 'Directory holding the SDK coverage report'
+        required: false
+        type: string
+        default: 'sdk/coverage'
+
+    outputs:
+      result:
+        description: 'SDK test result (success/failure)'
+        value: ${{ jobs.sdk.outputs.result }}
+
+jobs:
+  sdk:
+    name: SDK Build & Test
+    runs-on: ${{ inputs.runner }}
+    container: ${{ inputs.container_image != '' && fromJSON(format('{{"image":"{0}"}}', inputs.container_image)) || fromJSON('null') }}
+    timeout-minutes: 20
+
+    outputs:
+      result: ${{ steps.sdk-test.outcome }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        if: inputs.package_manager == 'pnpm' && inputs.container_image == ''
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js ${{ inputs.node_version }}
+        if: inputs.container_image == ''
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: ${{ inputs.package_manager }}
+
+      - name: Install dependencies
+        run: |
+          case "${{ inputs.package_manager }}" in
+            pnpm) pnpm install --frozen-lockfile ;;
+            yarn) yarn install --frozen-lockfile ;;
+            *)    npm ci ;;
+          esac
+
+      - name: Build SDK
+        if: inputs.build_command != ''
+        env:
+          BUILD_COMMAND: ${{ inputs.build_command }}
+        run: eval "${BUILD_COMMAND}"
+
+      - name: Run SDK tests
+        id: sdk-test
+        env:
+          TEST_COMMAND: ${{ inputs.test_command }}
+        run: |
+          set -o pipefail
+          eval "${TEST_COMMAND}" 2>&1 | tee sdk-test-output.log
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "### SDK Suite"
+            echo ""
+            echo "**Result:** ${{ steps.sdk-test.outcome }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -f sdk-test-output.log ]; then
+            # vitest and jest both print this shape; a missing line is not an
+            # error, it just means there is nothing extra to show.
+            SUMMARY=$(grep -aE '^ *(Test Files|Tests) ' sdk-test-output.log || true)
+            if [ -n "${SUMMARY}" ]; then
+              {
+                echo ""
+                echo '```'
+                echo "${SUMMARY}"
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+
+      - name: Upload SDK coverage
+        if: inputs.upload_reports && always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: contracts-sdk-coverage-${{ github.run_id }}
+          path: ${{ inputs.coverage_path }}
+          retention-days: 7
+          if-no-files-found: warn

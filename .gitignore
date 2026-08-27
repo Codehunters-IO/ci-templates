@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# iCloud Drive
+*.icloud
+
+# Editors / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs & temp
+*.log
+tmp/
