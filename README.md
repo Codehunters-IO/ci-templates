@@ -220,7 +220,7 @@ Jobs behind the pipeline:
 
 | Input | Description | Default |
 |-------|-------------|---------|
-| `container_image` | Run the Node jobs in this image instead of `actions/setup-node` (e.g. `ghcr.io/codehunters/ci-base-images:v1.0.0-node`) | `''` |
+| `container_image` | Run the Node jobs in this image instead of `actions/setup-node` (e.g. `ghcr.io/codehunters-io/ci-base-images:1.0.0-node`) | `''` |
 | `node_version` | Node.js version (ignored when `container_image` is set) | `'22'` |
 | `package_manager` | `npm`, `yarn`, or `pnpm` | `'pnpm'` |
 | `pnpm_version` | pnpm version (when `package_manager: pnpm`) | `'10'` |

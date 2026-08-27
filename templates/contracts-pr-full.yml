@@ -25,7 +25,7 @@ jobs:
     with:
       # Node comes from the image, not from a per-run download. The tag pins
       # the version a repository declares in `engines` / `.nvmrc`.
-      container_image: 'ghcr.io/codehunters/ci-base-images:v1.0.0-node'
+      container_image: 'ghcr.io/codehunters-io/ci-base-images:1.0.0-node'
       package_manager: 'npm'
 
       run_commit_lint: true
