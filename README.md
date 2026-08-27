@@ -221,7 +221,7 @@ Jobs behind the pipeline:
 | Input | Description | Default |
 |-------|-------------|---------|
 | `container_image` | Run the Node jobs in this image instead of `actions/setup-node` (e.g. `ghcr.io/codehunters-io/ci-base-images:1.0.0-node`) | `''` |
-| `node_version` | Node.js version (ignored when `container_image` is set) | `'22'` |
+| `node_version` | Node.js version (ignored when `container_image` is set) | `'20'` |
 | `package_manager` | `npm`, `yarn`, or `pnpm` | `'pnpm'` |
 | `pnpm_version` | pnpm version (when `package_manager: pnpm`) | `'10'` |
 | `run_size_check` | Run `hardhat-contract-sizer` (24KB EIP-170 limit) | `true` |
@@ -256,8 +256,42 @@ a laptop before the push.
 
 Setting `container_image` replaces `actions/setup-node` in every Node job with
 a prebuilt image, which pins the toolchain to a tag rather than to whatever the
-runner defaults to. The slither job ignores it: `crytic/slither-action` brings
-its own image with python, solc and crytic-compile already matched.
+runner defaults to. That covers `build`, `test`, `sdk` and `e2e` — `build`
+included, because it is the job that produces the bytes the others verify. The
+slither job ignores it: `crytic/slither-action` brings its own image with
+python, solc and crytic-compile already matched.
+
+All six contracts templates pass it. `node_version` only applies when it is
+empty, and it defaults to `20` so both paths through the pipeline agree with
+the `engines: ">=20 <21"` the consumers declare.
+
+The Java stack takes the same input. `java-build`, `java-test`, `java-owasp`,
+`java-architecture` and `java-artifact-dependency-github` skip
+`actions/setup-java` when it is set and take the JDK from the image:
+
+```yaml
+uses: Codehunters-IO/ci-templates/.github/workflows/java-main-pipeline.yml@main
+with:
+  container_image: 'ghcr.io/codehunters-io/ci-base-images:1.0.0'
+```
+
+Use the `-graalvm` tag for repositories that run `./gradlew nativeCompile`.
+
+Two things to know before turning it on for Java. Gradle still comes from
+`./gradlew`, not from the Gradle CLI baked into the image — the wrapper is the
+contract, so the image saves the JDK download and nothing more. And
+`gradle/actions/setup-gradle` still runs inside the container for its
+dependency cache, but `GRADLE_USER_HOME` differs from the runner's, so measure
+the first few runs before assuming the cache still helps.
+
+The Docker artifact and deploy jobs stay on the runner in every stack. They
+drive the Docker daemon rather than a language toolchain, and nesting that in
+a container buys nothing.
+
+The Java templates do not set `container_image`. The plumbing is here, the
+switch is one line per template, and no pipeline has run through a container
+yet — see the note in the base image repo about cutting `v1.0.0` and making the
+GHCR package public first.
 
 ### ECR Repository
 

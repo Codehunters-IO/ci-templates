@@ -8,6 +8,16 @@ on:
         required: false
         type: string
         default: 'ubuntu-latest'
+      container_image:
+        description: >-
+          Run the JDK jobs inside this image (e.g.
+          ghcr.io/codehunters-io/ci-base-images:1.0.0). Empty = plain runner
+          with actions/setup-java. Applies to build, test, owasp, architecture
+          and the GitHub-registry dependency publish; the Docker artifact and
+          deploy jobs stay on the runner because they drive the daemon.
+        required: false
+        type: string
+        default: ''
       java_version:
         description: 'Java version'
         required: false
@@ -139,6 +149,7 @@ jobs:
     uses: ./.github/workflows/java-main-pipeline.yml
     with:
       runner: ${{ inputs.runner }}
+      container_image: ${{ inputs.container_image }}
       java_version: ${{ inputs.java_version }}
       java_distribution: ${{ inputs.java_distribution }}
       build_tool: ${{ inputs.build_tool }}
