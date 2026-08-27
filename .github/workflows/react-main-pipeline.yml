@@ -183,7 +183,7 @@ on:
         value: ${{ jobs.test.outputs.coverage_percentage }}
       deploy_status:
         description: 'Deployment status'
-        value: ${{ jobs.deploy.outputs.deploy_status }}
+        value: ${{ jobs.deploy-s3.outputs.deploy_status || jobs.deploy-amplify.outputs.deploy_status }}
       deleted_branch:
         description: 'Name of deleted branch'
         value: ${{ jobs.cleanup.outputs.deleted_branch }}
@@ -272,15 +272,32 @@ jobs:
   # ============================================
   # DEPLOY - S3 or Amplify
   # ============================================
-  deploy:
-    name: Deploy (${{ inputs.deploy_target }})
+  deploy-s3:
+    name: Deploy (s3)
     if: |
       inputs.run_deploy &&
+      inputs.deploy_target == 's3' &&
       always() &&
       needs.build.result == 'success' &&
       (needs.test.result == 'success' || needs.test.result == 'skipped')
     needs: [build, test]
-    uses: ./.github/workflows/react-deploy-${{ inputs.deploy_target }}.yml
+    uses: ./.github/workflows/react-deploy-s3.yml
+    with:
+      runner: ${{ inputs.runner }}
+      environment: ${{ inputs.environment }}
+      build_output_dir: ${{ inputs.build_output_dir }}
+    secrets: inherit
+
+  deploy-amplify:
+    name: Deploy (amplify)
+    if: |
+      inputs.run_deploy &&
+      inputs.deploy_target == 'amplify' &&
+      always() &&
+      needs.build.result == 'success' &&
+      (needs.test.result == 'success' || needs.test.result == 'skipped')
+    needs: [build, test]
+    uses: ./.github/workflows/react-deploy-amplify.yml
     with:
       runner: ${{ inputs.runner }}
       environment: ${{ inputs.environment }}
@@ -295,8 +312,8 @@ jobs:
     if: |
       inputs.run_release &&
       always() &&
-      needs.deploy.result == 'success'
-    needs: [deploy]
+      (needs.deploy-s3.result == 'success' || needs.deploy-amplify.result == 'success')
+    needs: [deploy-s3, deploy-amplify]
     uses: ./.github/workflows/shared-release.yml
     with:
       base_branch: ${{ github.ref_name }}
@@ -312,9 +329,9 @@ jobs:
     if: |
       inputs.run_cleanup &&
       always() &&
-      needs.deploy.result == 'success' &&
+      (needs.deploy-s3.result == 'success' || needs.deploy-amplify.result == 'success') &&
       (needs.release.result == 'success' || needs.release.result == 'skipped')
-    needs: [deploy, release]
+    needs: [deploy-s3, deploy-amplify, release]
     uses: ./.github/workflows/shared-delete-branch.yml
     secrets: inherit
 
@@ -326,8 +343,8 @@ jobs:
     if: |
       inputs.run_tag &&
       always() &&
-      needs.deploy.result == 'success'
-    needs: [build, test, deploy, cleanup, release]
+      (needs.deploy-s3.result == 'success' || needs.deploy-amplify.result == 'success')
+    needs: [build, test, deploy-s3, deploy-amplify, cleanup, release]
     uses: ./.github/workflows/shared-tag-release.yml
     secrets: inherit
 
@@ -339,11 +356,11 @@ jobs:
     if: |
       inputs.run_notifications &&
       always()
-    needs: [build, test, deploy, cleanup, release, tag]
+    needs: [build, test, deploy-s3, deploy-amplify, cleanup, release, tag]
     uses: ./.github/workflows/shared-notifications.yml
     with:
       providers: ${{ inputs.notify_providers }}
-      status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.deploy.result == 'failure') && 'failure' || (needs.build.result == 'cancelled') && 'cancelled' || 'success' }}
+      status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.deploy-s3.result == 'failure' || needs.deploy-amplify.result == 'failure') && 'failure' || (needs.build.result == 'cancelled') && 'cancelled' || 'success' }}
       environment: ${{ inputs.environment }}
       version: ${{ needs.release.outputs.version }}
       changelog: ${{ needs.release.outputs.changelog }}
@@ -358,10 +375,10 @@ jobs:
     if: |
       inputs.run_create_issue_on_failure &&
       always()
-    needs: [build, test, deploy, cleanup, release, tag]
+    needs: [build, test, deploy-s3, deploy-amplify, cleanup, release, tag]
     uses: ./.github/workflows/shared-create-issue-on-failure.yml
     with:
-      status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.deploy.result == 'failure') && 'failure' || 'success' }}
+      status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.deploy-s3.result == 'failure' || needs.deploy-amplify.result == 'failure') && 'failure' || 'success' }}
       environment: ${{ inputs.environment }}
       version: ${{ needs.release.outputs.version }}
       changelog: ${{ needs.release.outputs.changelog }}
