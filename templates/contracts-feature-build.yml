@@ -16,5 +16,8 @@ jobs:
   build:
     uses: Codehunters-IO/ci-templates/.github/workflows/contracts-main-pipeline.yml@main
     with:
+      # Node comes from the image, not from a per-run download. The tag pins
+      # the version a repository declares in `engines` / `.nvmrc`.
+      container_image: 'ghcr.io/codehunters-io/ci-base-images:1.0.0-node'
       run_build: true
     secrets: inherit
