@@ -64,13 +64,17 @@ on:
         value: ${{ jobs.test.outputs.failed }}
       quality_gate_status:
         description: 'Quality Gate status (Sonar/Qodana)'
-        value: ${{ steps.quality-gate.outputs.quality-gate-status }}
+        value: ${{ jobs.test.outputs.quality_gate }}
 
 jobs:
   test:
     name: Test & Coverage
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 30
+
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL: ${{ secrets.SONAR_URL }}
 
     outputs:
       result: ${{ steps.test-run.outcome }}
@@ -101,7 +105,7 @@ jobs:
     # SONARQUBE ANALYSIS
     # ============================================
       - name: SonarQube Scan
-        if: inputs.run_code_analysis && inputs.code_analysis_tool == 'sonar' && secrets.SONAR_TOKEN != ''
+        if: inputs.run_code_analysis && inputs.code_analysis_tool == 'sonar' && env.SONAR_TOKEN != ''
         uses: SonarSource/sonarqube-scan-action@v4
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -109,7 +113,7 @@ jobs:
 
       - name: SonarQube Quality Gate
         id: quality-gate
-        if: inputs.run_code_analysis && inputs.code_analysis_tool == 'sonar' && !inputs.skip_quality_gate && secrets.SONAR_TOKEN != ''
+        if: inputs.run_code_analysis && inputs.code_analysis_tool == 'sonar' && !inputs.skip_quality_gate && env.SONAR_TOKEN != ''
         uses: SonarSource/sonarqube-quality-gate-action@v1
         timeout-minutes: 5
         env:
@@ -117,7 +121,7 @@ jobs:
           SONAR_HOST_URL: ${{ secrets.SONAR_URL }}
 
       - name: SonarQube Quality Gate Summary
-        if: inputs.run_code_analysis && inputs.code_analysis_tool == 'sonar' && !inputs.skip_quality_gate && secrets.SONAR_TOKEN != ''
+        if: inputs.run_code_analysis && inputs.code_analysis_tool == 'sonar' && !inputs.skip_quality_gate && env.SONAR_TOKEN != ''
         run: |
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### SonarQube Quality Gate" >> $GITHUB_STEP_SUMMARY

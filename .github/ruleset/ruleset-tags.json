@@ -8,7 +8,7 @@
       "exclude": []
     },
     "repository_name": {
-      "include": ["vitxo-ms-*", "vitxo-sdk-*", "vitxo-gw-*"],
+      "include": ["codehunters-ms-*", "codehunters-sdk-*", "codehunters-gw-*"],
       "exclude": [],
       "protected": false
     }

@@ -9,6 +9,16 @@ on:
         required: false
         type: string
         default: 'ubuntu-latest'
+      container_image:
+        description: >-
+          Run the JDK jobs inside this image (e.g.
+          ghcr.io/codehunters-io/ci-base-images:1.0.0). Empty = plain runner
+          with actions/setup-java. Applies to build, test, owasp, architecture
+          and the GitHub-registry dependency publish; the Docker artifact and
+          deploy jobs stay on the runner because they drive the daemon.
+        required: false
+        type: string
+        default: ''
 
       # Java configuration
       java_version:
@@ -349,6 +359,7 @@ jobs:
     uses: ./.github/workflows/java-build.yml
     with:
       runner: ${{ inputs.runner }}
+      container_image: ${{ inputs.container_image }}
       java_version: ${{ inputs.java_version }}
       java_distribution: ${{ inputs.java_distribution }}
       build_tool: ${{ inputs.build_tool }}
@@ -368,6 +379,7 @@ jobs:
     uses: ./.github/workflows/java-test.yml
     with:
       runner: ${{ inputs.runner }}
+      container_image: ${{ inputs.container_image }}
       java_version: ${{ inputs.java_version }}
       java_distribution: ${{ inputs.java_distribution }}
       run_coverage: ${{ inputs.run_coverage }}
@@ -402,6 +414,7 @@ jobs:
     uses: ./.github/workflows/java-owasp.yml
     with:
       runner: ${{ inputs.runner }}
+      container_image: ${{ inputs.container_image }}
       java_version: ${{ inputs.java_version }}
       java_distribution: ${{ inputs.java_distribution }}
       owasp_fail_on_cvss: ${{ inputs.owasp_fail_on_cvss }}
@@ -418,6 +431,7 @@ jobs:
     uses: ./.github/workflows/java-architecture.yml
     with:
       runner: ${{ inputs.runner }}
+      container_image: ${{ inputs.container_image }}
       java_version: ${{ inputs.java_version }}
       java_distribution: ${{ inputs.java_distribution }}
     secrets: inherit
@@ -492,6 +506,7 @@ jobs:
     uses: ./.github/workflows/java-artifact-dependency-github.yml
     with:
       runner: ${{ inputs.runner }}
+      container_image: ${{ inputs.container_image }}
       java_version: ${{ inputs.java_version }}
       java_distribution: ${{ inputs.java_distribution }}
       publish_task: ${{ inputs.publish_task }}

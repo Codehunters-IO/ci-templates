@@ -201,7 +201,7 @@ jobs:
             echo "    mem_limit: ${MEMORY_LIMIT}"
             echo "    mem_reservation: ${MEMORY_RESERVATION}"
             echo "    networks:"
-            echo "      - soldife_net"
+            echo "      - codehunters_net"
             echo "    logging:"
             echo "      driver: \"json-file\""
             echo "      options:"
@@ -213,7 +213,7 @@ jobs:
             echo "    external: true"
             echo ""
             echo "networks:"
-            echo "  soldife_net:"
+            echo "  codehunters_net:"
             echo "    external: true"
           } > "${COMPOSE_FILE_NAME}"
 

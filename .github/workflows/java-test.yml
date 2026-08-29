@@ -8,8 +8,19 @@ on:
         required: false
         type: string
         default: 'ubuntu-latest'
+      container_image:
+        description: >-
+          Run the job inside this image (e.g.
+          ghcr.io/codehunters-io/ci-base-images:1.0.0). Empty = plain runner
+          with actions/setup-java. The image already carries the JDK, so the
+          per-run download is skipped and the version is pinned to the tag.
+          Gradle still comes from ./gradlew, and setup-gradle still runs for
+          its dependency cache.
+        required: false
+        type: string
+        default: ''
       java_version:
-        description: 'Java version'
+        description: 'Java version (ignored when container_image is set)'
         required: false
         type: string
         default: '21'
@@ -127,6 +138,9 @@ jobs:
   test:
     name: Test
     runs-on: ${{ inputs.runner }}
+    # `container:` takes an object or nothing at all, and there is no way to
+    # write "no container" as a string. fromJSON('null') is how you say it.
+    container: ${{ inputs.container_image != '' && fromJSON(format('{{"image":"{0}"}}', inputs.container_image)) || fromJSON('null') }}
     timeout-minutes: 30
 
     outputs:
@@ -147,10 +161,17 @@ jobs:
           fetch-depth: 0
 
       - name: Setup JDK ${{ inputs.java_version }}
+        if: inputs.container_image == ''
         uses: actions/setup-java@v5
         with:
           distribution: ${{ inputs.java_distribution }}
           java-version: ${{ inputs.java_version }}
+
+      - name: Report toolchain (container)
+        if: inputs.container_image != ''
+        run: |
+          echo "Container: ${{ inputs.container_image }}"
+          java -version
 
       - name: Setup Gradle
         if: inputs.build_tool == 'gradle'

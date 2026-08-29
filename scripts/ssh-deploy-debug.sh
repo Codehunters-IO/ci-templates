@@ -74,7 +74,7 @@ ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
 stage "SSH connectivity"        rssh "echo connected as \$(whoami) on \$(hostname)"
 stage "docker available"        rssh "docker version --format '{{.Server.Version}}'"
 stage "aws cli available"       rssh "aws --version"
-stage "docker network soldife_net exists" rssh "docker network inspect soldife_net >/dev/null"
+stage "docker network codehunters_net exists" rssh "docker network inspect codehunters_net >/dev/null"
 stage "docker volume shared_logs exists"   rssh "docker volume inspect shared_logs >/dev/null"
 
 # ECR login — the #1 suspect when Environment AWS creds are invalid/rotated
@@ -92,7 +92,7 @@ fi
 printf '\n----\nResult: %s passed, %s failed.\n' "$PASS" "$FAIL"
 if [ "$FAIL" -gt 0 ]; then
   printf 'The first FAIL above is what makes the pipeline deploy step exit 1.\n'
-  printf 'Most common: invalid/rotated Environment AWS creds (ECR login), missing image tag, or missing soldife_net/shared_logs.\n'
+  printf 'Most common: invalid/rotated Environment AWS creds (ECR login), missing image tag, or missing codehunters_net/shared_logs.\n'
   exit 1
 fi
 printf 'All stages passed — the SSH deploy should succeed.\n'

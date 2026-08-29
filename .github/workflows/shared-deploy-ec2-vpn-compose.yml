@@ -27,7 +27,7 @@ on:
         description: 'External docker networks to ensure exist (space-separated)'
         required: false
         type: string
-        default: 'soldife_net'
+        default: 'codehunters_net'
       external_volumes:
         description: 'External docker volumes to ensure exist (space-separated)'
         required: false

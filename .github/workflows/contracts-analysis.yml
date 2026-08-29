@@ -1,0 +1,167 @@
+name: Contracts - Static Analysis
+
+# Tests prove the contract does what its suite imagined. Static analysis is the
+# other half: reentrancy, ignored return values, shadowed state, unchecked
+# low-level calls — findings a passing suite is perfectly happy to keep.
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      node_version:
+        description: 'Node.js version'
+        required: false
+        type: string
+        default: '20'
+      package_manager:
+        description: 'Package manager (npm, yarn, or pnpm)'
+        required: false
+        type: string
+        default: 'pnpm'
+      run_solhint:
+        description: 'Run solhint'
+        required: false
+        type: boolean
+        default: true
+      solhint_command:
+        description: >-
+          Command that runs solhint. Empty = `solhint contracts/**/*.sol`
+          through the selected package manager. solhint needs a config file in
+          the repository; without one it exits non-zero on every run.
+        required: false
+        type: string
+        default: ''
+      run_slither:
+        description: 'Run slither'
+        required: false
+        type: boolean
+        default: true
+      slither_target:
+        description: 'Path slither analyzes (a Hardhat project root compiles through hardhat)'
+        required: false
+        type: string
+        default: '.'
+      slither_args:
+        description: 'Extra arguments passed to slither'
+        required: false
+        type: string
+        default: '--exclude-dependencies'
+      slither_fail_on:
+        description: >-
+          Severity that fails the job: none, low, medium, high. Start at high
+          on an existing codebase and tighten — a job that fails on day one for
+          findings nobody has triaged gets switched off, not fixed.
+        required: false
+        type: string
+        default: 'high'
+
+    outputs:
+      solhint_result:
+        description: 'solhint outcome'
+        value: ${{ jobs.solhint.outputs.result }}
+      slither_result:
+        description: 'slither outcome'
+        value: ${{ jobs.slither.outputs.result }}
+
+jobs:
+  solhint:
+    name: Solhint
+    if: inputs.run_solhint
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 10
+
+    outputs:
+      result: ${{ steps.lint.outcome }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        if: inputs.package_manager == 'pnpm'
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js ${{ inputs.node_version }}
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: ${{ inputs.package_manager }}
+
+      - name: Install dependencies
+        run: |
+          case "${{ inputs.package_manager }}" in
+            pnpm) pnpm install --frozen-lockfile ;;
+            yarn) yarn install --frozen-lockfile ;;
+            *)    npm ci ;;
+          esac
+
+      - name: Run solhint
+        id: lint
+        env:
+          SOLHINT_COMMAND: ${{ inputs.solhint_command }}
+        run: |
+          set -o pipefail
+          if [ -n "${SOLHINT_COMMAND}" ]; then
+            eval "${SOLHINT_COMMAND}" 2>&1 | tee solhint-output.log
+            exit $?
+          fi
+
+          case "${{ inputs.package_manager }}" in
+            pnpm) pnpm solhint 'contracts/**/*.sol' 2>&1 | tee solhint-output.log ;;
+            yarn) yarn solhint 'contracts/**/*.sol' 2>&1 | tee solhint-output.log ;;
+            *)    npx solhint 'contracts/**/*.sol' 2>&1 | tee solhint-output.log ;;
+          esac
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "### Solhint"
+            echo ""
+            echo "**Result:** ${{ steps.lint.outcome }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -f solhint-output.log ]; then
+            PROBLEMS=$(grep -aoE '[0-9]+ problems? \([0-9]+ errors?, [0-9]+ warnings?\)' solhint-output.log | tail -1 || true)
+            if [ -n "${PROBLEMS}" ]; then
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo "${PROBLEMS}" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+
+  slither:
+    name: Slither
+    if: inputs.run_slither
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 20
+
+    outputs:
+      result: ${{ steps.analysis.outcome }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # No container: for this job. slither-action brings its own image with
+      # python, solc and crytic-compile already matched to each other.
+      - name: Run slither
+        id: analysis
+        uses: crytic/slither-action@v0.4.1
+        with:
+          target: ${{ inputs.slither_target }}
+          slither-args: ${{ inputs.slither_args }}
+          fail-on: ${{ inputs.slither_fail_on }}
+          node-version: ${{ inputs.node_version }}
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "### Slither"
+            echo ""
+            echo "**Result:** ${{ steps.analysis.outcome }} (fail-on: ${{ inputs.slither_fail_on }})"
+          } >> "$GITHUB_STEP_SUMMARY"

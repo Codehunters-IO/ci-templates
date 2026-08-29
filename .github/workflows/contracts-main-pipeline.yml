@@ -11,11 +11,20 @@ on:
         default: 'ubuntu-latest'
 
       # Node / Hardhat configuration
+      container_image:
+        description: >-
+          Run the Node-based jobs inside this image (e.g.
+          ghcr.io/codehunters/ci-base-images:v1.0.0-node). Empty = plain
+          runners with actions/setup-node. The slither job always brings its
+          own image and ignores this.
+        required: false
+        type: string
+        default: ''
       node_version:
         description: 'Node.js version'
         required: false
         type: string
-        default: '24'
+        default: '20'
       package_manager:
         description: 'Package manager (npm, yarn, or pnpm)'
         required: false
@@ -73,11 +82,24 @@ on:
         required: false
         type: boolean
         default: false
+      test_command:
+        description: 'Command that runs the contract tests. Empty = hardhat test.'
+        required: false
+        type: string
+        default: ''
       run_coverage:
         description: 'Run solidity-coverage'
         required: false
         type: boolean
         default: false
+      coverage_command:
+        description: >-
+          Command that produces and may gate coverage. Empty = hardhat
+          coverage. A non-zero exit from this command fails the job, which is
+          how a repository's own threshold script becomes the gate.
+        required: false
+        type: string
+        default: ''
       coverage_threshold:
         description: 'Minimum coverage percentage (0-100). 0 = disabled.'
         required: false
@@ -98,6 +120,97 @@ on:
         required: false
         type: boolean
         default: true
+
+      # SDK (a client library shipped from the same repository)
+      run_sdk:
+        description: 'Run the SDK build + test job'
+        required: false
+        type: boolean
+        default: false
+      sdk_build_command:
+        description: 'Command that compiles the SDK. Empty = skip.'
+        required: false
+        type: string
+        default: ''
+      sdk_test_command:
+        description: 'Command that runs the SDK suite (run it with coverage)'
+        required: false
+        type: string
+        default: ''
+      sdk_coverage_path:
+        description: 'Directory holding the SDK coverage report'
+        required: false
+        type: string
+        default: 'sdk/coverage'
+
+      # End-to-end (local chain + deploy + suite)
+      run_e2e:
+        description: 'Run the end-to-end job against a local chain'
+        required: false
+        type: boolean
+        default: false
+      e2e_build_command:
+        description: 'Command run before the chain starts (e.g. compile the SDK). Empty = skip.'
+        required: false
+        type: string
+        default: ''
+      e2e_node_command:
+        description: 'Command that starts the local chain'
+        required: false
+        type: string
+        default: 'npx hardhat node'
+      e2e_deploy_command:
+        description: 'Command that deploys to the local chain'
+        required: false
+        type: string
+        default: ''
+      e2e_command:
+        description: 'Command that runs the end-to-end suite'
+        required: false
+        type: string
+        default: ''
+      e2e_rpc_url:
+        description: 'RPC endpoint polled before deploying'
+        required: false
+        type: string
+        default: 'http://127.0.0.1:8545'
+
+      # Static analysis
+      run_analysis:
+        description: 'Run the static analysis job (solhint + slither)'
+        required: false
+        type: boolean
+        default: false
+      run_solhint:
+        description: 'Run solhint inside the analysis job'
+        required: false
+        type: boolean
+        default: true
+      solhint_command:
+        description: "Command that runs solhint. Empty = solhint 'contracts/**/*.sol'."
+        required: false
+        type: string
+        default: ''
+      run_slither:
+        description: 'Run slither inside the analysis job'
+        required: false
+        type: boolean
+        default: true
+      slither_target:
+        description: 'Path slither analyzes'
+        required: false
+        type: string
+        default: '.'
+      slither_args:
+        description: 'Extra arguments passed to slither'
+        required: false
+        type: string
+        default: '--exclude-dependencies'
+      slither_fail_on:
+        description: 'Severity that fails the job: none, low, medium, high'
+        required: false
+        type: string
+        default: 'high'
       run_artifact:
         description: 'Build and push Docker image to ECR'
         required: false
@@ -216,6 +329,12 @@ on:
       tests_failed:
         description: 'Number of tests failed'
         value: ${{ jobs.test.outputs.tests_failed }}
+      sdk_result:
+        description: 'SDK suite result'
+        value: ${{ jobs.sdk.outputs.result }}
+      e2e_result:
+        description: 'End-to-end result'
+        value: ${{ jobs.e2e.outputs.result }}
       deploy_status:
         description: 'Deployment status'
         value: ${{ jobs.deploy-ec2.outputs.deploy_status || jobs.deploy-ec2-vpn.outputs.deploy_status }}
@@ -277,6 +396,7 @@ jobs:
     uses: ./.github/workflows/contracts-build.yml
     with:
       runner: ${{ inputs.runner }}
+      container_image: ${{ inputs.container_image }}
       node_version: ${{ inputs.node_version }}
       package_manager: ${{ inputs.package_manager }}
       pnpm_version: ${{ inputs.pnpm_version }}
@@ -296,11 +416,70 @@ jobs:
       node_version: ${{ inputs.node_version }}
       package_manager: ${{ inputs.package_manager }}
       pnpm_version: ${{ inputs.pnpm_version }}
+      container_image: ${{ inputs.container_image }}
       artifact_name: ${{ needs.build.outputs.artifact_name }}
+      test_command: ${{ inputs.test_command }}
       run_coverage: ${{ inputs.run_coverage }}
+      coverage_command: ${{ inputs.coverage_command }}
       coverage_threshold: ${{ inputs.coverage_threshold }}
       run_gas_reporter: ${{ inputs.run_gas_reporter }}
       upload_reports: ${{ inputs.upload_reports }}
+    secrets: inherit
+
+  # ============================================
+  # SDK (build + test the client library)
+  # ============================================
+  sdk:
+    name: SDK Build & Test
+    if: inputs.run_sdk
+    uses: ./.github/workflows/contracts-sdk-test.yml
+    with:
+      runner: ${{ inputs.runner }}
+      container_image: ${{ inputs.container_image }}
+      node_version: ${{ inputs.node_version }}
+      package_manager: ${{ inputs.package_manager }}
+      build_command: ${{ inputs.sdk_build_command }}
+      test_command: ${{ inputs.sdk_test_command }}
+      upload_reports: ${{ inputs.upload_reports }}
+      coverage_path: ${{ inputs.sdk_coverage_path }}
+    secrets: inherit
+
+  # ============================================
+  # E2E (local chain + deploy + suite)
+  # ============================================
+  e2e:
+    name: End-to-End
+    if: inputs.run_e2e
+    uses: ./.github/workflows/contracts-e2e.yml
+    with:
+      runner: ${{ inputs.runner }}
+      container_image: ${{ inputs.container_image }}
+      node_version: ${{ inputs.node_version }}
+      package_manager: ${{ inputs.package_manager }}
+      build_command: ${{ inputs.e2e_build_command }}
+      node_command: ${{ inputs.e2e_node_command }}
+      deploy_command: ${{ inputs.e2e_deploy_command }}
+      e2e_command: ${{ inputs.e2e_command }}
+      rpc_url: ${{ inputs.e2e_rpc_url }}
+    secrets: inherit
+
+  # ============================================
+  # STATIC ANALYSIS (solhint + slither)
+  # ============================================
+  analysis:
+    name: Static Analysis
+    if: inputs.run_analysis
+    uses: ./.github/workflows/contracts-analysis.yml
+    with:
+      runner: ${{ inputs.runner }}
+      node_version: ${{ inputs.node_version }}
+      package_manager: ${{ inputs.package_manager }}
+      run_solhint: ${{ inputs.run_solhint }}
+      solhint_command: ${{ inputs.solhint_command }}
+      run_slither: ${{ inputs.run_slither }}
+      slither_target: ${{ inputs.slither_target }}
+      slither_args: ${{ inputs.slither_args }}
+      slither_fail_on: ${{ inputs.slither_fail_on }}
     secrets: inherit
 
   # ============================================
@@ -312,8 +491,11 @@ jobs:
       inputs.run_artifact &&
       always() &&
       (needs.build.result == 'success' || needs.build.result == 'skipped') &&
-      (needs.test.result == 'success' || needs.test.result == 'skipped')
-    needs: [build, test]
+      (needs.test.result == 'success' || needs.test.result == 'skipped') &&
+      (needs.sdk.result == 'success' || needs.sdk.result == 'skipped') &&
+      (needs.e2e.result == 'success' || needs.e2e.result == 'skipped') &&
+      (needs.analysis.result == 'success' || needs.analysis.result == 'skipped')
+    needs: [build, test, sdk, e2e, analysis]
     uses: ./.github/workflows/shared-artifact-docker-ecr.yml
     with:
       runner: ${{ inputs.runner }}
