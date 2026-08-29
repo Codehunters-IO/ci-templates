@@ -196,6 +196,10 @@ ci-templates/
 ├── .github/workflows/            # Reusable workflows
 │   ├── java-main-pipeline.yml
 │   ├── java-pr-pipeline.yml
+│   ├── contracts-main-pipeline.yml
+│   ├── contracts-sdk-test.yml
+│   ├── contracts-e2e.yml
+│   ├── contracts-analysis.yml
 │   ├── krakend-main-pipeline.yml
 │   ├── react-main-pipeline.yml
 │   ├── shared-deploy-ec2.yml
@@ -206,6 +210,7 @@ ci-templates/
 ├── templates/                    # Copy these to your repo
 │   ├── java-*.yml                #   develop-deploy · main-deploy · tag-deploy (workflow_dispatch)
 │   ├── krakend-*.yml
+│   ├── contracts-*.yml
 │   └── react-*.yml
 ├── .github/ruleset/              # Org rulesets (import to GitHub): develop · main · krakend · tags
 ├── scripts/                      # clone-environments.sh · ssh-deploy-debug.sh
@@ -220,29 +225,103 @@ GitFlow flow — image is pushed to ECR only, no EC2/EKS deploy. Downstream cons
 feature/*              ──► compile + size check
      │
      ▼ (PR to develop)      commit-lint + compile + size + test + coverage + gas reporter
+     │                       (+ SDK, e2e and static analysis where enabled)
      │
      ▼ (merge to develop)   compile + test
      │
      ▼ (merge to main)      compile + test + artifact (ECR) + deploy (EC2 via VPN) + tag
 ```
 
+Jobs behind the pipeline:
+
+| Reusable workflow | Runs |
+|---|---|
+| `contracts-build.yml` | `hardhat compile`, optional size check, uploads artifacts |
+| `contracts-test.yml` | Contract tests, optional coverage and gas reporter |
+| `contracts-sdk-test.yml` | Builds and tests a client SDK shipped from the same repo |
+| `contracts-e2e.yml` | Starts a local chain, deploys, runs the end-to-end suite |
+| `contracts-analysis.yml` | solhint + slither |
+
 ### Contracts-specific inputs
 
 | Input | Description | Default |
 |-------|-------------|---------|
-| `node_version` | Node.js version | `'24'` |
+| `container_image` | Run the Node jobs in this image instead of `actions/setup-node` (e.g. `ghcr.io/codehunters-io/ci-base-images:1.0.0-node`) | `''` |
+| `node_version` | Node.js version (ignored when `container_image` is set) | `'20'` |
 | `package_manager` | `npm`, `yarn`, or `pnpm` | `'pnpm'` |
 | `pnpm_version` | pnpm version (when `package_manager: pnpm`) | `'10'` |
 | `run_size_check` | Run `hardhat-contract-sizer` (24KB EIP-170 limit) | `true` |
+| `test_command` | Command that runs the contract tests (empty = `hardhat test`) | `''` |
 | `run_coverage` | Run `solidity-coverage` | `false` |
-| `coverage_threshold` | Minimum line coverage (0-100, 0 = disabled) | `0` |
+| `coverage_command` | Command that produces **and may gate** coverage; a non-zero exit fails the job | `''` |
+| `coverage_threshold` | Minimum **line** coverage checked by the pipeline itself (0 = disabled) | `0` |
 | `run_gas_reporter` | Enable `hardhat-gas-reporter` | `false` |
 | `upload_reports` | Upload coverage + gas reports as artifacts | `false` |
+| `run_sdk` | Run the SDK build + test job | `false` |
+| `sdk_build_command` / `sdk_test_command` | Commands for that job | `''` |
+| `run_e2e` | Run the end-to-end job against a local chain | `false` |
+| `e2e_node_command` / `e2e_deploy_command` / `e2e_command` | Commands for that job | `npx hardhat node` / `''` / `''` |
+| `run_analysis` | Run solhint + slither | `false` |
+| `solhint_command` | Command that runs solhint (empty = `solhint 'contracts/**/*.sol'`) | `''` |
+| `slither_fail_on` | Severity that fails the job: `none`, `low`, `medium`, `high` | `'high'` |
 | `push_latest` | Also push `:latest` tag to ECR | `false` |
+
+### Two coverage gates, and which one to use
+
+`coverage_threshold` is checked by the pipeline against **line** coverage read
+from `coverage/coverage-summary.json`. It is the quick option and it is often
+the wrong one: a repository whose real rule is "branch coverage on
+`contracts/core` stays above 95%" cannot express that here, and lines will
+happily read 100% while the rule is broken.
+
+Such a repository already owns a script that checks its rule. Pass it as
+`coverage_command` — its exit code fails the job, and the same command runs on
+a laptop before the push.
+
+### Consuming the base image
+
+Setting `container_image` replaces `actions/setup-node` in every Node job with
+a prebuilt image, which pins the toolchain to a tag rather than to whatever the
+runner defaults to. That covers `build`, `test`, `sdk` and `e2e` — `build`
+included, because it is the job that produces the bytes the others verify. The
+slither job ignores it: `crytic/slither-action` brings its own image with
+python, solc and crytic-compile already matched.
+
+All six contracts templates pass it. `node_version` only applies when it is
+empty, and it defaults to `20` so both paths through the pipeline agree with
+the `engines: ">=20 <21"` the consumers declare.
+
+The Java stack takes the same input. `java-build`, `java-test`, `java-owasp`,
+`java-architecture` and `java-artifact-dependency-github` skip
+`actions/setup-java` when it is set and take the JDK from the image:
+
+```yaml
+uses: Codehunters-IO/ci-templates/.github/workflows/java-main-pipeline.yml@main
+with:
+  container_image: 'ghcr.io/codehunters-io/ci-base-images:1.0.0'
+```
+
+Use the `-graalvm` tag for repositories that run `./gradlew nativeCompile`.
+
+Two things to know before turning it on for Java. Gradle still comes from
+`./gradlew`, not from the Gradle CLI baked into the image — the wrapper is the
+contract, so the image saves the JDK download and nothing more. And
+`gradle/actions/setup-gradle` still runs inside the container for its
+dependency cache, but `GRADLE_USER_HOME` differs from the runner's, so measure
+the first few runs before assuming the cache still helps.
+
+The Docker artifact and deploy jobs stay on the runner in every stack. They
+drive the Docker daemon rather than a language toolchain, and nesting that in
+a container buys nothing.
+
+The Java templates do not set `container_image`. The plumbing is here, the
+switch is one line per template, and no pipeline has run through a container
+yet — see the note in the base image repo about cutting `v1.0.0` and making the
+GHCR package public first.
 
 ### ECR Repository
 
-The ECR repository is created automatically by the pipeline if it does not exist. The repository name equals the GitHub repo name (e.g., `vitxo-blockchain-contracts`). Repos are created with `MUTABLE` tags and scan-on-push enabled.
+The ECR repository is created automatically by the pipeline if it does not exist. The repository name equals the GitHub repo name (e.g., `codehunters-blockchain-contracts`). Repos are created with `MUTABLE` tags and scan-on-push enabled.
 
 The AWS IAM principal must have `ecr:DescribeRepositories` and `ecr:CreateRepository` in addition to push permissions.
 
@@ -284,10 +363,10 @@ does not change live rules until imported.
 
 | Ruleset | Target | Scope | Enforces |
 |---------|--------|-------|----------|
-| `ruleset-develop.json` | branch `develop` | `vitxo-ms-*`, `vitxo-sdk-*` | PR-only, 2 approvals, linear, squash, check `validate / PR Quality Gates` |
-| `ruleset-main.json` | branch `main` | `vitxo-ms-*`, `vitxo-sdk-*` | same as develop |
-| `ruleset-krakend.json` | branches `develop`+`main` | `vitxo-gw-*` | same, but check `validate / Test & Audit` (KrakenD pipeline) |
-| `ruleset-tags.json` | tag `v*.*.*` | `vitxo-ms-*`, `vitxo-sdk-*`, `vitxo-gw-*` | immutable tags (creation/deletion/update/non-fast-forward) |
+| `ruleset-develop.json` | branch `develop` | `codehunters-ms-*`, `codehunters-sdk-*` | PR-only, 2 approvals, linear, squash, check `validate / PR Quality Gates` |
+| `ruleset-main.json` | branch `main` | `codehunters-ms-*`, `codehunters-sdk-*` | same as develop |
+| `ruleset-krakend.json` | branches `develop`+`main` | `codehunters-gw-*` | same, but check `validate / Test & Audit` (KrakenD pipeline) |
+| `ruleset-tags.json` | tag `v*.*.*` | `codehunters-ms-*`, `codehunters-sdk-*`, `codehunters-gw-*` | immutable tags (creation/deletion/update/non-fast-forward) |
 
 - **Bypass:** repo admins (RepositoryRole 5) and **GitHub Actions** (Integration `15368`) bypass the tag
   rules — the latter lets the `Release to Production` workflow create the `vX.Y.Z` tag.
@@ -306,7 +385,7 @@ does not change live rules until imported.
 
 - Docker + Docker Compose V2
 - AWS CLI (for ECR login)
-- External Docker network `soldife_net` and volume `shared_logs` (auto-created if missing)
+- External Docker network `codehunters_net` and volume `shared_logs` (auto-created if missing)
 - SSH access for the configured `AWS_EC2_USER`
 
 ## License

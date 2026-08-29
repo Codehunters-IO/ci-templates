@@ -14,7 +14,7 @@ EC2 Server (mismo servidor)
 │       └── pipelines/            ← Pipelines compartidos
 ├── /opt/docker/{app-1}/          ← Apps desplegadas (local, sin SSH)
 ├── /opt/docker/{app-2}/
-└── soldife_net                   ← Red compartida
+└── codehunters_net                   ← Red compartida
 ```
 
 ## Setup

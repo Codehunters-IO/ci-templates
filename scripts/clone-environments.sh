@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # clone-environments.sh — provision GitHub Actions Environments (cert, prod) for the
-# vitxo microservices by cloning VARIABLES from an existing source environment (develop)
+# codehunters microservices by cloning VARIABLES from an existing source environment (develop)
 # and setting SECRETS from per-environment files.
 #
 # WHY a script: GitHub never exposes secret VALUES via API/CLI (write-only), so secrets
@@ -18,8 +18,8 @@
 #   scripts/clone-environments.sh [options]
 #
 # Options:
-#   --org NAME          GitHub org (default: SOLDIFE)
-#   --repos "a b c"     Space-separated repo names (default: the 5 vitxo microservices)
+#   --org NAME          GitHub org (default: Codehunters-IO)
+#   --repos "a b c"     Space-separated repo names (default: the 5 codehunters microservices)
 #   --src-env NAME      Source environment to clone variables from (default: develop)
 #   --envs "cert prod"  Target environments to create/populate (default: cert prod)
 #   --secrets-dir DIR   Directory with <repo>.<env>.env files (default: ./env-secrets)
@@ -29,13 +29,13 @@
 #   -h, --help          Show this help
 #
 # Per-env secret files (KEY=VALUE, one per line, '#' comments allowed):
-#   <secrets-dir>/<repo>.<env>.env      e.g. env-secrets/vitxo-ms-auth.cert.env
+#   <secrets-dir>/<repo>.<env>.env      e.g. env-secrets/codehunters-ms-auth.cert.env
 # Generate the name templates first with --template, fill the values, then run for real.
 #
 set -euo pipefail
 
-ORG="SOLDIFE"
-REPOS="vitxo-ms-auth vitxo-ms-payment vitxo-ms-file-share vitxo-ms-notifications vitxo-ms-raffles"
+ORG="Codehunters-IO"
+REPOS="codehunters-ms-auth codehunters-ms-payment codehunters-ms-file-share codehunters-ms-notifications codehunters-ms-raffles"
 SRC_ENV="develop"
 TARGET_ENVS="cert prod"
 SECRETS_DIR="./env-secrets"
