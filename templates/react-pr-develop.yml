@@ -20,7 +20,7 @@ on:
 
 jobs:
   validate:
-    uses: <org>/ci-templates/.github/workflows/react-main-pipeline.yml@main
+    uses: <org>/ci-templates/.github/workflows/react-main-pipeline.yml@v1
     with:
       run_commit_lint: true
       run_build: true

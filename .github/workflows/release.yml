@@ -1,0 +1,53 @@
+name: Release
+
+# This repository publishes reusable workflows that other repositories pin.
+# Every push to main is therefore a release: it cuts vX.Y.Z and moves the
+# floating major alias (vX) that consumers reference.
+
+on:
+  push:
+    branches: [main]
+
+# Serialize releases. Two pushes landing close together would otherwise race
+# on the same tag namespace and one would compute a version the other took.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    name: Tag Release
+    uses: ./.github/workflows/shared-tag-release.yml
+
+  major-alias:
+    name: Move floating major tag
+    needs: tag
+    if: needs.tag.outputs.version_tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Move major alias to the new release
+        env:
+          VERSION_TAG: ${{ needs.tag.outputs.version_tag }}
+        run: |
+          MAJOR="${VERSION_TAG%%.*}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --tags --force
+
+          git tag -f -a "$MAJOR" -m "Floating alias for ${VERSION_TAG}"
+          git push origin "refs/tags/${MAJOR}" --force
+
+          echo "### ${MAJOR} now points at ${VERSION_TAG}" >> "$GITHUB_STEP_SUMMARY"
