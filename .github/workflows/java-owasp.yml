@@ -43,6 +43,12 @@ on:
     secrets:
       NVD_API_KEY:
         required: false
+      GH_PACKAGES_USERNAME:
+        description: 'GitHub Packages username (for dependencies hosted on GitHub Packages)'
+        required: false
+      GH_PACKAGES_TOKEN:
+        description: 'GitHub Packages read token'
+        required: false
 
     outputs:
       vulnerabilities:

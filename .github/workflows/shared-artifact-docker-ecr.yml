@@ -75,6 +75,12 @@ on:
         required: true
       AWS_REGION:
         required: true
+      GH_PACKAGES_USERNAME:
+        description: 'GitHub Packages username (for dependencies hosted on GitHub Packages)'
+        required: false
+      GH_PACKAGES_TOKEN:
+        description: 'GitHub Packages read token'
+        required: false
 
     outputs:
       image_tag:
