@@ -43,27 +43,60 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Fetch all tags
+        run: git fetch --tags --force
+
       - name: Calculate semantic version
         id: semver
-        uses: PaulHatch/semantic-version@v5.4.0
-        with:
-          tag_prefix: ${{ inputs.tag_prefix }}
-          major_pattern: ${{ inputs.major_pattern }}
-          minor_pattern: ${{ inputs.minor_pattern }}
-          version_format: "${major}.${minor}.${patch}"
-          namespace: ""
-          change_path: ""
-          bump_each_commit: false
+        env:
+          TAG_PREFIX: ${{ inputs.tag_prefix }}
+          MAJOR_PATTERN: ${{ inputs.major_pattern }}
+          MINOR_PATTERN: ${{ inputs.minor_pattern }}
+        run: |
+          LAST_TAG=$(git tag -l "${TAG_PREFIX}*" --sort=-v:refname | head -n1)
+          if [ -z "$LAST_TAG" ]; then
+            LAST_TAG="${TAG_PREFIX}0.0.0"
+            echo "No previous tag found, starting from $LAST_TAG"
+          else
+            echo "Last tag: $LAST_TAG"
+          fi
+
+          LAST_VERSION="${LAST_TAG#"${TAG_PREFIX}"}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$LAST_VERSION"
+
+          if git rev-parse "$LAST_TAG" >/dev/null 2>&1; then
+            COMMITS=$(git log "${LAST_TAG}..HEAD" --pretty=format:'%s%n%b')
+          else
+            COMMITS=$(git log --pretty=format:'%s%n%b')
+          fi
+
+          if [ -z "$COMMITS" ]; then
+            echo "No new commits since $LAST_TAG"
+            VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          elif echo "$COMMITS" | grep -qE "$MAJOR_PATTERN"; then
+            MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
+            VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          elif echo "$COMMITS" | grep -qE "$MINOR_PATTERN"; then
+            MINOR=$((MINOR + 1)); PATCH=0
+            VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          else
+            PATCH=$((PATCH + 1))
+            VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          fi
+
+          echo "Calculated version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version_tag=${TAG_PREFIX}${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Check if tag exists
         id: check-tag
         run: |
           TAG="${{ inputs.tag_prefix }}${{ steps.semver.outputs.version }}"
           if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "Tag $TAG already exists, skipping"
           else
-            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create and push tag
@@ -85,13 +118,14 @@ jobs:
         if: steps.check-tag.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG_PREFIX: ${{ inputs.tag_prefix }}
         run: |
           TAG="${{ inputs.tag_prefix }}${{ steps.semver.outputs.version }}"
 
-          # Generate changelog from previous tag
-          if git describe --tags --abbrev=0 HEAD^ >/dev/null 2>&1; then
-            PREV_TAG="$(git describe --tags --abbrev=0 HEAD^)"
-            CHANGELOG=$(git log --pretty=format:'- %s (%h)' "${PREV_TAG}..HEAD~1" | head -30)
+          # Get previous tag globally (skip the one we just created)
+          PREV_TAG=$(git tag -l "${TAG_PREFIX}*" --sort=-v:refname | grep -v "^${TAG}$" | head -n1)
+          if [ -n "$PREV_TAG" ] && git rev-parse "$PREV_TAG" >/dev/null 2>&1; then
+            CHANGELOG=$(git log --pretty=format:'- %s (%h)' "${PREV_TAG}..HEAD" | head -30)
           else
             CHANGELOG=$(git log --pretty=format:'- %s (%h)' | head -30)
           fi
