@@ -67,10 +67,37 @@ feature/* ──► build
 
 2. Replace `<org>` with your GitHub organization in each template:
    ```yaml
-   uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@main
+   uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@v1
    ```
 
 3. Configure the required secrets (see below).
+
+## Versioning
+
+Templates pin a release, not a branch:
+
+```yaml
+uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@v1
+```
+
+`v1` is a floating alias that moves to the newest `v1.x.y`. Pinning it means a
+consumer picks up fixes and backward-compatible additions without editing its
+workflows, and never picks up a breaking change unannounced. Pin `@v1.4.2`
+instead when a pipeline must not move at all, and `@main` only to test an
+unreleased change on purpose.
+
+Releases are cut automatically: every push to `main` runs `release.yml`, which
+derives the version from the commits since the last tag, creates `vX.Y.Z` plus a
+GitHub Release, and re-points `v1`.
+
+| Commit contains | Bump |
+|---|---|
+| `MAJOR` or `BREAKING CHANGE` | major — `v2.0.0`, and `v1` stops moving |
+| `feat` | minor |
+| anything else | patch |
+
+A major bump leaves `v1` frozen at the last 1.x release, so consumers pinned to
+`@v1` keep working until they choose to move to `@v2`.
 
 ## Deploy Targets
 
@@ -87,7 +114,7 @@ Example:
 ```yaml
 jobs:
   pipeline:
-    uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@main
+    uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@v1
     with:
       run_build: true
       run_test: true
@@ -296,7 +323,7 @@ The Java stack takes the same input. `java-build`, `java-test`, `java-owasp`,
 `actions/setup-java` when it is set and take the JDK from the image:
 
 ```yaml
-uses: Codehunters-IO/ci-templates/.github/workflows/java-main-pipeline.yml@main
+uses: Codehunters-IO/ci-templates/.github/workflows/java-main-pipeline.yml@v1
 with:
   container_image: 'ghcr.io/codehunters-io/ci-base-images:1.0.0'
 ```

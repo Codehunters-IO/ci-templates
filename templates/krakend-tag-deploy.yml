@@ -51,7 +51,7 @@ jobs:
   deploy:
     name: Deploy to prod
     needs: validate
-    uses: <org>/ci-templates/.github/workflows/krakend-main-pipeline.yml@main
+    uses: <org>/ci-templates/.github/workflows/krakend-main-pipeline.yml@v1
     with:
       run_build: true
       run_test: false

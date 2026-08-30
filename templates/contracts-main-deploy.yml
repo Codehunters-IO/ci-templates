@@ -23,7 +23,7 @@ permissions:
 jobs:
   publish:
     if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
-    uses: Codehunters-IO/ci-templates/.github/workflows/contracts-main-pipeline.yml@main
+    uses: Codehunters-IO/ci-templates/.github/workflows/contracts-main-pipeline.yml@v1
     with:
       # Node comes from the image, not from a per-run download. The tag pins
       # the version a repository declares in `engines` / `.nvmrc`.
