@@ -23,6 +23,32 @@ jobs:
         run: |
           npm install --save-dev @commitlint/config-conventional @commitlint/cli
 
+      # commitlint resolves its rules from the *consumer* repository. With no
+      # config there it loads an empty rule set and exits 9 (`[empty-rules]`)
+      # before reading a single commit, so the gate fails for reasons that have
+      # nothing to do with the commits. Supply the conventional preset in that
+      # case; a repo that ships its own config is left untouched.
+      - name: Provide a default config when the repository has none
+        run: |
+          for f in commitlint.config.js commitlint.config.cjs commitlint.config.mjs \
+                   commitlint.config.ts commitlint.config.json commitlint.config.yaml \
+                   commitlint.config.yml .commitlintrc .commitlintrc.js .commitlintrc.cjs \
+                   .commitlintrc.mjs .commitlintrc.ts .commitlintrc.json .commitlintrc.yaml \
+                   .commitlintrc.yml; do
+            if [ -f "$f" ]; then
+              echo "Using the repository's own config: $f"
+              exit 0
+            fi
+          done
+
+          if [ -f package.json ] && grep -q '"commitlint"' package.json; then
+            echo "Using the commitlint key in package.json"
+            exit 0
+          fi
+
+          echo "No commitlint config found; falling back to @commitlint/config-conventional"
+          echo "module.exports = { extends: ['@commitlint/config-conventional'] };" > commitlint.config.js
+
       - name: Validate PR commits
         if: github.event_name == 'pull_request'
         run: npx commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
