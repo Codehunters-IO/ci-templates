@@ -1,0 +1,37 @@
+# Weekly pruning of untagged GHCR container versions.
+#
+# Copy into .github/workflows/ of any repository that publishes a container
+# package. It defaults to the repository's own name, so most repos need no edits.
+#
+# dry_run stays true until you have read one plan and agree with it. The
+# scheduled run only ever reports; deleting means dispatching by hand with
+# dry_run unchecked. Retention is the reusable workflow's default (10) — change
+# it there, or call the workflow directly, rather than threading a number input
+# through a dispatch where an empty value would have to be coerced.
+name: Cleanup Packages
+
+on:
+  schedule:
+    # Sunday 04:00 UTC — after the week's releases, before Monday.
+    - cron: '0 4 * * 0'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Only report what would be deleted'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  packages: write
+
+jobs:
+  cleanup:
+    uses: Codehunters-IO/ci-templates/.github/workflows/shared-cleanup-packages.yml@main
+    with:
+      # Tagged versions are never candidates, so semver and rolling tags are safe
+      # regardless of what these are set to.
+      # On the scheduled run `inputs` is empty, so this evaluates to true and the
+      # cron only ever reports. Deleting requires dispatching it by hand.
+      dry_run: ${{ inputs.dry_run != false }}
+    secrets: inherit
