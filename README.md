@@ -99,6 +99,41 @@ GitHub Release, and re-points `v1`.
 A major bump leaves `v1` frozen at the last 1.x release, so consumers pinned to
 `@v1` keep working until they choose to move to `@v2`.
 
+## Deprecations
+
+Eleven per-language workflows exist only so that existing callers keep working.
+They carry `[DEPRECATED]` in their name, emit a warning when called, and are
+**scheduled for removal in v2**. Pinning `@v1` keeps them working until you
+migrate.
+
+Ten of them forward to a `shared-*` equivalent with identical inputs, so
+migrating is a one-line change to the path:
+
+| Deprecated | Call instead |
+|---|---|
+| `java-commit-lint.yml`, `krakend-commit-lint.yml`, `react-commit-lint.yml` | `shared-commit-lint.yml` |
+| `java-delete-branch.yml`, `krakend-delete-branch.yml`, `react-delete-branch.yml` | `shared-delete-branch.yml` |
+| `java-artifact-docker-ecr.yml`, `krakend-artifact-docker-ecr.yml` | `shared-artifact-docker-ecr.yml` |
+| `krakend-deploy-ec2.yml` | `shared-deploy-ec2.yml` |
+| `java-semver.yml` | `shared-semver.yml` |
+
+`java-deploy-ec2.yml` is the exception. It also forwards to
+`shared-deploy-ec2.yml`, but it is not a drop-in: it accepts `spring_profiles`,
+which the shared workflow does not, and folds it into `container_env_vars`
+along with the Spring context path. Migrating means doing that mapping at the
+call site:
+
+```yaml
+container_env_vars: |
+  SPRING_PROFILES_ACTIVE=<profiles>,<environment>
+  SERVER_CONTEXT_PATH=/<repository-name>
+```
+
+The `*-main-pipeline.yml` entrypoints already call the `shared-*` workflows
+directly — verified, none of the five references a deprecated workflow — so a
+repository consuming a pipeline rather than an individual workflow is
+unaffected by all of this.
+
 ## Deploy Targets
 
 The main pipelines accept a `deploy_target` input:

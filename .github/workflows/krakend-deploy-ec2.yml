@@ -61,6 +61,17 @@ on:
         value: ${{ jobs.deploy.outputs.deployed_image }}
 
 jobs:
+  deprecation-notice:
+    name: Deprecated
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 2
+    steps:
+      - name: Warn the caller
+        run: |
+          echo "::warning title=Deprecated workflow::krakend-deploy-ec2.yml is deprecated. \
+          Call shared-deploy-ec2.yml instead. This wrapper only forwards to it, and is scheduled \
+          for removal in v2 — pinning @v1 keeps it working until you migrate."
+
   deploy:
     uses: ./.github/workflows/shared-deploy-ec2.yml
     with:
