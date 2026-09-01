@@ -1,0 +1,184 @@
+name: Shared - Cleanup Container Packages
+
+# Prunes untagged versions from a GHCR container package.
+#
+# Untagged versions are what a registry accumulates on its own: every time a tag
+# moves to a new digest the old manifest stays behind, unreferenced and
+# unreachable, and buildx attestations add more. They are not deletable through
+# any tag, so nothing removes them unless something is asked to.
+#
+# The blast radius is deliberately small. `delete-only-untagged-versions` means a
+# version carrying ANY tag — a semver release, a rolling tag, a sha- tag — cannot
+# be selected, by construction rather than by a filter that could be written
+# wrong. The plan job runs first and prints exactly what would go, and `dry_run`
+# defaults to true so the first run of this in a repository lists and stops.
+
+on:
+  workflow_call:
+    inputs:
+      package_name:
+        description: 'Container package name (defaults to the repository name)'
+        required: false
+        type: string
+        default: ''
+      owner:
+        description: 'Org or user that owns the package (defaults to the repository owner)'
+        required: false
+        type: string
+        default: ''
+      min_versions_to_keep:
+        description: 'Untagged versions to retain, newest first. Keeps a debugging window.'
+        required: false
+        type: number
+        default: 10
+      dry_run:
+        description: 'Only report what would be deleted. Default true — deletion is opt-in.'
+        required: false
+        type: boolean
+        default: true
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+
+    outputs:
+      total:
+        description: 'Versions in the package before the run'
+        value: ${{ jobs.plan.outputs.total }}
+      tagged:
+        description: 'Versions carrying at least one tag (never deleted)'
+        value: ${{ jobs.plan.outputs.tagged }}
+      untagged:
+        description: 'Untagged versions found'
+        value: ${{ jobs.plan.outputs.untagged }}
+      deletable:
+        description: 'Untagged versions beyond min_versions_to_keep'
+        value: ${{ jobs.plan.outputs.deletable }}
+
+permissions:
+  packages: write
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 10
+
+    outputs:
+      total: ${{ steps.count.outputs.total }}
+      tagged: ${{ steps.count.outputs.tagged }}
+      untagged: ${{ steps.count.outputs.untagged }}
+      deletable: ${{ steps.count.outputs.deletable }}
+      package: ${{ steps.resolve.outputs.package }}
+      owner: ${{ steps.resolve.outputs.owner }}
+
+    steps:
+      - name: Resolve package coordinates
+        id: resolve
+        env:
+          IN_PACKAGE: ${{ inputs.package_name }}
+          IN_OWNER: ${{ inputs.owner }}
+        run: |
+          PKG="${IN_PACKAGE:-${GITHUB_REPOSITORY#*/}}"
+          OWNER="${IN_OWNER:-${GITHUB_REPOSITORY_OWNER}}"
+          echo "package=${PKG}" >> "$GITHUB_OUTPUT"
+          echo "owner=${OWNER}"  >> "$GITHUB_OUTPUT"
+          echo "Package: ${OWNER}/${PKG}"
+
+      - name: Count and classify versions
+        id: count
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ steps.resolve.outputs.owner }}
+          PKG: ${{ steps.resolve.outputs.package }}
+          KEEP: ${{ inputs.min_versions_to_keep }}
+        run: |
+          set -euo pipefail
+
+          # Orgs and user accounts are different endpoints and the owner may be
+          # either. Try the org one, fall back to the user one.
+          BASE="/orgs/${OWNER}/packages/container/${PKG}/versions"
+          if ! gh api "${BASE}?per_page=1" >/dev/null 2>&1; then
+            BASE="/users/${OWNER}/packages/container/${PKG}/versions"
+          fi
+
+          gh api "${BASE}" --paginate \
+            --jq '.[] | "\(.id)\t\(.metadata.container.tags | join(","))"' > versions.tsv
+
+          TOTAL=$(wc -l < versions.tsv | tr -d ' ')
+          # A trailing empty tag field is what "untagged" looks like here.
+          UNTAGGED=$(awk -F'\t' '$2 == ""' versions.tsv | wc -l | tr -d ' ')
+          TAGGED=$((TOTAL - UNTAGGED))
+          DELETABLE=$(( UNTAGGED > KEEP ? UNTAGGED - KEEP : 0 ))
+
+          {
+            echo "total=${TOTAL}"
+            echo "tagged=${TAGGED}"
+            echo "untagged=${UNTAGGED}"
+            echo "deletable=${DELETABLE}"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Package cleanup plan — \`${OWNER}/${PKG}\`"
+            echo ""
+            echo "| | Count |"
+            echo "|---|---:|"
+            echo "| Versions total | ${TOTAL} |"
+            echo "| Tagged (never touched) | ${TAGGED} |"
+            echo "| Untagged | ${UNTAGGED} |"
+            echo "| Retained by \`min_versions_to_keep\` | $(( UNTAGGED > KEEP ? KEEP : UNTAGGED )) |"
+            echo "| **Would be deleted** | **${DELETABLE}** |"
+            echo ""
+            echo "Tags that will survive regardless:"
+            echo ""
+            echo '```'
+            awk -F'\t' '$2 != "" {print $2}' versions.tsv | tr ',' '\n' | sort -u | head -40
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  prune:
+    name: Prune
+    needs: plan
+    if: ${{ !inputs.dry_run && needs.plan.outputs.deletable != '0' }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 10
+
+    steps:
+      - name: Delete untagged versions
+        uses: actions/delete-package-versions@v5
+        with:
+          owner: ${{ needs.plan.outputs.owner }}
+          package-name: ${{ needs.plan.outputs.package }}
+          package-type: container
+          # The whole safety story: a version with any tag is not a candidate.
+          delete-only-untagged-versions: 'true'
+          min-versions-to-keep: ${{ inputs.min_versions_to_keep }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Report
+        run: |
+          {
+            echo "### Deleted"
+            echo ""
+            echo "Removed ${{ needs.plan.outputs.deletable }} untagged versions from"
+            echo "\`${{ needs.plan.outputs.owner }}/${{ needs.plan.outputs.package }}\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  skipped:
+    name: Prune (skipped)
+    needs: plan
+    if: ${{ inputs.dry_run || needs.plan.outputs.deletable == '0' }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 5
+
+    steps:
+      - name: Say why
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "dry_run is set — nothing deleted. Re-run with dry_run: false to apply." \
+              >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Nothing to delete: no untagged versions beyond min_versions_to_keep." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
