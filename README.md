@@ -443,6 +443,37 @@ does not change live rules until imported.
 | `scripts/clone-environments.sh` | Provision `cert`/`prod` Environments per repo: clones **variables** from `develop` and sets **secrets** from per-env `.env` files you fill (secret values are not readable, so they are never copied blindly). Run `--template` first to generate the secret-name files. |
 | `scripts/ssh-deploy-debug.sh` | Reproduce the EC2 SSH deploy stages locally (connectivity, ECR login, image pull, network/volume) to isolate a deploy failure. The first failing stage is the cause. |
 
+## Package cleanup
+
+`shared-cleanup-packages.yml` prunes **untagged** versions from a GHCR container
+package. Copy `templates/shared-cleanup-packages.yml` into the publishing repo;
+it defaults to that repo's own name, so most need no edits.
+
+Untagged versions are what a registry accumulates by itself. Every time a tag
+moves to a new digest the old manifest stays behind — unreferenced, unreachable
+through any tag, and invisible unless you count. Buildx attestations add more.
+`ci-base-images` reached 150 versions in five days, 124 of them untagged: 83%
+of the registry was garbage nothing could pull.
+
+| Input | Description | Default |
+|-------|-------------|---------|
+| `package_name` | Container package name | repository name |
+| `owner` | Org or user owning the package | repository owner |
+| `min_versions_to_keep` | Untagged versions retained, newest first | `10` |
+| `dry_run` | Only report | `true` |
+
+**A tagged version is never a candidate.** That comes from
+`delete-only-untagged-versions` in the underlying action, not from a filter
+written here — semver tags, rolling tags and `sha-` tags are safe by
+construction rather than by a regex that could be wrong. A retention window is
+kept on top of that, because the most recent untagged manifests are the ones a
+half-finished multi-arch push leaves behind.
+
+The `plan` job runs first and always. It prints the counts and the surviving
+tags to the step summary, so the deletion is reviewable before it happens. The
+scheduled run only ever plans; deleting means dispatching the workflow by hand
+with `dry_run` unchecked.
+
 ## Requirements on the EC2 host
 
 - Docker + Docker Compose V2
