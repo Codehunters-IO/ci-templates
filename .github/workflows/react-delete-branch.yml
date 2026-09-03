@@ -24,6 +24,17 @@ on:
         value: ${{ jobs.delete.outputs.status }}
 
 jobs:
+  deprecation-notice:
+    name: Deprecated
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Warn the caller
+        run: |
+          echo "::warning title=Deprecated workflow::react-delete-branch.yml is deprecated. \
+          Call shared-delete-branch.yml instead. This wrapper only forwards to it, and is scheduled \
+          for removal in v2 — pinning @v1 keeps it working until you migrate."
+
   delete:
     uses: ./.github/workflows/shared-delete-branch.yml
     with:
