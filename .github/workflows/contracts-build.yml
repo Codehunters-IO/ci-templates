@@ -74,7 +74,7 @@ jobs:
 
       - name: Setup pnpm
         if: inputs.package_manager == 'pnpm' && inputs.container_image == ''
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
 
       - name: Setup Node.js ${{ inputs.node_version }}
         if: inputs.container_image == ''
