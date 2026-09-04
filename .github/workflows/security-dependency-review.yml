@@ -29,6 +29,12 @@ on:
         description: 'Scan result (success/failure)'
         value: ${{ jobs.dependency-review.outputs.result }}
 
+# Least privilege for what this workflow actually does. Without it the
+# job inherits whatever the calling repository's default happens to be,
+# which on older repositories is write-all.
+permissions:
+  contents: read
+
 jobs:
   dependency-review:
     name: Dependency Review

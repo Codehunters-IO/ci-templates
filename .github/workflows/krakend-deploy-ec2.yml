@@ -65,6 +65,12 @@ on:
         description: 'Deployed image tag'
         value: ${{ jobs.deploy.outputs.deployed_image }}
 
+# Least privilege for what this workflow actually does. Without it the
+# job inherits whatever the calling repository's default happens to be,
+# which on older repositories is write-all.
+permissions:
+  contents: read
+
 jobs:
   deprecation-notice:
     name: Deprecated

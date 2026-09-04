@@ -49,6 +49,13 @@ on:
         description: 'Name of uploaded build artifact'
         value: ${{ jobs.build.outputs.artifact_name }}
 
+# Least privilege for what this workflow actually does. Without it the
+# job inherits whatever the calling repository's default happens to be,
+# which on older repositories is write-all.
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   build:
     name: Build & Compile

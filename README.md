@@ -160,6 +160,64 @@ jobs:
     secrets: inherit
 ```
 
+## Token permissions
+
+Every workflow declares the `GITHUB_TOKEN` permissions it needs. Before this,
+none of them did, which means each job ran with whatever the calling
+repository's default happened to be — on repositories created before GitHub
+changed the default, that is write-all: a linting job could push to `main`.
+
+The declarations are derived from what each workflow actually does, not from a
+template:
+
+| Workflows | Permissions | Why |
+|-----------|-------------|-----|
+| Most build, test and deploy jobs | `contents: read` | They read the repository and nothing else |
+| `*-build`, `*-test`, `*-owasp`, `java-architecture`, `contracts-*` | `+ packages: read` | They run inside a container pulled from GHCR |
+| `java-artifact-docker-github`, `java-artifact-dependency-github` | `+ packages: write` | They publish to GitHub Packages |
+| `shared-release`, `shared-semver`, `shared-tag-release`, `*-delete-branch` | `contents: write` | They push a branch, a tag, or delete a ref |
+| `shared-create-issue-on-failure` | `+ issues: write` | It opens an issue |
+| `*-main-pipeline`, `java-pr-pipeline` | union of the above | A caller's grant is the ceiling for everything beneath it |
+
+That last row is the one to understand. A reusable workflow can only *narrow*
+what its caller granted, never widen it. An orchestrator that calls
+`shared-tag-release` therefore has to hold `contents: write` itself, even
+though it pushes nothing directly — and the narrow declarations on the leaves
+are what keep that grant from reaching the jobs that have no business with it.
+
+## AWS authentication
+
+Two paths. The default is unchanged, so nothing needs to move today.
+
+**Static keys** — `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` repository
+secrets. This is what every AWS workflow used, and it is a credential nobody
+rotates, that does not expire, and that anyone with write access to the
+repository can exfiltrate through a workflow change.
+
+**OIDC** — set `aws_role_to_assume` to an IAM role ARN and no static key is
+sent at all. GitHub mints a token scoped to this repository that expires with
+the job:
+
+```yaml
+jobs:
+  pipeline:
+    uses: Codehunters-IO/ci-templates/.github/workflows/java-main-pipeline.yml@v1
+    permissions:
+      contents: write
+      packages: write
+      issues: write
+      id-token: write     # required, and the caller has to grant it
+    with:
+      aws_role_to_assume: 'arn:aws:iam::123456789012:role/github-actions-deploy'
+```
+
+The role needs a trust policy naming GitHub's OIDC provider and restricting
+`token.actions.githubusercontent.com:sub` to this repository — without that
+`sub` condition any repository on GitHub can assume it.
+
+Both keys are only read when `aws_role_to_assume` is empty; passing both would
+make the action assume the role *with* the static key, leaving it in play.
+
 ## Required Secrets
 
 Configure in **Settings → Secrets and variables → Actions**.

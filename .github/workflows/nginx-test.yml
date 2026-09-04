@@ -24,6 +24,12 @@ on:
         description: 'Test result (success/failure)'
         value: ${{ jobs.test.outputs.result }}
 
+# Least privilege for what this workflow actually does. Without it the
+# job inherits whatever the calling repository's default happens to be,
+# which on older repositories is write-all.
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Smoke Test

@@ -27,6 +27,12 @@ on:
         description: 'Version tag (e.g. v1.2.3)'
         value: ${{ jobs.tag.outputs.version_tag }}
 
+# Least privilege for what this workflow actually does. Without it the
+# job inherits whatever the calling repository's default happens to be,
+# which on older repositories is write-all.
+permissions:
+  contents: write
+
 jobs:
   tag:
     name: Tag Release

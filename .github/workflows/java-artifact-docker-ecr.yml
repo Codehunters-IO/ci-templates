@@ -74,6 +74,12 @@ on:
         description: 'Short commit SHA used'
         value: ${{ jobs.artifact.outputs.commit_sha }}
 
+# Least privilege for what this workflow actually does. Without it the
+# job inherits whatever the calling repository's default happens to be,
+# which on older repositories is write-all.
+permissions:
+  contents: read
+
 jobs:
   deprecation-notice:
     name: Deprecated
