@@ -39,10 +39,42 @@ a merge commit on the other, so there is one per branch.
 permitted.
 
 **`main` is merge-only.** The release pull request is `develop` → `main`, and squashing it
-would give `main` a commit that shares no history with `develop`. The two branches would
-diverge permanently on every release, and the back-merge would then replay changes
-`develop` already has, as conflicts. This repository has been through that drift twice.
-Merge-only also means nobody can squash a release by reflex — the method is not offered.
+breaks the release itself, not just the history. `shared-tag-release` derives the version
+from `git log "${LAST_TAG}..HEAD"`. A squashed release gives `main` a single commit whose
+subject is the pull request title — so a release carrying a `feat` computes as a patch.
+Measured on the v1.3.0 release: merged, it produced `v1.3.0`; squashed, the same content
+would have produced `v1.2.1`, and `v1` would have moved to a version that understates what
+changed. Merge-only also means nobody can squash a release by reflex — the method is not
+offered.
+
+## Why there is no back-merge
+
+Classic GitFlow back-merges `main` into `develop` after a release, because `main` receives
+hotfixes of its own. Here it does not: nothing is ever committed to `main` except the
+release merge, and the release merge is `develop`'s own content. `main` therefore never
+holds a change `develop` lacks.
+
+The branches still read as diverged, because the merge commits themselves live only on
+`main`. That is topology, not content. After the v1.3.1 release:
+
+```console
+$ gh api repos/Codehunters-IO/ci-templates/compare/develop...main \
+    --jq '"\(.status) ahead_by=\(.ahead_by) files=\(.files|length)"'
+diverged ahead_by=2 files=0
+```
+
+Two commits, zero files. Both are merge commits touching nothing.
+
+A back-merge pull request would therefore carry an empty diff, and `develop` is squash-only
+— squashing nothing produces nothing, and `main`'s merge commits would still not be
+ancestors of `develop`. The divergence would survive the ceremony intended to end it. So
+there is no back-merge step, and the `develop`-only count growing by one per release is
+expected.
+
+This holds only while `main` receives nothing but release merges. The day something lands
+on `main` directly — a hotfix that cannot wait for `develop` — `develop` needs that change
+back, and squash-only leaves cherry-pick as the path. Add `merge` to `develop`'s
+`allowed_merge_methods` at that point rather than in advance.
 
 ## Why the rest is shaped the way it is
 

@@ -112,7 +112,7 @@ jobs:
     # ============================================
       - name: SonarQube Scan
         if: inputs.run_code_analysis && inputs.code_analysis_tool == 'sonar' && env.SONAR_TOKEN != ''
-        uses: SonarSource/sonarqube-scan-action@v4
+        uses: SonarSource/sonarqube-scan-action@689fb39b34b9aa95ebc5f8f119343ddd51542402  # v4
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_URL }}
@@ -120,7 +120,7 @@ jobs:
       - name: SonarQube Quality Gate
         id: quality-gate
         if: inputs.run_code_analysis && inputs.code_analysis_tool == 'sonar' && !inputs.skip_quality_gate && env.SONAR_TOKEN != ''
-        uses: SonarSource/sonarqube-quality-gate-action@v1
+        uses: SonarSource/sonarqube-quality-gate-action@7a5fffe8e523c40e0c740b6bc2712ab503e52efa  # v1
         timeout-minutes: 5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
