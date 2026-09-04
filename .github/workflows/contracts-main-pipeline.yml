@@ -246,6 +246,11 @@ on:
         required: false
         type: string
         default: ''
+      inject_aws_credentials:
+        description: 'DEPRECATED. Forwarded to the deploy workflow: put the pipeline AWS credentials in the container environment. Off by default; see shared-deploy-ec2.yml. Removed in v2.'
+        required: false
+        type: boolean
+        default: false
       verify_vpn_connectivity:
         description: 'Ping EC2 host before deploying (deploy_target: ec2-vpn only)'
         required: false
@@ -528,6 +533,7 @@ jobs:
       memory_reservation: ${{ inputs.memory_reservation }}
       internal_port: ${{ inputs.internal_port }}
       extra_volumes: ${{ inputs.extra_volumes }}
+      inject_aws_credentials: ${{ inputs.inject_aws_credentials }}
     secrets: inherit
 
   # ============================================
@@ -552,6 +558,7 @@ jobs:
       internal_port: ${{ inputs.internal_port }}
       extra_volumes: ${{ inputs.extra_volumes }}
       verify_vpn_connectivity: ${{ inputs.verify_vpn_connectivity }}
+      inject_aws_credentials: ${{ inputs.inject_aws_credentials }}
     secrets: inherit
 
   # ============================================

@@ -196,6 +196,11 @@ on:
         required: false
         type: string
         default: ''
+      inject_aws_credentials:
+        description: 'DEPRECATED. Forwarded to the deploy workflow: put the pipeline AWS credentials in the container environment. Off by default; see shared-deploy-ec2.yml. Removed in v2.'
+        required: false
+        type: boolean
+        default: false
 
       # EKS-specific options
       eks_cluster_name:
@@ -535,6 +540,7 @@ jobs:
         SPRING_PROFILES_ACTIVE=${{ inputs.spring_profiles != '' && format('{0},{1}', inputs.spring_profiles, inputs.environment) || inputs.environment }}
         SERVER_CONTEXT_PATH=/${{ github.event.repository.name }}
       extra_volumes: ${{ inputs.extra_volumes }}
+      inject_aws_credentials: ${{ inputs.inject_aws_credentials }}
     secrets: inherit
 
   # ============================================
@@ -560,6 +566,7 @@ jobs:
         SPRING_PROFILES_ACTIVE=${{ inputs.spring_profiles != '' && format('{0},{1}', inputs.spring_profiles, inputs.environment) || inputs.environment }}
         SERVER_CONTEXT_PATH=/${{ github.event.repository.name }}
       extra_volumes: ${{ inputs.extra_volumes }}
+      inject_aws_credentials: ${{ inputs.inject_aws_credentials }}
     secrets: inherit
 
   # ============================================

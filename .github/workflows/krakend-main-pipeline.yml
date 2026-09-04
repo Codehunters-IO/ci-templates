@@ -135,6 +135,11 @@ on:
         type: string
         default: |
           - ./certs:/etc/krakend/certs:ro
+      inject_aws_credentials:
+        description: 'DEPRECATED. Forwarded to the deploy workflow: put the pipeline AWS credentials in the container environment. Off by default; see shared-deploy-ec2.yml. Removed in v2.'
+        required: false
+        type: boolean
+        default: false
 
       # EKS-specific options
       eks_cluster_name:
@@ -309,6 +314,7 @@ jobs:
       memory_limit: ${{ inputs.memory_limit }}
       memory_reservation: ${{ inputs.memory_reservation }}
       extra_volumes: ${{ inputs.extra_volumes }}
+      inject_aws_credentials: ${{ inputs.inject_aws_credentials }}
     secrets: inherit
 
   # ============================================
@@ -331,6 +337,7 @@ jobs:
       memory_limit: ${{ inputs.memory_limit }}
       memory_reservation: ${{ inputs.memory_reservation }}
       extra_volumes: ${{ inputs.extra_volumes }}
+      inject_aws_credentials: ${{ inputs.inject_aws_credentials }}
     secrets: inherit
 
   # ============================================

@@ -33,6 +33,11 @@ on:
         required: false
         type: string
         default: '256m'
+      inject_aws_credentials:
+        description: 'DEPRECATED. Forwarded to shared-deploy-ec2.yml: put the pipeline AWS credentials in the container environment. Off by default. Removed in v2.'
+        required: false
+        type: boolean
+        default: false
 
     secrets:
       AWS_ECR_URL:
@@ -81,4 +86,5 @@ jobs:
       docker_platform: ${{ inputs.docker_platform }}
       memory_limit: ${{ inputs.memory_limit }}
       memory_reservation: ${{ inputs.memory_reservation }}
+      inject_aws_credentials: ${{ inputs.inject_aws_credentials }}
     secrets: inherit
