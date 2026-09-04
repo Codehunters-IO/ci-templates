@@ -74,11 +74,11 @@ jobs:
 
       - name: Setup pnpm
         if: inputs.package_manager == 'pnpm' && inputs.container_image == ''
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
 
       - name: Setup Node.js ${{ inputs.node_version }}
         if: inputs.container_image == ''
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ inputs.node_version }}
           cache: ${{ inputs.package_manager }}
@@ -123,7 +123,7 @@ jobs:
           echo "Strict mode enabled (24KB EIP-170 limit)." >> $GITHUB_STEP_SUMMARY
 
       - name: Upload compiled artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: contracts-build-${{ github.run_id }}
           path: |

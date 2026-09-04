@@ -89,10 +89,10 @@ jobs:
 
       - name: Setup pnpm
         if: inputs.package_manager == 'pnpm'
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
 
       - name: Setup Node.js ${{ inputs.node_version }}
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ inputs.node_version }}
           cache: ${{ inputs.package_manager }}
@@ -156,7 +156,7 @@ jobs:
       # python, solc and crytic-compile already matched to each other.
       - name: Run slither
         id: analysis
-        uses: crytic/slither-action@v0.4.1
+        uses: crytic/slither-action@v0.4.2
         with:
           target: ${{ inputs.slither_target }}
           slither-args: ${{ inputs.slither_args }}

@@ -38,7 +38,11 @@ on:
         type: string
         default: ''
       min_versions_to_keep:
-        description: 'Untagged versions to retain, newest first. Keeps a debugging window.'
+        description: >-
+          Minimum unreferenced versions to retain, newest first. Rounded up to
+          a whole image, because an orphaned multi-arch image is an index plus
+          its platform and attestation manifests and half of one is no use to
+          anybody. Ten versions is about two images.
         required: false
         type: number
         default: 10
@@ -134,7 +138,7 @@ jobs:
           # --slurp gives an array of pages and refuses to run with --jq, so the
           # flattening happens here rather than in the query.
           pages = json.loads(api(base, "--paginate", "--slurp"))
-          versions = [{"id": v["id"], "name": v["name"],
+          versions = [{"id": v["id"], "name": v["name"], "created_at": v["created_at"],
                        "tags": v.get("metadata", {}).get("container", {}).get("tags", [])}
                       for page in pages for v in page]
 
@@ -144,18 +148,25 @@ jobs:
           req = urllib.request.Request(
               f"https://ghcr.io/token?scope=repository:{repo_path}:pull&service=ghcr.io",
               headers={"Authorization": f"Basic {auth}"})
-          reg_token = json.load(urllib.request.urlopen(req))["token"]
+          reg_token = json.load(urllib.request.urlopen(req, timeout=30))["token"]
 
           ACCEPT = ("application/vnd.oci.image.index.v1+json,"
                     "application/vnd.docker.distribution.manifest.list.v2+json,"
                     "application/vnd.oci.image.manifest.v1+json,"
                     "application/vnd.docker.distribution.manifest.v2+json")
 
+          # Cached, and with a timeout. Without the cache the reachability walk
+          # and the grouping below fetch the same manifests twice; without the
+          # timeout a stalled connection silently burns the job's whole budget.
+          _cache = {}
+
           def manifest(digest):
-              r = urllib.request.Request(
-                  f"https://ghcr.io/v2/{repo_path}/manifests/{digest}",
-                  headers={"Authorization": f"Bearer {reg_token}", "Accept": ACCEPT})
-              return json.load(urllib.request.urlopen(r))
+              if digest not in _cache:
+                  r = urllib.request.Request(
+                      f"https://ghcr.io/v2/{repo_path}/manifests/{digest}",
+                      headers={"Authorization": f"Bearer {reg_token}", "Accept": ACCEPT})
+                  _cache[digest] = json.load(urllib.request.urlopen(r, timeout=30))
+              return _cache[digest]
 
           # Everything reachable from a tag. One pass is enough in practice, but
           # the walk is transitive so a nested index cannot slip through.
@@ -181,6 +192,27 @@ jobs:
           reachable_untagged = [v for v in untagged if v["name"] in referenced]
           candidates = [v for v in untagged if v["name"] not in referenced]
 
+          # Group the candidates back into the images they came from. An orphan
+          # is rarely one version: a multi-arch image a tag has moved off leaves
+          # its index, one manifest per platform and its attestations, and they
+          # are only meaningful together. Retaining a count of versions can cut
+          # through the middle of one and leave an index whose platforms are
+          # gone - harmless, since nothing references it, but not a state worth
+          # creating on purpose.
+          by_name = {v["name"]: v for v in candidates}
+          groups, claimed = [], set()
+          for v in candidates:
+              try:
+                  kids = [c["digest"] for c in manifest(v["name"]).get("manifests", [])]
+              except (urllib.error.HTTPError, urllib.error.URLError):
+                  continue
+              members = [v] + [by_name[k] for k in kids if k in by_name]
+              if len(members) > 1:
+                  groups.append(members)
+                  claimed.update(m["name"] for m in members)
+          groups += [[v] for v in candidates if v["name"] not in claimed]
+          groups.sort(key=lambda g: max(m["created_at"] for m in g), reverse=True)
+
           # A manifest we could not read might reference anything, so nothing is
           # deleted on that run. Failing closed is the only safe direction here.
           if unreadable:
@@ -190,8 +222,16 @@ jobs:
                   print(f"  {d}: {e}")
               candidates = []
 
-          # Newest first, by the order the API returns (most recent first).
-          deletable = candidates[keep:]
+          # Retain whole images until at least `keep` versions are held. The
+          # input still means "keep at least this many versions"; it rounds up
+          # to an image boundary rather than splitting one.
+          retained_groups, held = 0, 0
+          for g in groups:
+              if held >= keep:
+                  break
+              retained_groups += 1
+              held += len(g)
+          deletable = [v for g in groups[retained_groups:] for v in g]
 
           out = {
               "total": len(versions), "tagged": len(tagged), "untagged": len(untagged),
@@ -210,7 +250,8 @@ jobs:
               fh.write(f"| Tagged | {out['tagged']} |\n")
               fh.write(f"| Untagged | {out['untagged']} |\n")
               fh.write(f"| Untagged but reachable from a tag (protected) | {out['referenced']} |\n")
-              fh.write(f"| Retained by `min_versions_to_keep` | {min(keep, len(candidates))} |\n")
+              fh.write(f"| Orphaned images (index + platforms + attestations) | {len(groups)} |\n")
+              fh.write(f"| Retained by `min_versions_to_keep` | {held} in {retained_groups} images |\n")
               fh.write(f"| **Would be deleted** | **{out['deletable']}** |\n\n")
               if reachable_untagged:
                   fh.write(f"{len(reachable_untagged)} untagged versions are platform or "
