@@ -139,7 +139,7 @@ jobs:
 
       - name: Upload SDK coverage
         if: inputs.upload_reports && always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: contracts-sdk-coverage-${{ github.run_id }}
           path: ${{ inputs.coverage_path }}
