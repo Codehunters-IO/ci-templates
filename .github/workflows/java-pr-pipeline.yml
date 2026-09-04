@@ -123,6 +123,14 @@ on:
         type: boolean
         default: false
 
+      aws_role_to_assume:
+        description: >-
+          IAM role ARN to assume via GitHub OIDC, threaded down to the AWS jobs
+          below. Empty keeps the static-key path.
+        required: false
+        type: string
+        default: ''
+
     outputs:
       coverage:
         description: 'Code coverage percentage (line)'
@@ -143,11 +151,23 @@ on:
         description: 'Architecture test result'
         value: ${{ jobs.pipeline.outputs.arch_test_result }}
 
+# Least privilege for what this workflow actually does. Without it the
+# job inherits whatever the calling repository's default happens to be,
+# which on older repositories is write-all.
+permissions:
+  contents: write
+  packages: write
+  issues: write
+  # For the OIDC path in the AWS workflows below; a caller's grant is the
+  # ceiling for everything beneath it.
+  id-token: write
+
 jobs:
   pipeline:
     name: PR Quality Gates
     uses: ./.github/workflows/java-main-pipeline.yml
     with:
+      aws_role_to_assume: ${{ inputs.aws_role_to_assume }}
       runner: ${{ inputs.runner }}
       container_image: ${{ inputs.container_image }}
       java_version: ${{ inputs.java_version }}

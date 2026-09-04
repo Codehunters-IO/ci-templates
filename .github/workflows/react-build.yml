@@ -44,6 +44,12 @@ on:
         type: number
         default: 1
 
+# Least privilege for what this workflow actually does. Without it the
+# job inherits whatever the calling repository's default happens to be,
+# which on older repositories is write-all.
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build & Lint

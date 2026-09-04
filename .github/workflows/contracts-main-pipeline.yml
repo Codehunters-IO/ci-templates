@@ -318,6 +318,14 @@ on:
         type: boolean
         default: false
 
+      aws_role_to_assume:
+        description: >-
+          IAM role ARN to assume via GitHub OIDC, threaded down to the AWS jobs
+          below. Empty keeps the static-key path.
+        required: false
+        type: string
+        default: ''
+
     outputs:
       image_tag:
         description: 'Docker image tag pushed'
@@ -355,6 +363,17 @@ on:
       release_changelog:
         description: 'Release changelog'
         value: ${{ jobs.release.outputs.changelog }}
+
+# Least privilege for what this workflow actually does. Without it the
+# job inherits whatever the calling repository's default happens to be,
+# which on older repositories is write-all.
+permissions:
+  contents: write
+  packages: read
+  issues: write
+  # For the OIDC path in the AWS workflows below; a caller's grant is the
+  # ceiling for everything beneath it.
+  id-token: write
 
 jobs:
   # ============================================
@@ -503,6 +522,7 @@ jobs:
     needs: [build, test, sdk, e2e, analysis]
     uses: ./.github/workflows/shared-artifact-docker-ecr.yml
     with:
+      aws_role_to_assume: ${{ inputs.aws_role_to_assume }}
       runner: ${{ inputs.runner }}
       image_tag: ${{ inputs.image_tag }}
       docker_platform: ${{ inputs.docker_platform }}
