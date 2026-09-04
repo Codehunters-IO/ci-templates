@@ -1,0 +1,20 @@
+version: 2
+
+updates:
+  # The workflows here pin third-party actions by mutable major tag (@v4, @v3).
+  # A tag is a pointer its owner can move, and these run in steps holding AWS keys,
+  # GHCR push tokens and SONAR_TOKEN -- which is how tj-actions/changed-files turned
+  # into a credential leak across every repository using it in March 2025. Dependabot
+  # opens the PRs; the SHA pinning itself still has to be done once, by hand.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - ci
+    commit-message:
+      prefix: chore
+      include: scope
