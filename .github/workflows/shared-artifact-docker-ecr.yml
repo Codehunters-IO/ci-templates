@@ -166,7 +166,7 @@ jobs:
 
       - name: Setup Gradle
         if: inputs.build_from_source && inputs.artifact_name == '' && inputs.build_tool == 'gradle'
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947  # v4
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' }}
 
@@ -188,7 +188,7 @@ jobs:
       # AWS + DOCKER BUILD & PUSH
       # ============================================
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a  # v4
         with:
           # One step, two paths. A long-lived access key in a repository secret
           # is a credential nobody rotates and everybody with write access can
@@ -223,15 +223,18 @@ jobs:
 
       - name: Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-        with:
-          mask-aws-account-id: 'false'
+        # No `mask-aws-account-id: false`. The action masks the account id in logs
+        # by default, and opting out published it on every build: the registry host
+        # is <account-id>.dkr.ecr.<region>.amazonaws.com. The account id is what an
+        # attacker needs to guess cross-account role ARNs, and this template runs in
+        # consumer repositories whose logs are not all equally protected.
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd  # v2
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a  # v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
 
       - name: Build and push to ECR
         id: push-ecr
@@ -274,7 +277,6 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| **Registry** | $ECR_REGISTRY |" >> $GITHUB_STEP_SUMMARY
           echo "| **Repository** | $ECR_REPOSITORY |" >> $GITHUB_STEP_SUMMARY
           echo "| **Tag** | $IMAGE_TAG |" >> $GITHUB_STEP_SUMMARY
           echo "| **Platform** | ${{ inputs.docker_platform }} |" >> $GITHUB_STEP_SUMMARY
