@@ -48,6 +48,17 @@ on:
         type: string
         default: ''
 
+      inject_aws_credentials:
+        description: >-
+          Write AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION into the
+          container's environment. Default true, which is the existing
+          behaviour. Set false on a host with an EC2 instance profile — the
+          application then gets credentials from the instance metadata service
+          and no long-lived key exists on the box at all.
+        required: false
+        type: boolean
+        default: true
+
     secrets:
       AWS_ECR_URL:
         required: true
@@ -112,6 +123,7 @@ jobs:
           MEMORY_LIMIT: ${{ inputs.memory_limit }}
           MEMORY_RESERVATION: ${{ inputs.memory_reservation }}
           INTERNAL_PORT: ${{ inputs.internal_port }}
+          INJECT_AWS_CREDENTIALS: ${{ inputs.inject_aws_credentials }}
           CONTAINER_ENV_VARS: ${{ inputs.container_env_vars }}
           EXTRA_VOLUMES: ${{ inputs.extra_volumes }}
         run: |
@@ -164,6 +176,19 @@ jobs:
           CONTAINER_ENV_VARS=$(echo "${CONTAINER_ENV_VARS_B64}" | base64 -d)
           EXTRA_VOLUMES=$(echo "${EXTRA_VOLUMES_B64}" | base64 -d)
 
+          # AWS credentials for the application, kept out of docker-compose.yml.
+          # umask before the redirect, not chmod after: chmod leaves a window in
+          # which the file exists world-readable.
+          if [ "${INJECT_AWS_CREDENTIALS}" = "true" ]; then
+            ( umask 077
+              printf 'AWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\nAWS_REGION=%s\n' \
+                "${AWS_ACCESS_KEY_ID}" "${AWS_SECRET_ACCESS_KEY}" "${AWS_REGION}" > .aws.env )
+            echo "Wrote .aws.env (mode $(stat -c '%a' .aws.env))"
+          else
+            rm -f .aws.env
+            echo "inject_aws_credentials=false — no credentials written; the host's instance profile supplies them."
+          fi
+
           # Create docker-compose.yml (standard name)
           COMPOSE_FILE_NAME="docker-compose.yml"
           echo "Creating ${COMPOSE_FILE_NAME}..."
@@ -177,15 +202,19 @@ jobs:
             echo "    environment:"
             echo "      - APP_NAME=${REPO_NAME}"
             echo "      - PATH_LOGS=/app/log/${REPO_NAME}"
-            echo "      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
-            echo "      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
-            echo "      - AWS_REGION=${AWS_REGION}"
+            # Deliberately not written here. docker-compose.yml is a
+            # world-readable file that outlives the deploy; these three used to
+            # sit in it in clear text. They move to .aws.env, mode 600, below.
             if [ -n "${CONTAINER_ENV_VARS}" ]; then
               while IFS= read -r line; do
                 if [ -n "$line" ]; then
                   echo "      - ${line}"
                 fi
               done <<< "${CONTAINER_ENV_VARS}"
+            fi
+            if [ "${INJECT_AWS_CREDENTIALS}" = "true" ]; then
+              echo "    env_file:"
+              echo "      - .aws.env"
             fi
             echo "    ports:"
             echo "      - \"${APP_PORT}:${INTERNAL_PORT}\""
@@ -285,7 +314,31 @@ jobs:
 
           # Copy script to EC2 (with retry)
           # Unreachable host = HARD FAILURE (no silent skip): a green-but-not-deployed pipeline hides problems.
-          run_with_retry bash -c "scp $SSH_COMMON_OPTS /tmp/deploy.sh ${AWS_EC2_USER}@${AWS_EC2_HOST}:~/deploy.sh" || {
+          # Every one of these used to travel as part of the remote command line, so
+          # `ps` on the EC2 host showed them to any user for as long as the deploy
+          # ran: the AWS keys, and CONTAINER_ENV_VARS_B64, which is whatever the
+          # consuming repository injects into its application. A mode-600 file
+          # sourced on the far side keeps them out of argv entirely.
+          ( umask 077; cat > /tmp/deploy.env <<ENVFILE
+          REPO_NAME='${REPO_NAME}'
+          IMAGE_TAG='${IMAGE_TAG}'
+          AWS_ECR_URL='${AWS_ECR_URL}'
+          AWS_ACCESS_KEY_ID='${AWS_ACCESS_KEY_ID}'
+          AWS_SECRET_ACCESS_KEY='${AWS_SECRET_ACCESS_KEY}'
+          AWS_REGION='${AWS_REGION}'
+          APP_PORT='${APP_PORT}'
+          ENVIRONMENT='${ENVIRONMENT}'
+          DOCKER_PLATFORM='${DOCKER_PLATFORM}'
+          MEMORY_LIMIT='${MEMORY_LIMIT}'
+          MEMORY_RESERVATION='${MEMORY_RESERVATION}'
+          INTERNAL_PORT='${INTERNAL_PORT}'
+          CONTAINER_ENV_VARS_B64='${CONTAINER_ENV_VARS_B64}'
+          EXTRA_VOLUMES_B64='${EXTRA_VOLUMES_B64}'
+          INJECT_AWS_CREDENTIALS='${INJECT_AWS_CREDENTIALS}'
+          ENVFILE
+          )
+
+          run_with_retry bash -c "scp $SSH_COMMON_OPTS /tmp/deploy.sh /tmp/deploy.env ${AWS_EC2_USER}@${AWS_EC2_HOST}:~/" || {
             echo "::error::scp failed after retries — host '${AWS_EC2_HOST}' is unreachable. Verify AWS_EC2_HOST (use an IP, not an unresolvable DNS name) and connectivity."
             echo "status=failed_unreachable" >> $GITHUB_OUTPUT
             exit 1
@@ -295,23 +348,15 @@ jobs:
           DEPLOY_RC=0
           run_with_retry bash -c "ssh $SSH_COMMON_OPTS ${AWS_EC2_USER}@${AWS_EC2_HOST} \"
             chmod +x ~/deploy.sh && \
-            REPO_NAME='${REPO_NAME}' \
-            IMAGE_TAG='${IMAGE_TAG}' \
-            AWS_ECR_URL='${AWS_ECR_URL}' \
-            AWS_ACCESS_KEY_ID='${AWS_ACCESS_KEY_ID}' \
-            AWS_SECRET_ACCESS_KEY='${AWS_SECRET_ACCESS_KEY}' \
-            AWS_REGION='${AWS_REGION}' \
-            APP_PORT='${APP_PORT}' \
-            ENVIRONMENT='${ENVIRONMENT}' \
-            DOCKER_PLATFORM='${DOCKER_PLATFORM}' \
-            MEMORY_LIMIT='${MEMORY_LIMIT}' \
-            MEMORY_RESERVATION='${MEMORY_RESERVATION}' \
-            INTERNAL_PORT='${INTERNAL_PORT}' \
-            CONTAINER_ENV_VARS_B64='${CONTAINER_ENV_VARS_B64}' \
-            EXTRA_VOLUMES_B64='${EXTRA_VOLUMES_B64}' \
+            set -a && . ~/deploy.env && set +a && \
+            rm -f ~/deploy.env && \
             ~/deploy.sh && \
             rm -f ~/deploy.sh
           \"" || DEPLOY_RC=$?
+
+          rm -f /tmp/deploy.env
+          # Best effort: if ssh died before sourcing, the env file is still up there.
+          ssh $SSH_COMMON_OPTS ${AWS_EC2_USER}@${AWS_EC2_HOST} "rm -f ~/deploy.env ~/deploy.sh" >/dev/null 2>&1 || true
 
           # Post-deploy verification: if container is running w/ correct image, success regardless of transport error
           echo "Verifying container state..."

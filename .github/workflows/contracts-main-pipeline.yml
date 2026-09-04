@@ -313,6 +313,14 @@ on:
         type: boolean
         default: false
 
+      inject_aws_credentials:
+        description: >-
+          Inject AWS credentials into the deployed container. Set false on a
+          host with an EC2 instance profile.
+        required: false
+        type: boolean
+        default: true
+
     outputs:
       image_tag:
         description: 'Docker image tag pushed'
@@ -520,6 +528,7 @@ jobs:
     needs: [artifact]
     uses: ./.github/workflows/shared-deploy-ec2.yml
     with:
+      inject_aws_credentials: ${{ inputs.inject_aws_credentials }}
       runner: ${{ inputs.runner }}
       image_tag: ${{ needs.artifact.outputs.image_tag }}
       docker_platform: ${{ inputs.docker_platform }}
@@ -543,6 +552,7 @@ jobs:
     needs: [artifact]
     uses: ./.github/workflows/shared-deploy-ec2-vpn.yml
     with:
+      inject_aws_credentials: ${{ inputs.inject_aws_credentials }}
       runner: ${{ inputs.runner }}
       image_tag: ${{ needs.artifact.outputs.image_tag }}
       docker_platform: ${{ inputs.docker_platform }}

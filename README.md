@@ -147,6 +147,37 @@ Configure in **Settings → Secrets and variables → Actions**.
 | `AWS_EC2_SSH_KEY` | SSH private key (PEM) |
 | `AWS_APP_PORT` | External port exposed by the container |
 
+### How EC2 deploys handle secrets
+
+Two things used to leak, both fixed:
+
+**The remote command line.** Everything the deploy script needs was passed as
+`KEY='value'` inside the `ssh` command, which makes it the remote process's
+argv — visible to `ps` for any user on the EC2 host for as long as the deploy
+ran. That included the AWS keys and `CONTAINER_ENV_VARS_B64`, which is whatever
+the consuming repository injects into its application. It now travels as a
+mode-600 file, sourced and deleted on the far side.
+
+**`docker-compose.yml`.** `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and
+`AWS_REGION` were written into it in clear text. That file persists in the
+deploy directory long after the deploy, with default permissions. They now go
+to `.aws.env`, created under `umask 077` and referenced through compose's
+`env_file`.
+
+`env_file` narrows the exposure; it does not remove it. The values still become
+container environment and still show up in `docker inspect`. The way to remove
+them is to not send them:
+
+```yaml
+with:
+  inject_aws_credentials: false
+```
+
+Give the instance an IAM role instead and the application reads short-lived
+credentials from the instance metadata service. There is then no long-lived key
+on the box at all. The input defaults to `true`, so nothing changes until you
+set it.
+
 ### WireGuard VPN (`deploy_target: ec2-vpn` only)
 
 | Secret | Required | Description |
