@@ -1,0 +1,38 @@
+name: Self-test - shared-build-publish-image
+
+# shared-build-publish-image.yml has no consumer inside this repository, so
+# without this it is YAML nobody executes until a downstream repo breaks on it.
+#
+# Builds a trivial fixture through the real workflow with push disabled, which
+# exercises the matrix expansion, the smoke_env plumbing, the Trivy gate and the
+# tagging rules. It does not publish anything.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/shared-build-publish-image.yml'
+      - '.github/workflows/selftest-build-publish-image.yml'
+      - '.github/selftest/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+
+jobs:
+  selftest:
+    uses: ./.github/workflows/shared-build-publish-image.yml
+    with:
+      push: false
+      platforms: 'linux/amd64'
+      smoke_command: './.github/selftest/smoke.sh'
+      images: |
+        [
+          {
+            "name": "selftest",
+            "dockerfile": ".github/selftest/Dockerfile",
+            "rolling_tag": "selftest",
+            "scan_severity": "CRITICAL",
+            "smoke_env": "EXPECT_MARKER=selftest"
+          }
+        ]

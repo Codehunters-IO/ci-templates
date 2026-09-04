@@ -1,0 +1,56 @@
+# Build, scan and publish container images from this repository.
+#
+# Copy into .github/workflows/ of any repository that ships a container image.
+# The single thing to edit is the `images` array: one object per Dockerfile.
+#
+# The permissions block is not optional. A reusable workflow cannot grant itself
+# more than the caller has, so omitting `security-events: write` silently loses
+# the code scanning upload and omitting `packages: write` fails the push.
+name: Build & Publish Image
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      push_rolling:
+        description: 'Also move the rolling tags'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+
+jobs:
+  build-publish:
+    # A release tag, never @main. Consumers copy this file verbatim, so the ref
+    # named here is what runs in their repository — @main would push every
+    # commit of this repo straight into them with no review and no version bump.
+    uses: Codehunters-IO/ci-templates/.github/workflows/shared-build-publish-image.yml@v1
+    with:
+      push_rolling: ${{ inputs.push_rolling || false }}
+      # Optional. Receives IMAGE plus each image's smoke_env. Drop it and the
+      # images are built and scanned but never exercised.
+      smoke_command: './scripts/smoke.sh'
+      # Optional. Accepted findings and whole classes of finding; see the
+      # Exceptions section of a consuming repository's SECURITY.md.
+      trivyignores: '.trivyignore.yaml'
+      ignore_policy: '.trivy/ignore-policy.rego'
+      # scan_severity is per image on purpose. A runtime image faces traffic, so
+      # a fixable HIGH in it is a defect. An image that is root with a toolchain
+      # by design and lives for one ephemeral job is held to CRITICAL, because a
+      # gate that is always red is a gate everybody learns to click past.
+      images: |
+        [
+          {
+            "name": "app",
+            "dockerfile": "Dockerfile",
+            "rolling_tag": "latest",
+            "scan_severity": "CRITICAL,HIGH",
+            "smoke_env": "KIND=runtime"
+          }
+        ]
