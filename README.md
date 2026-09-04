@@ -443,6 +443,49 @@ does not change live rules until imported.
 | `scripts/clone-environments.sh` | Provision `cert`/`prod` Environments per repo: clones **variables** from `develop` and sets **secrets** from per-env `.env` files you fill (secret values are not readable, so they are never copied blindly). Run `--template` first to generate the secret-name files. |
 | `scripts/ssh-deploy-debug.sh` | Reproduce the EC2 SSH deploy stages locally (connectivity, ECR login, image pull, network/volume) to isolate a deploy failure. The first failing stage is the cause. |
 
+## Container images
+
+`shared-build-publish-image.yml` builds a set of images, smoke-tests each one,
+fails on fixable CVEs, and pushes multi-arch manifests carrying an SBOM and
+provenance. Copy `templates/shared-build-publish-image.yml` and edit the
+`images` array — one object per Dockerfile.
+
+This used to live inline in `ci-base-images`. Publishing a container image is
+not something one repository does; it is what every repository that ships a
+service does. Leaving the scanning, the SBOM and the tagging rules in one repo
+meant the next one started from `docker buildx build --push` and got none of it.
+
+| Input | Description | Default |
+|-------|-------------|---------|
+| `images` | JSON array of image definitions | required |
+| `registry` | Container registry | `ghcr.io` |
+| `image_name` | Image repository | calling repo, lowercased |
+| `platforms` | Platforms for the published manifest | `linux/amd64,linux/arm64` |
+| `smoke_command` | Run against each built image; `IMAGE` is exported to it | none |
+| `trivyignores` | Trivy ignore file | none |
+| `ignore_policy` | Trivy Rego ignore policy | none |
+| `push` | Push the manifest; `false` builds and scans only | `true` |
+| `push_rolling` | Move rolling tags off the default branch | `false` |
+
+Per image: `name`, `dockerfile`, and optionally `context`, `tag_suffix`,
+`rolling_tag`, `scan_severity`, `smoke_env`.
+
+**`scan_severity` is per image on purpose.** A runtime image faces traffic, so a
+fixable HIGH in it is a defect. An image that is root with a full toolchain by
+design and lives for the length of one ephemeral job is held to CRITICAL only —
+gating it on HIGH blocks every pull request on `gcc` and `git` advisories nobody
+can act on, and a gate that is always red is a gate everybody learns to click
+past. Unfixed advisories are excluded either way: without an upstream patch
+there is nothing the calling repository can do.
+
+The caller must declare `packages: write` and `security-events: write`. A
+reusable workflow cannot grant itself more than its caller has, so omitting the
+second one silently loses the code scanning upload rather than failing.
+
+`selftest-build-publish-image.yml` builds a fixture through this workflow with
+`push: false` on every pull request that touches it, so it is not YAML that
+first runs in somebody else's repository.
+
 ## Package cleanup
 
 `shared-cleanup-packages.yml` prunes **untagged** versions from a GHCR container

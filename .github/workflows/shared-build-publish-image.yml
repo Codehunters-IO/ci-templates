@@ -1,0 +1,312 @@
+name: Shared - Build & Publish Container Image
+
+# Builds a set of container images from one repository, smoke-tests each one,
+# gates them on fixable CVEs, and pushes multi-arch manifests with an SBOM and
+# provenance attached.
+#
+# This exists because ci-base-images had all of it inline. Publishing a
+# container image is not a thing one repository does — it is the thing every
+# repository that ships a service does — and leaving the scanning, the SBOM and
+# the tagging rules in one repository means the next one starts from `docker
+# buildx build --push` and none of it.
+#
+# The image set is passed as JSON rather than fixed here, so a caller with one
+# Dockerfile and a caller with eight use the same workflow.
+#
+# Severity is per image, not global, because a CI image and a runtime image are
+# not held to the same bar: one is root with a toolchain by design and lives for
+# one ephemeral job, the other faces traffic. See SECURITY.md in a consuming
+# repository for the reasoning.
+
+on:
+  workflow_call:
+    inputs:
+      images:
+        description: >-
+          JSON array of image definitions. Each object takes:
+            name             required, identifies the job and the cache scope
+            dockerfile       required, path to the Dockerfile
+            context          optional, build context (default '.')
+            tag_suffix       optional, appended to every semver/sha tag
+            rolling_tag      optional, an unsuffixed tag pushed on the default
+                             branch, e.g. 'latest' or 'java-runtime'
+            scan_severity    optional, Trivy severities that fail the build
+                             (default 'CRITICAL,HIGH')
+            smoke_env        optional, KEY=VALUE lines exported before
+                             smoke_command runs
+        required: true
+        type: string
+      registry:
+        description: 'Container registry'
+        required: false
+        type: string
+        default: 'ghcr.io'
+      image_name:
+        description: 'Image repository (defaults to the calling repository, lowercased)'
+        required: false
+        type: string
+        default: ''
+      platforms:
+        description: 'Platforms for the published manifest'
+        required: false
+        type: string
+        default: 'linux/amd64,linux/arm64'
+      smoke_command:
+        description: >-
+          Command run against each built image before it is pushed. IMAGE is
+          exported to it, plus whatever the image's smoke_env carries. Empty
+          skips smoke testing.
+        required: false
+        type: string
+        default: ''
+      trivyignores:
+        description: 'Path to a Trivy ignore file. Empty means none.'
+        required: false
+        type: string
+        default: ''
+      ignore_policy:
+        description: 'Path to a Trivy Rego ignore policy. Empty means none.'
+        required: false
+        type: string
+        default: ''
+      push_rolling:
+        description: >-
+          Push each image's rolling_tag. Defaults to true on the default branch
+          only; set explicitly to override.
+        required: false
+        type: boolean
+        default: false
+      push:
+        description: >-
+          Push the manifest. false builds, smoke-tests and scans without
+          publishing — what the self-test uses, and what a caller wants when
+          validating this workflow against a new image.
+        required: false
+        type: boolean
+        default: true
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      timeout_minutes:
+        description: 'Per-image timeout'
+        required: false
+        type: number
+        default: 60
+
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+
+jobs:
+  build-publish:
+    name: Build and Push (${{ matrix.image.name }})
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(inputs.images) }}
+
+    env:
+      LOCAL_AMD64: local-build:smoke-${{ matrix.image.name }}-amd64
+      LOCAL_ARM64: local-build:smoke-${{ matrix.image.name }}-arm64
+      SCAN_SEVERITY: ${{ matrix.image.scan_severity || 'CRITICAL,HIGH' }}
+      BUILD_CONTEXT: ${{ matrix.image.context || '.' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Resolve image repository
+        id: repo
+        env:
+          OVERRIDE: ${{ inputs.image_name }}
+        run: |
+          set -euo pipefail
+          NAME="${OVERRIDE:-${GITHUB_REPOSITORY}}"
+          # Registries reject uppercase; GitHub org names permit it.
+          echo "name=$(echo "${NAME}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Login to the registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ inputs.registry }}/${{ steps.repo.outputs.name }}
+          flavor: |
+            latest=false
+            suffix=${{ matrix.image.tag_suffix }},onlatest=true
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,prefix=sha-,format=short
+            type=raw,value=${{ matrix.image.rolling_tag }},suffix=,enable=${{ matrix.image.rolling_tag != '' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || inputs.push_rolling) }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.repository.updated_at }}
+
+      - name: Build amd64 image
+        if: contains(inputs.platforms, 'linux/amd64')
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ${{ env.BUILD_CONTEXT }}
+          file: ${{ matrix.image.dockerfile }}
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ${{ env.LOCAL_AMD64 }}
+          cache-from: type=gha,scope=${{ matrix.image.name }}-amd64
+          cache-to: type=gha,scope=${{ matrix.image.name }}-amd64,mode=max
+
+      - name: Smoke test (amd64)
+        if: inputs.smoke_command != '' && contains(inputs.platforms, 'linux/amd64')
+        env:
+          IMAGE: ${{ env.LOCAL_AMD64 }}
+          SMOKE_ENV: ${{ matrix.image.smoke_env }}
+          SMOKE_COMMAND: ${{ inputs.smoke_command }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r kv; do
+            # ${kv?} rather than ${kv}: the value is a KEY=VALUE pair, which
+            # is what export wants. Without the ? shellcheck reads it as an
+            # attempt to export a variable named by kv and warns (SC2163).
+            [ -n "${kv}" ] && export "${kv?}"
+          done <<< "${SMOKE_ENV}"
+          bash -c "${SMOKE_COMMAND}"
+
+      # arm64 runs under QEMU rather than on a native runner because this is a
+      # single job and a job has one runner. It is slow. A caller that only
+      # publishes amd64 skips it entirely via `platforms`.
+      - name: Build arm64 image
+        if: contains(inputs.platforms, 'linux/arm64')
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ${{ env.BUILD_CONTEXT }}
+          file: ${{ matrix.image.dockerfile }}
+          platforms: linux/arm64
+          push: false
+          load: true
+          tags: ${{ env.LOCAL_ARM64 }}
+          cache-from: type=gha,scope=${{ matrix.image.name }}-arm64
+          cache-to: type=gha,scope=${{ matrix.image.name }}-arm64,mode=max
+
+      - name: Smoke test (arm64 via QEMU)
+        if: inputs.smoke_command != '' && contains(inputs.platforms, 'linux/arm64')
+        env:
+          IMAGE: ${{ env.LOCAL_ARM64 }}
+          PLATFORM: linux/arm64
+          SMOKE_ENV: ${{ matrix.image.smoke_env }}
+          SMOKE_COMMAND: ${{ inputs.smoke_command }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r kv; do
+            # ${kv?} rather than ${kv}: the value is a KEY=VALUE pair, which
+            # is what export wants. Without the ? shellcheck reads it as an
+            # attempt to export a variable named by kv and warns (SC2163).
+            [ -n "${kv}" ] && export "${kv?}"
+          done <<< "${SMOKE_ENV}"
+          bash -c "${SMOKE_COMMAND}"
+
+      # SARIF first, gate second. The gate is allowed to fail the job, so if it
+      # ran first nothing would reach the Security tab on the run that found
+      # something. Severity here is CRITICAL,HIGH regardless of the gate tier:
+      # a HIGH in a CI image is worth seeing, just not worth blocking on.
+      - name: Scan image (SARIF for code scanning)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ contains(inputs.platforms, 'linux/amd64') && env.LOCAL_AMD64 || env.LOCAL_ARM64 }}
+          scanners: vuln
+          vuln-type: os,library
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          limit-severities-for-sarif: true
+          trivyignores: ${{ inputs.trivyignores }}
+          ignore-policy: ${{ inputs.ignore_policy }}
+          format: sarif
+          output: trivy-${{ matrix.image.name }}.sarif
+          exit-code: '0'
+          timeout: '15m'
+
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
+        with:
+          sarif_file: trivy-${{ matrix.image.name }}.sarif
+          category: trivy-${{ matrix.image.name }}
+
+      # Publishing an image with a fixable CRITICAL hands it to everything that
+      # inherits from it, and they have no way to see it.
+      - name: Vulnerability gate
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ contains(inputs.platforms, 'linux/amd64') && env.LOCAL_AMD64 || env.LOCAL_ARM64 }}
+          scanners: vuln
+          vuln-type: os,library
+          severity: ${{ env.SCAN_SEVERITY }}
+          ignore-unfixed: true
+          trivyignores: ${{ inputs.trivyignores }}
+          ignore-policy: ${{ inputs.ignore_policy }}
+          format: table
+          exit-code: '1'
+          timeout: '15m'
+          skip-setup-trivy: true
+
+      - name: Build and push manifest
+        id: push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ${{ env.BUILD_CONTEXT }}
+          file: ${{ matrix.image.dockerfile }}
+          platforms: ${{ inputs.platforms }}
+          push: ${{ inputs.push }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Without these a consumer inheriting this image has no way to answer
+          # "what is in it" or "what built it" short of pulling it apart.
+          sbom: true
+          provenance: mode=max
+          cache-from: |
+            type=gha,scope=${{ matrix.image.name }}-amd64
+            type=gha,scope=${{ matrix.image.name }}-arm64
+          cache-to: type=gha,scope=${{ matrix.image.name }}-manifest,mode=max
+
+      - name: Report
+        run: |
+          {
+            echo "### ${{ matrix.image.name }}"
+            echo ""
+            if [ -n "${{ steps.push.outputs.digest }}" ]; then
+              echo "Digest: \`${{ steps.push.outputs.digest }}\`"
+            else
+              echo "Not pushed (push: false)."
+            fi
+            echo ""
+            echo "Gate: \`${SCAN_SEVERITY}\`, fixable only."
+            echo ""
+            echo "| Tag |"
+            echo "|-----|"
+            while IFS= read -r tag; do
+              [ -n "${tag}" ] && echo "| \`${tag}\` |"
+            done <<< "${TAGS}"
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
