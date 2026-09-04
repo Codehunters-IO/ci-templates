@@ -38,6 +38,11 @@ on:
         required: false
         type: string
         default: ''
+      inject_aws_credentials:
+        description: 'DEPRECATED. Forwarded to shared-deploy-ec2.yml: put the pipeline AWS credentials in the container environment. Off by default. Removed in v2.'
+        required: false
+        type: boolean
+        default: false
 
     secrets:
       AWS_ECR_URL:
@@ -89,4 +94,5 @@ jobs:
       container_env_vars: |
         SPRING_PROFILES_ACTIVE=${{ inputs.spring_profiles != '' && format('{0},{1}', inputs.spring_profiles, inputs.environment) || inputs.environment }}
         SERVER_CONTEXT_PATH=/${{ github.event.repository.name }}
+      inject_aws_credentials: ${{ inputs.inject_aws_credentials }}
     secrets: inherit
