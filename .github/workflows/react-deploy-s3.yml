@@ -77,7 +77,7 @@ jobs:
           path: ${{ inputs.build_output_dir }}
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a  # v4
         with:
           # One step, two paths. A long-lived access key in a repository secret
           # is a credential nobody rotates and everybody with write access can
