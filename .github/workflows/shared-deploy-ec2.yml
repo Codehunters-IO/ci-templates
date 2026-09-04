@@ -139,7 +139,10 @@ jobs:
           chmod 400 ~/.ssh/deploy_key
           # '|| true': ssh-keyscan returns nonzero when the host is unreachable; under `bash -e`
           # that would abort the step silently (stderr hidden) before the scp retry/skip logic runs.
-          # StrictHostKeyChecking=no is used for the actual connection, so known_hosts is best-effort.
+          # known_hosts is seeded here and then enforced: the connection below uses
+          # StrictHostKeyChecking=accept-new, which accepts a host seen for the first
+          # time but refuses a key that CHANGED. Under the old `no` a contradicting
+          # key was accepted too, which made this keyscan decorative.
           ssh-keyscan -H $AWS_EC2_HOST >> ~/.ssh/known_hosts 2>/dev/null || true
 
           # Encode multiline env vars to preserve newlines over SSH
@@ -293,7 +296,7 @@ jobs:
           echo "Deployment completed successfully!"
           DEPLOY_SCRIPT
 
-          SSH_COMMON_OPTS="-i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=20"
+          SSH_COMMON_OPTS="-i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=20"
 
           # Retry helper: SSH transport can drop transiently. Retry up to 3 times.
           run_with_retry() {

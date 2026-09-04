@@ -280,4 +280,8 @@ jobs:
           echo "| **Repository** | $ECR_REPOSITORY |" >> $GITHUB_STEP_SUMMARY
           echo "| **Tag** | $IMAGE_TAG |" >> $GITHUB_STEP_SUMMARY
           echo "| **Platform** | ${{ inputs.docker_platform }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Full URI** | $IMAGE_URI |" >> $GITHUB_STEP_SUMMARY
+          # Deliberately not the full URI: it starts with the registry host, which
+          # is <account-id>.dkr.ecr.<region>.amazonaws.com. Log masking does not
+          # cover the job summary, and the summary outlives the logs. Repository and
+          # tag are what a reader needs; image_uri is still a job output for the
+          # jobs downstream.

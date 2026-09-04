@@ -164,7 +164,10 @@ jobs:
           chmod 400 ~/.ssh/deploy_key
           ssh-keyscan -H "$AWS_EC2_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
 
-          SSH_OPTS="-i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=20"
+          # accept-new: a first-seen host key is accepted, a changed one is refused.
+          # The WireGuard tunnel authenticates the path, but the STACK_ENV_FILE secret
+          # still travels over this connection.
+          SSH_OPTS="-i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=20"
           DEPLOY_DIR="/opt/docker/${REPO_NAME}"
 
           echo "Ensuring deploy dir ${DEPLOY_DIR}..."
