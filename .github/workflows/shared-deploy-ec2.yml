@@ -180,6 +180,19 @@ jobs:
           CONTAINER_ENV_VARS=$(echo "${CONTAINER_ENV_VARS_B64}" | base64 -d)
           EXTRA_VOLUMES=$(echo "${EXTRA_VOLUMES_B64}" | base64 -d)
 
+          # AWS credentials for the application, kept out of docker-compose.yml.
+          # umask inside a subshell rather than chmod afterwards: chmod leaves a
+          # window in which the file already exists and is world-readable.
+          if [ "${INJECT_AWS_CREDENTIALS}" = "true" ]; then
+            ( umask 077
+              printf 'AWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\n' \
+                "${AWS_ACCESS_KEY_ID}" "${AWS_SECRET_ACCESS_KEY}" > .aws.env )
+            echo "Wrote .aws.env (mode $(stat -c '%a' .aws.env))"
+          else
+            rm -f .aws.env
+            echo "inject_aws_credentials=false - nothing written; the instance profile supplies credentials."
+          fi
+
           # Create docker-compose.yml (standard name)
           COMPOSE_FILE_NAME="docker-compose.yml"
           echo "Creating ${COMPOSE_FILE_NAME}..."
@@ -194,9 +207,12 @@ jobs:
             echo "      - APP_NAME=${REPO_NAME}"
             echo "      - PATH_LOGS=/app/log/${REPO_NAME}"
             echo "      - AWS_REGION=${AWS_REGION}"
+            # The two keys are deliberately not echoed here. docker-compose.yml
+            # persists in the deploy directory with default permissions long
+            # after the deploy; they go to .aws.env, mode 600, referenced below.
             if [ "${INJECT_AWS_CREDENTIALS}" = "true" ]; then
-              echo "      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
-              echo "      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
+              echo "    env_file:"
+              echo "      - .aws.env"
             fi
             if [ -n "${CONTAINER_ENV_VARS}" ]; then
               while IFS= read -r line; do

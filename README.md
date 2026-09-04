@@ -240,6 +240,41 @@ Configure in **Settings → Secrets and variables → Actions**.
 | `AWS_EC2_SSH_KEY` | SSH private key (PEM) |
 | `AWS_APP_PORT` | External port exposed by the container |
 
+### How EC2 deploys handle secrets
+
+Two places these used to sit in the clear on the host.
+
+**The remote command line.** The deploy environment was interpolated into the
+`ssh` command, making it the remote process's argv — readable by `ps` for any
+user on the box while the deploy ran. It now travels over stdin into a
+mode-600 file, sourced and removed on the far side.
+
+**`docker-compose.yml`.** `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` were
+written into it in clear text, and that file persists in the deploy directory
+with default permissions long after the deploy finishes. They now go to
+`.aws.env`, created under `umask 077` and pulled in through compose's
+`env_file`.
+
+Two things this does **not** fix, both worth knowing:
+
+- The values still become container environment, so `docker inspect` shows
+  them. Only not sending them removes that.
+- `container_env_vars` is still written inline into `docker-compose.yml`. If a
+  consumer puts a database password there, it is in that file. Moving it would
+  change substitution semantics for every consumer at once, so it is a separate
+  decision rather than a side effect of this one.
+
+The real fix for the credentials is to stop shipping them:
+
+```yaml
+with:
+  inject_aws_credentials: false
+```
+
+Give the instance an IAM role and the application reads short-lived credentials
+from the instance metadata service, with no long-lived key on the box at all.
+The input defaults to `true` and warns at run time; it is going away in v2.
+
 ### WireGuard VPN (`deploy_target: ec2-vpn` only)
 
 | Secret | Required | Description |
