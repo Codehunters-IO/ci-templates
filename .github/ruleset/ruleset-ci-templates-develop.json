@@ -1,16 +1,22 @@
 {
-  "name": "ci-templates • Protect develop and main",
+  "name": "ci-templates \u2022 Protect develop",
   "target": "branch",
   "enforcement": "active",
   "conditions": {
     "ref_name": {
-      "include": ["refs/heads/develop", "refs/heads/main"],
+      "include": [
+        "refs/heads/develop"
+      ],
       "exclude": []
     }
   },
   "rules": [
-    { "type": "deletion" },
-    { "type": "non_fast_forward" },
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    },
     {
       "type": "pull_request",
       "parameters": {
@@ -19,7 +25,9 @@
         "require_last_push_approval": false,
         "required_approving_review_count": 0,
         "required_review_thread_resolution": true,
-        "allowed_merge_methods": ["squash", "merge"]
+        "allowed_merge_methods": [
+          "squash"
+        ]
       }
     },
     {
@@ -27,15 +35,27 @@
       "parameters": {
         "strict_required_status_checks_policy": false,
         "required_status_checks": [
-          { "context": "Lint workflows" },
-          { "context": "Parse YAML" },
-          { "context": "Templates pin a release" },
-          { "context": "Forwarded inputs exist" }
+          {
+            "context": "Lint workflows"
+          },
+          {
+            "context": "Parse YAML"
+          },
+          {
+            "context": "Templates pin a release"
+          },
+          {
+            "context": "Forwarded inputs exist"
+          }
         ]
       }
     }
   ],
   "bypass_actors": [
-    { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" }
+    {
+      "actor_id": 5,
+      "actor_type": "RepositoryRole",
+      "bypass_mode": "always"
+    }
   ]
 }
