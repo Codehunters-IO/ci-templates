@@ -52,6 +52,11 @@ on:
         required: false
         type: string
         default: ''
+      inject_aws_credentials:
+        description: 'DEPRECATED. Put the pipeline AWS credentials in the container environment. These are build-plane keys that can push to ECR, so any code execution in the app reads them out of /proc/self/environ and can overwrite the image it is running. Prefer an EC2 instance profile, or pass a scoped runtime key through container_env_vars. Removed in v2.'
+        required: false
+        type: boolean
+        default: false
 
     secrets:
       AWS_ECR_URL:
@@ -90,6 +95,12 @@ on:
       deployed_image:
         description: 'Deployed image tag'
         value: ${{ jobs.deploy.outputs.image }}
+
+# Least privilege for what this workflow actually does. Without it the
+# job inherits whatever the calling repository's default happens to be,
+# which on older repositories is write-all.
+permissions:
+  contents: read
 
 jobs:
   deploy:
@@ -193,7 +204,12 @@ jobs:
           INTERNAL_PORT: ${{ inputs.internal_port }}
           CONTAINER_ENV_VARS: ${{ inputs.container_env_vars }}
           EXTRA_VOLUMES: ${{ inputs.extra_volumes }}
+          INJECT_AWS_CREDENTIALS: ${{ inputs.inject_aws_credentials }}
         run: |
+          if [ "${INJECT_AWS_CREDENTIALS}" = "true" ]; then
+            echo "::warning::inject_aws_credentials is on: this deploy puts the pipeline's AWS keys inside the application container. They can push to ECR. Move to an EC2 instance profile or a scoped runtime key; this input is removed in v2."
+          fi
+
           # Setup SSH
           mkdir -p ~/.ssh
           # Write key: sed converts literal \n (from secrets stored as one-liners) to real newlines;
@@ -243,6 +259,19 @@ jobs:
           CONTAINER_ENV_VARS=$(echo "${CONTAINER_ENV_VARS_B64}" | base64 -d)
           EXTRA_VOLUMES=$(echo "${EXTRA_VOLUMES_B64}" | base64 -d)
 
+          # AWS credentials for the application, kept out of docker-compose.yml.
+          # umask inside a subshell rather than chmod afterwards: chmod leaves a
+          # window in which the file already exists and is world-readable.
+          if [ "${INJECT_AWS_CREDENTIALS}" = "true" ]; then
+            ( umask 077
+              printf 'AWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\n' \
+                "${AWS_ACCESS_KEY_ID}" "${AWS_SECRET_ACCESS_KEY}" > .aws.env )
+            echo "Wrote .aws.env (mode $(stat -c '%a' .aws.env))"
+          else
+            rm -f .aws.env
+            echo "inject_aws_credentials=false - nothing written; the instance profile supplies credentials."
+          fi
+
           # Create docker-compose.yml (standard name)
           COMPOSE_FILE_NAME="docker-compose.yml"
           echo "Creating ${COMPOSE_FILE_NAME}..."
@@ -256,9 +285,14 @@ jobs:
             echo "    environment:"
             echo "      - APP_NAME=${REPO_NAME}"
             echo "      - PATH_LOGS=/app/log/${REPO_NAME}"
-            echo "      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
-            echo "      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
             echo "      - AWS_REGION=${AWS_REGION}"
+            # The two keys are deliberately not echoed here. docker-compose.yml
+            # persists in the deploy directory with default permissions long
+            # after the deploy; they go to .aws.env, mode 600, referenced below.
+            if [ "${INJECT_AWS_CREDENTIALS}" = "true" ]; then
+              echo "    env_file:"
+              echo "      - .aws.env"
+            fi
             if [ -n "${CONTAINER_ENV_VARS}" ]; then
               while IFS= read -r line; do
                 if [ -n "$line" ]; then
@@ -373,25 +407,50 @@ jobs:
 
           # Execute deploy script (with retry on transport error)
           DEPLOY_RC=0
-          run_with_retry bash -c "ssh $SSH_COMMON_OPTS ${AWS_EC2_USER}@${AWS_EC2_HOST} \"
-            chmod +x ~/deploy.sh && \
-            REPO_NAME='${REPO_NAME}' \
-            IMAGE_TAG='${IMAGE_TAG}' \
-            AWS_ECR_URL='${AWS_ECR_URL}' \
-            AWS_ACCESS_KEY_ID='${AWS_ACCESS_KEY_ID}' \
-            AWS_SECRET_ACCESS_KEY='${AWS_SECRET_ACCESS_KEY}' \
-            AWS_REGION='${AWS_REGION}' \
-            APP_PORT='${APP_PORT}' \
-            ENVIRONMENT='${ENVIRONMENT}' \
-            DOCKER_PLATFORM='${DOCKER_PLATFORM}' \
-            MEMORY_LIMIT='${MEMORY_LIMIT}' \
-            MEMORY_RESERVATION='${MEMORY_RESERVATION}' \
-            INTERNAL_PORT='${INTERNAL_PORT}' \
-            CONTAINER_ENV_VARS_B64='${CONTAINER_ENV_VARS_B64}' \
-            EXTRA_VOLUMES_B64='${EXTRA_VOLUMES_B64}' \
-            ~/deploy.sh && \
-            rm -f ~/deploy.sh
-          \"" || DEPLOY_RC=$?
+          # The deploy environment travels over stdin, never as an ssh argument.
+          # Whatever is interpolated into the remote command becomes argv of the shell
+          # sshd spawns, and /proc/<pid>/cmdline is world-readable on a stock AMI for
+          # the whole deploy — so AWS_SECRET_ACCESS_KEY would be readable by any local
+          # account on the box. The WireGuard tunnel authenticates the path but does
+          # nothing about who can read a process list on the far end. printf %q quotes
+          # each value so the file is safe to source whatever the secret contains.
+          write_remote_env() {
+            {
+              printf 'REPO_NAME=%q\n'               "$REPO_NAME"
+              printf 'IMAGE_TAG=%q\n'               "$IMAGE_TAG"
+              printf 'AWS_ECR_URL=%q\n'             "$AWS_ECR_URL"
+              printf 'AWS_ACCESS_KEY_ID=%q\n'       "$AWS_ACCESS_KEY_ID"
+              printf 'AWS_SECRET_ACCESS_KEY=%q\n'   "$AWS_SECRET_ACCESS_KEY"
+              printf 'AWS_REGION=%q\n'              "$AWS_REGION"
+              printf 'APP_PORT=%q\n'                "$APP_PORT"
+              printf 'ENVIRONMENT=%q\n'             "$ENVIRONMENT"
+              printf 'DOCKER_PLATFORM=%q\n'         "$DOCKER_PLATFORM"
+              printf 'MEMORY_LIMIT=%q\n'            "$MEMORY_LIMIT"
+              printf 'MEMORY_RESERVATION=%q\n'      "$MEMORY_RESERVATION"
+              printf 'INTERNAL_PORT=%q\n'           "$INTERNAL_PORT"
+              printf 'INJECT_AWS_CREDENTIALS=%q\n'  "$INJECT_AWS_CREDENTIALS"
+              printf 'CONTAINER_ENV_VARS_B64=%q\n'  "$CONTAINER_ENV_VARS_B64"
+              printf 'EXTRA_VOLUMES_B64=%q\n'       "$EXTRA_VOLUMES_B64"
+            } | ssh $SSH_COMMON_OPTS "${AWS_EC2_USER}@${AWS_EC2_HOST}" 'umask 077 && cat > ~/deploy.env'
+          }
+
+          # The env file is rewritten on every attempt because the remote side always
+          # deletes it, so a retry still finds what it needs.
+          deploy_once() {
+            write_remote_env || return $?
+            ssh $SSH_COMMON_OPTS "${AWS_EC2_USER}@${AWS_EC2_HOST}" '
+              set +e
+              chmod +x ~/deploy.sh
+              set -a; . ~/deploy.env; set +a
+              ~/deploy.sh
+              rc=$?
+              rm -f ~/deploy.env
+              if [ "$rc" -eq 0 ]; then rm -f ~/deploy.sh; fi
+              exit $rc
+            '
+          }
+
+          run_with_retry deploy_once || DEPLOY_RC=$?
 
           # Post-deploy verification: if container is running w/ correct image, success regardless of transport error
           echo "Verifying container state..."

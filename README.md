@@ -99,6 +99,41 @@ GitHub Release, and re-points `v1`.
 A major bump leaves `v1` frozen at the last 1.x release, so consumers pinned to
 `@v1` keep working until they choose to move to `@v2`.
 
+## Deprecations
+
+Eleven per-language workflows exist only so that existing callers keep working.
+They carry `[DEPRECATED]` in their name, emit a warning when called, and are
+**scheduled for removal in v2**. Pinning `@v1` keeps them working until you
+migrate.
+
+Ten of them forward to a `shared-*` equivalent with identical inputs, so
+migrating is a one-line change to the path:
+
+| Deprecated | Call instead |
+|---|---|
+| `java-commit-lint.yml`, `krakend-commit-lint.yml`, `react-commit-lint.yml` | `shared-commit-lint.yml` |
+| `java-delete-branch.yml`, `krakend-delete-branch.yml`, `react-delete-branch.yml` | `shared-delete-branch.yml` |
+| `java-artifact-docker-ecr.yml`, `krakend-artifact-docker-ecr.yml` | `shared-artifact-docker-ecr.yml` |
+| `krakend-deploy-ec2.yml` | `shared-deploy-ec2.yml` |
+| `java-semver.yml` | `shared-semver.yml` |
+
+`java-deploy-ec2.yml` is the exception. It also forwards to
+`shared-deploy-ec2.yml`, but it is not a drop-in: it accepts `spring_profiles`,
+which the shared workflow does not, and folds it into `container_env_vars`
+along with the Spring context path. Migrating means doing that mapping at the
+call site:
+
+```yaml
+container_env_vars: |
+  SPRING_PROFILES_ACTIVE=<profiles>,<environment>
+  SERVER_CONTEXT_PATH=/<repository-name>
+```
+
+The `*-main-pipeline.yml` entrypoints already call the `shared-*` workflows
+directly — verified, none of the five references a deprecated workflow — so a
+repository consuming a pipeline rather than an individual workflow is
+unaffected by all of this.
+
 ## Deploy Targets
 
 The main pipelines accept a `deploy_target` input:
@@ -125,6 +160,64 @@ jobs:
     secrets: inherit
 ```
 
+## Token permissions
+
+Every workflow declares the `GITHUB_TOKEN` permissions it needs. Before this,
+none of them did, which means each job ran with whatever the calling
+repository's default happened to be — on repositories created before GitHub
+changed the default, that is write-all: a linting job could push to `main`.
+
+The declarations are derived from what each workflow actually does, not from a
+template:
+
+| Workflows | Permissions | Why |
+|-----------|-------------|-----|
+| Most build, test and deploy jobs | `contents: read` | They read the repository and nothing else |
+| `*-build`, `*-test`, `*-owasp`, `java-architecture`, `contracts-*` | `+ packages: read` | They run inside a container pulled from GHCR |
+| `java-artifact-docker-github`, `java-artifact-dependency-github` | `+ packages: write` | They publish to GitHub Packages |
+| `shared-release`, `shared-semver`, `shared-tag-release`, `*-delete-branch` | `contents: write` | They push a branch, a tag, or delete a ref |
+| `shared-create-issue-on-failure` | `+ issues: write` | It opens an issue |
+| `*-main-pipeline`, `java-pr-pipeline` | union of the above | A caller's grant is the ceiling for everything beneath it |
+
+That last row is the one to understand. A reusable workflow can only *narrow*
+what its caller granted, never widen it. An orchestrator that calls
+`shared-tag-release` therefore has to hold `contents: write` itself, even
+though it pushes nothing directly — and the narrow declarations on the leaves
+are what keep that grant from reaching the jobs that have no business with it.
+
+## AWS authentication
+
+Two paths. The default is unchanged, so nothing needs to move today.
+
+**Static keys** — `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` repository
+secrets. This is what every AWS workflow used, and it is a credential nobody
+rotates, that does not expire, and that anyone with write access to the
+repository can exfiltrate through a workflow change.
+
+**OIDC** — set `aws_role_to_assume` to an IAM role ARN and no static key is
+sent at all. GitHub mints a token scoped to this repository that expires with
+the job:
+
+```yaml
+jobs:
+  pipeline:
+    uses: Codehunters-IO/ci-templates/.github/workflows/java-main-pipeline.yml@v1
+    permissions:
+      contents: write
+      packages: write
+      issues: write
+      id-token: write     # required, and the caller has to grant it
+    with:
+      aws_role_to_assume: 'arn:aws:iam::123456789012:role/github-actions-deploy'
+```
+
+The role needs a trust policy naming GitHub's OIDC provider and restricting
+`token.actions.githubusercontent.com:sub` to this repository — without that
+`sub` condition any repository on GitHub can assume it.
+
+Both keys are only read when `aws_role_to_assume` is empty; passing both would
+make the action assume the role *with* the static key, leaving it in play.
+
 ## Required Secrets
 
 Configure in **Settings → Secrets and variables → Actions**.
@@ -146,6 +239,41 @@ Configure in **Settings → Secrets and variables → Actions**.
 | `AWS_EC2_USER` | SSH username (`ubuntu`, `ec2-user`, …) |
 | `AWS_EC2_SSH_KEY` | SSH private key (PEM) |
 | `AWS_APP_PORT` | External port exposed by the container |
+
+### How EC2 deploys handle secrets
+
+Two places these used to sit in the clear on the host.
+
+**The remote command line.** The deploy environment was interpolated into the
+`ssh` command, making it the remote process's argv — readable by `ps` for any
+user on the box while the deploy ran. It now travels over stdin into a
+mode-600 file, sourced and removed on the far side.
+
+**`docker-compose.yml`.** `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` were
+written into it in clear text, and that file persists in the deploy directory
+with default permissions long after the deploy finishes. They now go to
+`.aws.env`, created under `umask 077` and pulled in through compose's
+`env_file`.
+
+Two things this does **not** fix, both worth knowing:
+
+- The values still become container environment, so `docker inspect` shows
+  them. Only not sending them removes that.
+- `container_env_vars` is still written inline into `docker-compose.yml`. If a
+  consumer puts a database password there, it is in that file. Moving it would
+  change substitution semantics for every consumer at once, so it is a separate
+  decision rather than a side effect of this one.
+
+The real fix for the credentials is to stop shipping them:
+
+```yaml
+with:
+  inject_aws_credentials: false
+```
+
+Give the instance an IAM role and the application reads short-lived credentials
+from the instance metadata service, with no long-lived key on the box at all.
+The input defaults to `true` and warns at run time; it is going away in v2.
 
 ### WireGuard VPN (`deploy_target: ec2-vpn` only)
 
@@ -407,6 +535,49 @@ does not change live rules until imported.
 |--------|---------|
 | `scripts/clone-environments.sh` | Provision `cert`/`prod` Environments per repo: clones **variables** from `develop` and sets **secrets** from per-env `.env` files you fill (secret values are not readable, so they are never copied blindly). Run `--template` first to generate the secret-name files. |
 | `scripts/ssh-deploy-debug.sh` | Reproduce the EC2 SSH deploy stages locally (connectivity, ECR login, image pull, network/volume) to isolate a deploy failure. The first failing stage is the cause. |
+
+## Container images
+
+`shared-build-publish-image.yml` builds a set of images, smoke-tests each one,
+fails on fixable CVEs, and pushes multi-arch manifests carrying an SBOM and
+provenance. Copy `templates/shared-build-publish-image.yml` and edit the
+`images` array — one object per Dockerfile.
+
+This used to live inline in `ci-base-images`. Publishing a container image is
+not something one repository does; it is what every repository that ships a
+service does. Leaving the scanning, the SBOM and the tagging rules in one repo
+meant the next one started from `docker buildx build --push` and got none of it.
+
+| Input | Description | Default |
+|-------|-------------|---------|
+| `images` | JSON array of image definitions | required |
+| `registry` | Container registry | `ghcr.io` |
+| `image_name` | Image repository | calling repo, lowercased |
+| `platforms` | Platforms for the published manifest | `linux/amd64,linux/arm64` |
+| `smoke_command` | Run against each built image; `IMAGE` is exported to it | none |
+| `trivyignores` | Trivy ignore file | none |
+| `ignore_policy` | Trivy Rego ignore policy | none |
+| `push` | Push the manifest; `false` builds and scans only | `true` |
+| `push_rolling` | Move rolling tags off the default branch | `false` |
+
+Per image: `name`, `dockerfile`, and optionally `context`, `tag_suffix`,
+`rolling_tag`, `scan_severity`, `smoke_env`.
+
+**`scan_severity` is per image on purpose.** A runtime image faces traffic, so a
+fixable HIGH in it is a defect. An image that is root with a full toolchain by
+design and lives for the length of one ephemeral job is held to CRITICAL only —
+gating it on HIGH blocks every pull request on `gcc` and `git` advisories nobody
+can act on, and a gate that is always red is a gate everybody learns to click
+past. Unfixed advisories are excluded either way: without an upstream patch
+there is nothing the calling repository can do.
+
+The caller must declare `packages: write` and `security-events: write`. A
+reusable workflow cannot grant itself more than its caller has, so omitting the
+second one silently loses the code scanning upload rather than failing.
+
+`selftest-build-publish-image.yml` builds a fixture through this workflow with
+`push: false` on every pull request that touches it, so it is not YAML that
+first runs in somebody else's repository.
 
 ## Package cleanup
 

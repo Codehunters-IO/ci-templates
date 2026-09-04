@@ -54,7 +54,24 @@ on:
         description: 'Short commit SHA used'
         value: ${{ jobs.artifact.outputs.commit_sha }}
 
+# Least privilege for what this workflow actually does. Without it the
+# job inherits whatever the calling repository's default happens to be,
+# which on older repositories is write-all.
+permissions:
+  contents: read
+
 jobs:
+  deprecation-notice:
+    name: Deprecated
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 2
+    steps:
+      - name: Warn the caller
+        run: |
+          echo "::warning title=Deprecated workflow::krakend-artifact-docker-ecr.yml is deprecated. \
+          Call shared-artifact-docker-ecr.yml instead. This wrapper only forwards to it, and is scheduled \
+          for removal in v2 — pinning @v1 keeps it working until you migrate."
+
   artifact:
     uses: ./.github/workflows/shared-artifact-docker-ecr.yml
     with:

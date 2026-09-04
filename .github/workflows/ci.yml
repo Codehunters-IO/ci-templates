@@ -1,0 +1,131 @@
+name: CI
+
+# This repository publishes the CI that every other repository runs, and until now
+# it ran none of its own: no workflow here triggers on pull_request, so a PR could
+# not be wrong in a way anything would notice. Every defect shipped from here lands
+# in every consumer at once, so the bar should be higher here than downstream, not
+# lower.
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+# Read-only. Nothing in this workflow writes to the repository, and a job that
+# cannot write cannot be turned into one that does by a dependency that moves.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actionlint:
+    name: Lint workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Run actionlint
+        env:
+          # Pinned deliberately: this is the gate, so it should not change under us.
+          ACTIONLINT_VERSION: '1.7.7'
+        run: |
+          set -euo pipefail
+          curl -fsSL -o actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          tar -xzf actionlint.tar.gz actionlint
+
+          # Errors fail the build. shellcheck info/style does not: there are ~350 of
+          # those already and failing on them would mean fixing all of them first.
+          # Revisit once that backlog is down.
+          ./actionlint -shellcheck= -oneline .github/workflows/*.yml
+
+  yaml:
+    name: Parse YAML
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Every workflow and template must parse
+        run: |
+          python3 - <<'PY'
+          import glob, sys, yaml
+          bad = 0
+          for f in sorted(glob.glob('.github/workflows/*.yml') + glob.glob('templates/*.yml')):
+              try:
+                  yaml.safe_load(open(f))
+              except Exception as e:
+                  print(f"::error file={f}::{e}")
+                  bad += 1
+          print(f"{bad} parse failures")
+          sys.exit(1 if bad else 0)
+          PY
+
+  template-pins:
+    name: Templates pin a release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: No template may track a moving ref
+        run: |
+          set -euo pipefail
+
+          # Consumers copy templates/ verbatim, so whatever ref a template names is
+          # what runs in their repository. A template on @main means any commit here
+          # reaches them with no review and no version bump -- which is how the only
+          # destructive template (shared-cleanup-packages) ended up scheduled against
+          # the default branch in every consumer. Releases are what consumers pin.
+          if BAD=$(grep -rnE 'uses:.*ci-templates/\.github/workflows/.*@' templates/ \
+                   | grep -vE '@v[0-9]+$'); then
+            echo "::error::Templates must pin a release tag (@v1), not a branch or SHA."
+            echo "$BAD" | sed 's/^/  /'
+            exit 1
+          fi
+          echo "All template references pin a release tag."
+
+  inputs-declared:
+    name: Forwarded inputs exist
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Every inputs.X referenced must be declared in the same workflow
+        run: |
+          python3 - <<'PY'
+          import glob, re, sys
+
+          # A `with:` block that forwards an input never declared in the same file is
+          # not caught by actionlint: the expression resolves to empty and the job
+          # silently does the wrong thing. Cheap to catch, tedious to debug.
+          # Comment lines are stripped first, or prose mentioning an input name would
+          # register as a use.
+          bad = 0
+          for f in sorted(glob.glob('.github/workflows/*.yml')):
+              raw = open(f).read()
+              src = '\n'.join(re.sub(r'#.*$', '', l) for l in raw.split('\n'))
+              head = src.split('\njobs:', 1)[0]
+              declared = set(re.findall(r'^      ([a-z0-9_]+):', head, re.M))
+              used = set(re.findall(r'inputs\.([a-z0-9_]+)', src))
+              missing = sorted(used - declared)
+              if missing:
+                  print(f"::error file={f}::undeclared inputs referenced: {', '.join(missing)}")
+                  bad += 1
+          print(f"{bad} workflows reference undeclared inputs")
+          sys.exit(1 if bad else 0)
+          PY
+
+  commit-lint:
+    name: Commit messages
+    # Dogfooding: this repository's own commit-lint workflow, run against this
+    # repository's PRs. If it breaks for consumers, it breaks here first.
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/shared-commit-lint.yml
+    secrets: inherit

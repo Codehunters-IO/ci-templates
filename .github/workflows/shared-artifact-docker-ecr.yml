@@ -68,6 +68,16 @@ on:
         type: string
         default: 'bootstrap/build/libs'
 
+      aws_role_to_assume:
+        description: >-
+          IAM role ARN to assume via GitHub OIDC. When set, no static access
+          key is sent and AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are not
+          read. Empty keeps the static-key path, which is the default so that
+          existing consumers keep working.
+        required: false
+        type: string
+        default: ''
+
     secrets:
       AWS_ACCESS_KEY_ID:
         required: true
@@ -92,6 +102,15 @@ on:
       commit_sha:
         description: 'Short commit SHA used'
         value: ${{ jobs.artifact.outputs.commit_sha }}
+
+# Least privilege for what this workflow actually does. Without it the
+# job inherits whatever the calling repository's default happens to be,
+# which on older repositories is write-all.
+permissions:
+  contents: read
+  # Inert unless aws_role_to_assume is set. A reusable workflow cannot
+  # exceed its own declaration, so the OIDC path needs it declared here.
+  id-token: write
 
 jobs:
   artifact:
@@ -171,8 +190,15 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          # One step, two paths. A long-lived access key in a repository secret
+          # is a credential nobody rotates and everybody with write access can
+          # exfiltrate; OIDC mints a token scoped to this repository that
+          # expires with the job. The keys are only sent when no role is given,
+          # because passing both makes the action assume the role *with* the
+          # static key and the key stays in play.
+          role-to-assume: ${{ inputs.aws_role_to_assume }}
+          aws-access-key-id: ${{ inputs.aws_role_to_assume == '' && secrets.AWS_ACCESS_KEY_ID || '' }}
+          aws-secret-access-key: ${{ inputs.aws_role_to_assume == '' && secrets.AWS_SECRET_ACCESS_KEY || '' }}
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Ensure ECR repository exists

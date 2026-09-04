@@ -32,6 +32,12 @@ on:
         description: 'Number of secrets found'
         value: ${{ jobs.trufflehog.outputs.findings }}
 
+# Least privilege for what this workflow actually does. Without it the
+# job inherits whatever the calling repository's default happens to be,
+# which on older repositories is write-all.
+permissions:
+  contents: read
+
 jobs:
   trufflehog:
     name: TruffleHog Secret Scan

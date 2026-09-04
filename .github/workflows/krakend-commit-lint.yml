@@ -10,7 +10,24 @@ on:
         type: string
         default: 'ubuntu-latest'
 
+# Least privilege for what this workflow actually does. Without it the
+# job inherits whatever the calling repository's default happens to be,
+# which on older repositories is write-all.
+permissions:
+  contents: read
+
 jobs:
+  deprecation-notice:
+    name: Deprecated
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 2
+    steps:
+      - name: Warn the caller
+        run: |
+          echo "::warning title=Deprecated workflow::krakend-commit-lint.yml is deprecated. \
+          Call shared-commit-lint.yml instead. This wrapper only forwards to it, and is scheduled \
+          for removal in v2 — pinning @v1 keeps it working until you migrate."
+
   lint:
     uses: ./.github/workflows/shared-commit-lint.yml
     with:

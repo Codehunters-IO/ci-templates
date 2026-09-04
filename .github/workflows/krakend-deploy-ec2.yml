@@ -33,6 +33,11 @@ on:
         required: false
         type: string
         default: '256m'
+      inject_aws_credentials:
+        description: 'DEPRECATED. Forwarded to shared-deploy-ec2.yml: put the pipeline AWS credentials in the container environment. Off by default. Removed in v2.'
+        required: false
+        type: boolean
+        default: false
 
     secrets:
       AWS_ECR_URL:
@@ -60,7 +65,24 @@ on:
         description: 'Deployed image tag'
         value: ${{ jobs.deploy.outputs.deployed_image }}
 
+# Least privilege for what this workflow actually does. Without it the
+# job inherits whatever the calling repository's default happens to be,
+# which on older repositories is write-all.
+permissions:
+  contents: read
+
 jobs:
+  deprecation-notice:
+    name: Deprecated
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 2
+    steps:
+      - name: Warn the caller
+        run: |
+          echo "::warning title=Deprecated workflow::krakend-deploy-ec2.yml is deprecated. \
+          Call shared-deploy-ec2.yml instead. This wrapper only forwards to it, and is scheduled \
+          for removal in v2 — pinning @v1 keeps it working until you migrate."
+
   deploy:
     uses: ./.github/workflows/shared-deploy-ec2.yml
     with:
@@ -70,4 +92,5 @@ jobs:
       docker_platform: ${{ inputs.docker_platform }}
       memory_limit: ${{ inputs.memory_limit }}
       memory_reservation: ${{ inputs.memory_reservation }}
+      inject_aws_credentials: ${{ inputs.inject_aws_credentials }}
     secrets: inherit

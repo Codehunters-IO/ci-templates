@@ -7,11 +7,22 @@ name: Shared - Cleanup Container Packages
 # unreachable, and buildx attestations add more. They are not deletable through
 # any tag, so nothing removes them unless something is asked to.
 #
-# The blast radius is deliberately small. `delete-only-untagged-versions` means a
-# version carrying ANY tag — a semver release, a rolling tag, a sha- tag — cannot
-# be selected, by construction rather than by a filter that could be written
-# wrong. The plan job runs first and prints exactly what would go, and `dry_run`
-# defaults to true so the first run of this in a repository lists and stops.
+# "Untagged" is not the same as "unreachable", and the difference is the whole
+# problem. A multi-arch image publishes a manifest list that carries the tag and
+# one child manifest per platform that carries none; buildx SBOM and provenance
+# attestations are two more untagged children. On ci-base-images every one of
+# the 32 children behind the 8 rolling tags is listed by the API as an untagged
+# version. Deleting untagged versions therefore deletes the insides of images
+# that are tagged, live, and being pulled — the tag survives pointing at nothing
+# and `docker pull` fails with a manifest-unknown.
+#
+# So this does not filter on tags. It reads every tagged manifest out of the
+# registry, collects what those manifests reference, and treats anything
+# reachable from a tag as untouchable no matter how it is listed. Only versions
+# that are both untagged and unreferenced are candidates.
+#
+# `dry_run` defaults to true, and the plan is printed on every run including the
+# deleting one.
 
 on:
   workflow_call:
@@ -45,33 +56,37 @@ on:
     outputs:
       total:
         description: 'Versions in the package before the run'
-        value: ${{ jobs.plan.outputs.total }}
+        value: ${{ jobs.cleanup.outputs.total }}
       tagged:
-        description: 'Versions carrying at least one tag (never deleted)'
-        value: ${{ jobs.plan.outputs.tagged }}
+        description: 'Versions carrying at least one tag'
+        value: ${{ jobs.cleanup.outputs.tagged }}
       untagged:
         description: 'Untagged versions found'
-        value: ${{ jobs.plan.outputs.untagged }}
+        value: ${{ jobs.cleanup.outputs.untagged }}
+      referenced:
+        description: >-
+          Untagged versions that a tagged manifest still points at - platform
+          and attestation manifests of live images. Never deletable.
+        value: ${{ jobs.cleanup.outputs.referenced }}
       deletable:
-        description: 'Untagged versions beyond min_versions_to_keep'
-        value: ${{ jobs.plan.outputs.deletable }}
+        description: 'Untagged, unreferenced, and beyond min_versions_to_keep'
+        value: ${{ jobs.cleanup.outputs.deletable }}
 
 permissions:
   packages: write
 
 jobs:
-  plan:
-    name: Plan
+  cleanup:
+    name: Cleanup
     runs-on: ${{ inputs.runner }}
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     outputs:
-      total: ${{ steps.count.outputs.total }}
-      tagged: ${{ steps.count.outputs.tagged }}
-      untagged: ${{ steps.count.outputs.untagged }}
-      deletable: ${{ steps.count.outputs.deletable }}
-      package: ${{ steps.resolve.outputs.package }}
-      owner: ${{ steps.resolve.outputs.owner }}
+      total: ${{ steps.plan.outputs.total }}
+      tagged: ${{ steps.plan.outputs.tagged }}
+      untagged: ${{ steps.plan.outputs.untagged }}
+      referenced: ${{ steps.plan.outputs.referenced }}
+      deletable: ${{ steps.plan.outputs.deletable }}
 
     steps:
       - name: Resolve package coordinates
@@ -80,14 +95,15 @@ jobs:
           IN_PACKAGE: ${{ inputs.package_name }}
           IN_OWNER: ${{ inputs.owner }}
         run: |
+          set -euo pipefail
           PKG="${IN_PACKAGE:-${GITHUB_REPOSITORY#*/}}"
           OWNER="${IN_OWNER:-${GITHUB_REPOSITORY_OWNER}}"
           echo "package=${PKG}" >> "$GITHUB_OUTPUT"
           echo "owner=${OWNER}"  >> "$GITHUB_OUTPUT"
           echo "Package: ${OWNER}/${PKG}"
 
-      - name: Count and classify versions
-        id: count
+      - name: Plan
+        id: plan
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OWNER: ${{ steps.resolve.outputs.owner }}
@@ -95,90 +111,148 @@ jobs:
           KEEP: ${{ inputs.min_versions_to_keep }}
         run: |
           set -euo pipefail
+          python3 - <<'PY' | tee plan.log
+          import base64, json, os, subprocess, sys, urllib.error, urllib.request
 
-          # Orgs and user accounts are different endpoints and the owner may be
-          # either. Try the org one, fall back to the user one.
-          BASE="/orgs/${OWNER}/packages/container/${PKG}/versions"
-          if ! gh api "${BASE}?per_page=1" >/dev/null 2>&1; then
-            BASE="/users/${OWNER}/packages/container/${PKG}/versions"
-          fi
+          owner, pkg = os.environ["OWNER"], os.environ["PKG"]
+          keep = int(os.environ["KEEP"])
+          repo_path = f"{owner}/{pkg}".lower()
 
-          gh api "${BASE}" --paginate \
-            --jq '.[] | "\(.id)\t\(.metadata.container.tags | join(","))"' > versions.tsv
+          def api(path, *args):
+              r = subprocess.run(["gh", "api", path, *args], capture_output=True, text=True)
+              if r.returncode:
+                  raise RuntimeError(r.stderr.strip())
+              return r.stdout
 
-          TOTAL=$(wc -l < versions.tsv | tr -d ' ')
-          # A trailing empty tag field is what "untagged" looks like here.
-          UNTAGGED=$(awk -F'\t' '$2 == ""' versions.tsv | wc -l | tr -d ' ')
-          TAGGED=$((TOTAL - UNTAGGED))
-          DELETABLE=$(( UNTAGGED > KEEP ? UNTAGGED - KEEP : 0 ))
+          # Orgs and user accounts are different endpoints; the owner may be either.
+          base = f"/orgs/{owner}/packages/container/{pkg}/versions"
+          try:
+              api(f"{base}?per_page=1")
+          except RuntimeError:
+              base = f"/users/{owner}/packages/container/{pkg}/versions"
 
-          {
-            echo "total=${TOTAL}"
-            echo "tagged=${TAGGED}"
-            echo "untagged=${UNTAGGED}"
-            echo "deletable=${DELETABLE}"
-          } >> "$GITHUB_OUTPUT"
+          # --slurp gives an array of pages and refuses to run with --jq, so the
+          # flattening happens here rather than in the query.
+          pages = json.loads(api(base, "--paginate", "--slurp"))
+          versions = [{"id": v["id"], "name": v["name"],
+                       "tags": v.get("metadata", {}).get("container", {}).get("tags", [])}
+                      for page in pages for v in page]
 
-          {
-            echo "### Package cleanup plan — \`${OWNER}/${PKG}\`"
-            echo ""
-            echo "| | Count |"
-            echo "|---|---:|"
-            echo "| Versions total | ${TOTAL} |"
-            echo "| Tagged (never touched) | ${TAGGED} |"
-            echo "| Untagged | ${UNTAGGED} |"
-            echo "| Retained by \`min_versions_to_keep\` | $(( UNTAGGED > KEEP ? KEEP : UNTAGGED )) |"
-            echo "| **Would be deleted** | **${DELETABLE}** |"
-            echo ""
-            echo "Tags that will survive regardless:"
-            echo ""
-            echo '```'
-            awk -F'\t' '$2 != "" {print $2}' versions.tsv | tr ',' '\n' | sort -u | head -40
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          # Registry read token. Basic auth with the job token works for the
+          # package that belongs to this repository, private or not.
+          auth = base64.b64encode(f"{os.environ.get('GITHUB_ACTOR','x')}:{os.environ['GH_TOKEN']}".encode()).decode()
+          req = urllib.request.Request(
+              f"https://ghcr.io/token?scope=repository:{repo_path}:pull&service=ghcr.io",
+              headers={"Authorization": f"Basic {auth}"})
+          reg_token = json.load(urllib.request.urlopen(req))["token"]
 
-  prune:
-    name: Prune
-    needs: plan
-    if: ${{ !inputs.dry_run && needs.plan.outputs.deletable != '0' }}
-    runs-on: ${{ inputs.runner }}
-    timeout-minutes: 10
+          ACCEPT = ("application/vnd.oci.image.index.v1+json,"
+                    "application/vnd.docker.distribution.manifest.list.v2+json,"
+                    "application/vnd.oci.image.manifest.v1+json,"
+                    "application/vnd.docker.distribution.manifest.v2+json")
 
-    steps:
-      - name: Delete untagged versions
-        uses: actions/delete-package-versions@v5
-        with:
-          owner: ${{ needs.plan.outputs.owner }}
-          package-name: ${{ needs.plan.outputs.package }}
-          package-type: container
-          # The whole safety story: a version with any tag is not a candidate.
-          delete-only-untagged-versions: 'true'
-          min-versions-to-keep: ${{ inputs.min_versions_to_keep }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          def manifest(digest):
+              r = urllib.request.Request(
+                  f"https://ghcr.io/v2/{repo_path}/manifests/{digest}",
+                  headers={"Authorization": f"Bearer {reg_token}", "Accept": ACCEPT})
+              return json.load(urllib.request.urlopen(r))
 
-      - name: Report
+          # Everything reachable from a tag. One pass is enough in practice, but
+          # the walk is transitive so a nested index cannot slip through.
+          referenced, queue, seen = set(), [v["name"] for v in versions if v["tags"]], set()
+          unreadable = []
+          while queue:
+              d = queue.pop()
+              if d in seen:
+                  continue
+              seen.add(d)
+              try:
+                  m = manifest(d)
+              except (urllib.error.HTTPError, urllib.error.URLError) as e:
+                  unreadable.append((d, str(e)))
+                  continue
+              for child in m.get("manifests", []):
+                  cd = child["digest"]
+                  referenced.add(cd)
+                  queue.append(cd)
+
+          tagged = [v for v in versions if v["tags"]]
+          untagged = [v for v in versions if not v["tags"]]
+          reachable_untagged = [v for v in untagged if v["name"] in referenced]
+          candidates = [v for v in untagged if v["name"] not in referenced]
+
+          # A manifest we could not read might reference anything, so nothing is
+          # deleted on that run. Failing closed is the only safe direction here.
+          if unreadable:
+              print(f"::error::{len(unreadable)} tagged manifests could not be read; "
+                    "refusing to classify anything as deletable.")
+              for d, e in unreadable[:5]:
+                  print(f"  {d}: {e}")
+              candidates = []
+
+          # Newest first, by the order the API returns (most recent first).
+          deletable = candidates[keep:]
+
+          out = {
+              "total": len(versions), "tagged": len(tagged), "untagged": len(untagged),
+              "referenced": len(reachable_untagged), "deletable": len(deletable),
+          }
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              for k, v in out.items():
+                  fh.write(f"{k}={v}\n")
+          with open("deletable-ids.txt", "w") as fh:
+              fh.write("".join(f"{v['id']}\n" for v in deletable))
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
+              fh.write(f"### Package cleanup plan - `{owner}/{pkg}`\n\n")
+              fh.write("| | Count |\n|---|---:|\n")
+              fh.write(f"| Versions total | {out['total']} |\n")
+              fh.write(f"| Tagged | {out['tagged']} |\n")
+              fh.write(f"| Untagged | {out['untagged']} |\n")
+              fh.write(f"| Untagged but reachable from a tag (protected) | {out['referenced']} |\n")
+              fh.write(f"| Retained by `min_versions_to_keep` | {min(keep, len(candidates))} |\n")
+              fh.write(f"| **Would be deleted** | **{out['deletable']}** |\n\n")
+              if reachable_untagged:
+                  fh.write(f"{len(reachable_untagged)} untagged versions are platform or "
+                           "attestation manifests belonging to a tagged image. Deleting them "
+                           "would break `docker pull` on tags that still exist.\n\n")
+          print(json.dumps(out))
+          PY
+
+      - name: Prune
+        if: ${{ !inputs.dry_run && steps.plan.outputs.deletable != '0' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ steps.resolve.outputs.owner }}
+          PKG: ${{ steps.resolve.outputs.package }}
         run: |
+          set -euo pipefail
+          # Deleting by explicit id, not by a "delete everything untagged" flag:
+          # the ids come from the plan above, which already excluded anything a
+          # tag can reach.
+          BASE="/orgs/${OWNER}/packages/container/${PKG}/versions"
+          gh api "${BASE}?per_page=1" >/dev/null 2>&1 || BASE="/users/${OWNER}/packages/container/${PKG}/versions"
+          n=0
+          while IFS= read -r id; do
+            [ -n "${id}" ] || continue
+            gh api -X DELETE "${BASE}/${id}" --silent
+            n=$((n + 1))
+          done < deletable-ids.txt
+          echo "Deleted ${n} versions."
           {
             echo "### Deleted"
             echo ""
-            echo "Removed ${{ needs.plan.outputs.deletable }} untagged versions from"
-            echo "\`${{ needs.plan.outputs.owner }}/${{ needs.plan.outputs.package }}\`."
+            echo "Removed ${n} unreferenced untagged versions from \`${OWNER}/${PKG}\`."
           } >> "$GITHUB_STEP_SUMMARY"
 
-  skipped:
-    name: Prune (skipped)
-    needs: plan
-    if: ${{ inputs.dry_run || needs.plan.outputs.deletable == '0' }}
-    runs-on: ${{ inputs.runner }}
-    timeout-minutes: 5
-
-    steps:
-      - name: Say why
+      - name: Report skip
+        if: ${{ inputs.dry_run || steps.plan.outputs.deletable == '0' }}
         run: |
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
-            echo "dry_run is set — nothing deleted. Re-run with dry_run: false to apply." \
-              >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "Nothing to delete: no untagged versions beyond min_versions_to_keep." \
-              >> "$GITHUB_STEP_SUMMARY"
-          fi
+          {
+            echo ""
+            if [ "${{ inputs.dry_run }}" = "true" ]; then
+              echo "Nothing deleted: \`dry_run\` is on. Dispatch with it off to act on this plan."
+            else
+              echo "Nothing to delete."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

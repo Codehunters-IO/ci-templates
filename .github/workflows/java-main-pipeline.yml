@@ -196,6 +196,11 @@ on:
         required: false
         type: string
         default: ''
+      inject_aws_credentials:
+        description: 'DEPRECATED. Forwarded to the deploy workflow: put the pipeline AWS credentials in the container environment. Off by default; see shared-deploy-ec2.yml. Removed in v2.'
+        required: false
+        type: boolean
+        default: false
 
       # EKS-specific options
       eks_cluster_name:
@@ -263,6 +268,14 @@ on:
         type: boolean
         default: false
 
+      aws_role_to_assume:
+        description: >-
+          IAM role ARN to assume via GitHub OIDC, threaded down to the AWS jobs
+          below. Empty keeps the static-key path.
+        required: false
+        type: string
+        default: ''
+
     outputs:
       image_tag:
         description: 'Docker image tag pushed'
@@ -312,6 +325,17 @@ on:
       package_artifact_name:
         description: 'Published package artifact name'
         value: ${{ jobs.artifact-packages.outputs.artifact_name }}
+
+# Least privilege for what this workflow actually does. Without it the
+# job inherits whatever the calling repository's default happens to be,
+# which on older repositories is write-all.
+permissions:
+  contents: write
+  packages: write
+  issues: write
+  # For the OIDC path in the AWS workflows below; a caller's grant is the
+  # ceiling for everything beneath it.
+  id-token: write
 
 jobs:
   # ============================================
@@ -453,6 +477,7 @@ jobs:
     needs: [build, test, qodana, owasp, architecture]
     uses: ./.github/workflows/shared-artifact-docker-ecr.yml
     with:
+      aws_role_to_assume: ${{ inputs.aws_role_to_assume }}
       runner: ${{ inputs.runner }}
       image_tag: ${{ inputs.image_tag }}
       docker_platform: ${{ inputs.docker_platform }}
@@ -535,6 +560,7 @@ jobs:
         SPRING_PROFILES_ACTIVE=${{ inputs.spring_profiles != '' && format('{0},{1}', inputs.spring_profiles, inputs.environment) || inputs.environment }}
         SERVER_CONTEXT_PATH=/${{ github.event.repository.name }}
       extra_volumes: ${{ inputs.extra_volumes }}
+      inject_aws_credentials: ${{ inputs.inject_aws_credentials }}
     secrets: inherit
 
   # ============================================
@@ -560,6 +586,7 @@ jobs:
         SPRING_PROFILES_ACTIVE=${{ inputs.spring_profiles != '' && format('{0},{1}', inputs.spring_profiles, inputs.environment) || inputs.environment }}
         SERVER_CONTEXT_PATH=/${{ github.event.repository.name }}
       extra_volumes: ${{ inputs.extra_volumes }}
+      inject_aws_credentials: ${{ inputs.inject_aws_credentials }}
     secrets: inherit
 
   # ============================================
@@ -575,6 +602,7 @@ jobs:
     needs: [artifact-ecr, artifact-github, artifact-packages]
     uses: ./.github/workflows/shared-deploy-eks.yml
     with:
+      aws_role_to_assume: ${{ inputs.aws_role_to_assume }}
       runner: ${{ inputs.runner }}
       image_tag: ${{ needs.artifact-ecr.outputs.image_tag || needs.artifact-github.outputs.image_tag }}
       environment: ${{ inputs.environment }}

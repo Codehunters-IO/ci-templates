@@ -38,7 +38,24 @@ on:
         description: 'Semantic version tag (e.g. v1.2.3)'
         value: ${{ jobs.semver.outputs.version_tag }}
 
+# Least privilege for what this workflow actually does. Without it the
+# job inherits whatever the calling repository's default happens to be,
+# which on older repositories is write-all.
+permissions:
+  contents: write
+
 jobs:
+  deprecation-notice:
+    name: Deprecated
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 2
+    steps:
+      - name: Warn the caller
+        run: |
+          echo "::warning title=Deprecated workflow::java-semver.yml is deprecated. \
+          Call shared-semver.yml instead. This wrapper only forwards to it, and is scheduled \
+          for removal in v2 — pinning @v1 keeps it working until you migrate."
+
   semver:
     uses: ./.github/workflows/shared-semver.yml
     with:

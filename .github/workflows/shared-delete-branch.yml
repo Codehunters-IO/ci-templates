@@ -27,6 +27,12 @@ on:
         description: 'Status: deleted, skipped, protected, not_found, unmerged'
         value: ${{ jobs.delete.outputs.status }}
 
+# Least privilege for what this workflow actually does. Without it the
+# job inherits whatever the calling repository's default happens to be,
+# which on older repositories is write-all.
+permissions:
+  contents: write
+
 jobs:
   delete:
     name: Delete Branch

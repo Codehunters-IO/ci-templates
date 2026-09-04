@@ -64,6 +64,13 @@ on:
         description: 'E2E result (success/failure)'
         value: ${{ jobs.e2e.outputs.result }}
 
+# Least privilege for what this workflow actually does. Without it the
+# job inherits whatever the calling repository's default happens to be,
+# which on older repositories is write-all.
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   e2e:
     name: End-to-End
