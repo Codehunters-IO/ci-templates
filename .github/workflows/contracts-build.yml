@@ -116,7 +116,7 @@ jobs:
           echo "Strict mode enabled (24KB EIP-170 limit)." >> $GITHUB_STEP_SUMMARY
 
       - name: Upload compiled artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: contracts-build-${{ github.run_id }}
           path: |

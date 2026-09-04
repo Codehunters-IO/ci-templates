@@ -533,7 +533,7 @@ jobs:
 
       - name: Upload test reports
         if: inputs.upload_reports && !inputs.disable_artifacts && always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: test-reports-${{ github.run_id }}
           path: |
@@ -555,7 +555,7 @@ jobs:
 
       - name: Upload build artifact
         if: inputs.upload_artifact && !inputs.disable_artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.artifact-info.outputs.name }}
           path: ${{ inputs.jar_path }}/*.jar
