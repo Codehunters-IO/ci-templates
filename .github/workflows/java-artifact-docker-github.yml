@@ -101,7 +101,7 @@ jobs:
       # Download pre-built JAR if artifact_name is provided
       - name: Download build artifact
         if: inputs.artifact_name != ''
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.artifact_name }}
           path: ${{ inputs.jar_path }}

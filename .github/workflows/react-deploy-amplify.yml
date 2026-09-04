@@ -48,7 +48,7 @@ jobs:
 
     steps:
       - name: Download build artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: build-output-${{ github.run_id }}
           path: ${{ inputs.build_output_dir }}
