@@ -87,7 +87,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
 
       - name: Determine image tag
         id: set-tag
@@ -108,7 +108,7 @@ jobs:
       # Download pre-built JAR if artifact_name is provided
       - name: Download build artifact
         if: inputs.artifact_name != ''
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           name: ${{ inputs.artifact_name }}
           path: ${{ inputs.jar_path }}
@@ -116,7 +116,7 @@ jobs:
       # Build from source if no artifact provided
       - name: Setup JDK ${{ inputs.java_version }}
         if: inputs.artifact_name == ''
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961  # v5.7.0
         with:
           distribution: ${{ inputs.java_distribution }}
           java-version: ${{ inputs.java_version }}
