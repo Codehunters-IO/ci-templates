@@ -27,12 +27,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
 
       - name: Run Qodana analysis
-        uses: JetBrains/qodana-action@b60a4b9259f448dd00f2ca4763db5677d69ba868  # v2024.3.4
+        uses: JetBrains/qodana-action@10be11607eb323a180e2b76b26c9c5cdceac3e77  # v2026.2.1
         with:
           args: --apply-fixes
         env:
