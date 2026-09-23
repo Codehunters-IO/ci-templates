@@ -1,0 +1,61 @@
+# Lint, gate, build and scan this repository's container images on a pull
+# request. Publishes nothing.
+#
+# Copy into .github/workflows/ of any repository that ships a container image,
+# alongside shared-build-publish-image.yml. This is the check that makes the
+# merge safe; that one runs after the decision.
+#
+# The single thing to edit is the `images` array: one object per Dockerfile.
+name: PR Validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'images/**'
+      - 'scripts/**'
+      - '.github/workflows/**'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    # A release tag, never @main. Consumers copy this file verbatim, so the ref
+    # named here is what runs in their repository — @main would push every
+    # commit of this repo straight into them with no review and no version bump.
+    uses: Codehunters-IO/ci-templates/.github/workflows/shared-validate-image-pr.yml@v1
+    with:
+      # Validate every architecture the publish workflow ships. Validating only
+      # amd64 while publishing a multi-arch manifest is how an arm64-only break
+      # reaches the default branch behind a green pull request.
+      platforms: 'linux/amd64,linux/arm64'
+      # Optional. A native arm64 runner where one is available — free on public
+      # repositories, and on a large image the difference between a check people
+      # wait for and one they learn to ignore. Drop it to build arm64 under QEMU.
+      runner_arm64: 'ubuntu-24.04-arm'
+      # Optional. Receives IMAGE and PLATFORM, plus each image's smoke_env.
+      smoke_command: './scripts/smoke.sh'
+      # Optional. Any repository check that answers a question about the
+      # sources rather than about a built image.
+      gate_command: './scripts/check-pins.sh'
+      gate_name: 'Pin Consistency'
+      # Optional. Empty skips the shell lint job entirely.
+      shellcheck_scandir: './scripts'
+      # Optional. Rules that do not apply to the images here; see hadolint's
+      # documentation before adding to this list.
+      hadolint_ignore: 'DL3008,DL3018,DL3041'
+      trivyignores: '.trivyignore.yaml'
+      ignore_policy: '.trivy/ignore-policy.rego'
+      # scan_severity is per image on purpose. A runtime image faces traffic, so
+      # a fixable HIGH in it is a defect. An image that is root with a toolchain
+      # by design and lives for one ephemeral job is held to CRITICAL, because a
+      # gate that is always red is a gate everybody learns to click past.
+      images: |
+        [
+          {
+            "name": "app",
+            "dockerfile": "Dockerfile",
+            "scan_severity": "CRITICAL,HIGH"
+          }
+        ]
