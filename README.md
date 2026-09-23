@@ -108,8 +108,11 @@ Three things that table is saying out loud:
   `main` as production directly (see the environment table below); there is no
   approval-gated `workflow_dispatch` promotion for them.
 
-Two stack-agnostic templates sit alongside these: `shared-build-publish-image.yml` and
-`shared-cleanup-packages.yml`, covered in their own sections.
+Four stack-agnostic templates sit alongside these, covering the whole life of a
+container image: `shared-validate-image-pr.yml` before the merge,
+`shared-build-publish-image.yml` at the merge, `shared-scan-published-images.yml`
+weekly afterwards, and `shared-cleanup-packages.yml` for what the registry
+accumulates. Each is covered in its own section.
 
 ## Usage examples
 
@@ -818,6 +821,81 @@ second one silently loses the code scanning upload rather than failing.
 `selftest-build-publish-image.yml` builds a fixture through this workflow with
 `push: false` on every pull request that touches it, so it is not YAML that
 first runs in somebody else's repository.
+
+## Validating images before the merge
+
+`shared-validate-image-pr.yml` is the pre-merge half of the workflow above. It
+lints every Dockerfile, optionally lints the repository's shell scripts, runs
+one repository-specific gate, then builds and smoke-tests each image on each
+architecture and fails on fixable CVEs. It has no publishing path at all.
+
+| Input | Description | Default |
+|-------|-------------|---------|
+| `images` | JSON array of image definitions | required |
+| `platforms` | Architectures to build and smoke-test | `linux/amd64,linux/arm64` |
+| `runner_amd64` | Runner for the amd64 jobs | `ubuntu-latest` |
+| `runner_arm64` | Runner for the arm64 jobs | `ubuntu-latest` (QEMU) |
+| `smoke_command` | Run against each built image; `IMAGE` and `PLATFORM` are exported | none |
+| `gate_command` | Repository check, run once on a plain checkout | none |
+| `gate_name` | Job name for `gate_command` | `Repository Gate` |
+| `hadolint_failure_threshold` | hadolint level that fails the job | `warning` |
+| `hadolint_ignore` | hadolint rules to ignore | none |
+| `shellcheck_scandir` | Directory to lint; empty skips the job | none |
+| `shellcheck_severity` | Lowest severity that fails | `warning` |
+| `trivyignores` / `ignore_policy` | As above | none |
+
+Per image: `name`, `dockerfile`, and optionally `context`, `scan_severity`,
+`smoke_env`.
+
+**Validate every architecture you publish.** A multi-arch manifest validated on
+amd64 only is how an arm64-only break reaches a default branch behind a green
+pull request — in `ci-base-images` an `ARG TARGETARCH=amd64` shadowed the value
+BuildKit injects, and the arm64 build silently downloaded x86_64 artefacts.
+Nothing but an arm64 build catches that.
+
+**`runner_arm64` is why this workflow does not simply reuse the publish one.**
+That workflow is a single job per image, and a job has one runner, so its arm64
+build is always QEMU. Here the architecture is a matrix dimension, so a caller
+with access to native arm64 runners — free on public repositories — can pass
+`ubuntu-24.04-arm` and keep the check fast enough that people wait for it. The
+default stays QEMU, which works everywhere.
+
+**`gate_command` is deliberately opaque.** It runs on a plain checkout from the
+repository root with no image in scope, and what it asserts is the caller's
+business: a digest-pin auditor, a codegen drift check, a licence header sweep.
+Pushing those into this workflow would mean growing an input per repository.
+
+`selftest-validate-image-pr.yml` runs the whole thing against a fixture on every
+pull request that touches it.
+
+## Rescanning images after they are published
+
+`shared-scan-published-images.yml` scans the tags consumers actually pull, on a
+schedule, and uploads the findings to code scanning.
+
+The pull request gate and the publish gate both check an image at the moment it
+is built — the one moment it is least likely to be vulnerable. Advisories land
+against packages that already shipped, so an image that passed every gate is
+quietly wrong three weeks later and nothing in the pipeline says so.
+
+| Input | Description | Default |
+|-------|-------------|---------|
+| `images` | JSON array of image definitions | required |
+| `version` | Semver to scan; empty scans the rolling tags | none |
+| `registry` | Container registry | `ghcr.io` |
+| `image_name` | Image repository | calling repo, lowercased |
+| `trivyignores` / `ignore_policy` | As above | none |
+
+Per image: `name`, plus `rolling_tag` and/or `tag_suffix`, and optionally
+`scan_severity`.
+
+**A `version` older than an image fails on that image**, because the tag was
+never published — a repository that added a variant in 1.2.0 cannot scan it at
+1.1.0. The scheduled run passes no version and scans the rolling tags, which is
+the case that matters.
+
+This one has no self-test: it scans a published tag, and the fixture the other
+self-tests build is never published. It is exercised by its consumers instead.
 
 ## Package cleanup
 
