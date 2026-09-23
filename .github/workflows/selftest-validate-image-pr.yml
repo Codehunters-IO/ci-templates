@@ -1,0 +1,42 @@
+name: Self-test - shared-validate-image-pr
+
+# shared-validate-image-pr.yml has no consumer inside this repository, so
+# without this it is YAML nobody executes until a downstream repo breaks on it.
+#
+# Runs the real workflow against the same fixture shared-build-publish-image
+# uses. It exercises the architecture matrix resolution, the hadolint and
+# shellcheck jobs, the gate_command hook, the smoke_env plumbing and the Trivy
+# gate. Nothing is published — this workflow has no publishing path at all.
+#
+# amd64 only: the fixture is three lines of Alpine, so an arm64 job would prove
+# nothing the amd64 one does not, and the matrix resolution itself is asserted
+# by gate_command instead.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/shared-validate-image-pr.yml'
+      - '.github/workflows/selftest-validate-image-pr.yml'
+      - '.github/selftest/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    uses: ./.github/workflows/shared-validate-image-pr.yml
+    with:
+      platforms: 'linux/amd64'
+      smoke_command: './.github/selftest/smoke.sh'
+      gate_command: './.github/selftest/gate.sh'
+      gate_name: 'Self-test Gate'
+      shellcheck_scandir: './.github/selftest'
+      images: |
+        [
+          {
+            "name": "selftest",
+            "dockerfile": ".github/selftest/Dockerfile",
+            "scan_severity": "CRITICAL",
+            "smoke_env": "EXPECT_MARKER=selftest"
+          }
+        ]

@@ -14,6 +14,11 @@ Reusable GitHub Actions workflows for Java, Krakend, React and Solidity/Hardhat 
 
 ## GitFlow
 
+The diagram below is the **Java and KrakenD** flow, where `main` reaches `cert` and
+production is a separate approval-gated step. React, NGINX and Contracts differ: their
+`release/*` branches deploy to `staging` and `main` goes straight to `production`. See
+[Templates by stack](#templates-by-stack) and [Environments](#environments).
+
 ```
 feature/* ──► build
      │
@@ -56,21 +61,218 @@ feature/* ──► build
 
 ## Quick Start
 
-1. Copy the templates for your stack from `templates/` into your repo's `.github/workflows/`:
+1. Copy the templates for your stack from `templates/` into your repo's `.github/workflows/`.
+   Each template's header carries the filename it expects once copied — the stack prefix
+   exists to keep `templates/` browsable and is dropped on the way in:
+
    ```bash
-   cp templates/java-feature-build.yml   .github/workflows/
-   cp templates/java-pr-develop.yml      .github/workflows/
-   cp templates/java-develop-deploy.yml  .github/workflows/   # develop → develop (+ auto release branch)
-   cp templates/java-main-deploy.yml     .github/workflows/   # main → cert
-   cp templates/java-tag-deploy.yml      .github/workflows/   # prod (manual: workflow_dispatch from main)
+   cp templates/java-validate.yml        .github/workflows/validate.yml        # feature/* push + PR → develop
+   cp templates/java-develop-deploy.yml  .github/workflows/develop-deploy.yml  # develop → develop env (+ auto release branch)
+   cp templates/java-main-deploy.yml     .github/workflows/main-deploy.yml     # main → cert
+   cp templates/java-tag-deploy.yml      .github/workflows/tag-deploy.yml      # prod (workflow_dispatch from main)
    ```
+
+   The `validate.yml` name is not cosmetic: its job id `validate` is what produces the
+   required status check context `validate / PR Quality Gates` that the org ruleset on
+   `develop` expects. Rename the job and the branch protection stops matching.
 
 2. Replace `<org>` with your GitHub organization in each template:
    ```yaml
    uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@v1
    ```
 
-3. Configure the required secrets (see below).
+3. Configure the required secrets (see below) and declare the GitHub Environments your
+   stack's templates reference — they differ per stack, see [Environments](#environments).
+
+## Templates by stack
+
+Not every stack ships the same set, and the gaps are real rather than oversights waiting
+to be filled. A dash means no template exists for that step.
+
+| Stack | `feature/*` push | PR → `develop` | `develop` | `release/*` | `main` | Production |
+|---|---|---|---|---|---|---|
+| Java | `java-validate` | `java-validate` | `java-develop-deploy` | — | `java-main-deploy` | `java-tag-deploy` |
+| KrakenD | `krakend-feature-build` | `krakend-pr-develop` | `krakend-develop-deploy` | — | `krakend-main-deploy` | `krakend-tag-deploy` |
+| React | `react-feature-build` | `react-pr-develop` | `react-develop-deploy` | `react-release-deploy` | `react-main-deploy` | — |
+| NGINX | `nginx-feature-build` | `nginx-pr-develop` | `nginx-develop-deploy` | `nginx-release-deploy` | `nginx-main-deploy` | — |
+| Contracts | `contracts-feature-build` | `contracts-pr-develop` · `contracts-pr-full` | `contracts-develop-build` | `contracts-release-publish` | `contracts-main-deploy` | — |
+
+Three things that table is saying out loud:
+
+- **Java covers feature pushes and PRs with one file.** `java-validate.yml` triggers on
+  both, which is why there is no `java-feature-build.yml` or `java-pr-develop.yml` to copy.
+- **`release/*` deploys on three stacks and not on Java.** React, NGINX and Contracts push
+  `release/**` to a `staging` environment. Java's release branch carries the PR to `main`
+  and deploys nothing.
+- **Only Java and KrakenD have a production template.** React, NGINX and Contracts treat
+  `main` as production directly (see the environment table below); there is no
+  approval-gated `workflow_dispatch` promotion for them.
+
+Four stack-agnostic templates sit alongside these, covering the whole life of a
+container image: `shared-validate-image-pr.yml` before the merge,
+`shared-build-publish-image.yml` at the merge, `shared-scan-published-images.yml`
+weekly afterwards, and `shared-cleanup-packages.yml` for what the registry
+accumulates. Each is covered in its own section.
+
+## Usage examples
+
+Every example assumes `<org>` replaced and `secrets: inherit` on the job — the reusable
+workflows read secrets from the caller, and omitting it produces a deploy that fails at the
+first AWS step with nothing obviously wrong in the log.
+
+### Smallest useful consumer
+
+Build and test on every PR to `develop`, nothing else:
+
+```yaml
+name: Validation
+
+on:
+  pull_request:
+    branches: [develop]
+
+jobs:
+  validate:
+    uses: <org>/ci-templates/.github/workflows/java-pr-pipeline.yml@v1
+    with:
+      run_test: true
+    secrets: inherit
+```
+
+### Java — deploy to develop on merge
+
+```yaml
+name: Deploy to Develop
+
+on:
+  push:
+    branches: [develop]
+
+permissions:
+  contents: write        # the release job creates release/vX.Y.Z and opens its PR
+  id-token: write        # OIDC; drop only if you are on static AWS keys
+  checks: write
+  pull-requests: write
+
+jobs:
+  pipeline:
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@v1
+    with:
+      run_build: true
+      run_test: false            # already gated on the PR — see the note below
+      run_artifact: true
+      artifact_registry: 'ecr'
+      run_deploy: true
+      deploy_target: 'ec2-vpn'
+      environment: 'develop'
+      run_cleanup: true
+      run_release: true
+      release_target_branch: 'main'
+    secrets: inherit
+```
+
+`run_test: false` on `develop` is deliberate in the shipped template: the same commit
+already passed the PR gate, and re-running the suite on the merge result delays the deploy
+without testing anything new. Turn it back on if your `develop` receives direct pushes.
+
+### React — the full branch set
+
+React needs five files because its `release/**` branch deploys where Java's does not:
+
+```bash
+cp templates/react-feature-build.yml   .github/workflows/feature-build.yml
+cp templates/react-pr-develop.yml      .github/workflows/pr-develop.yml
+cp templates/react-develop-deploy.yml  .github/workflows/develop-deploy.yml
+cp templates/react-release-deploy.yml  .github/workflows/release-deploy.yml   # → staging
+cp templates/react-main-deploy.yml     .github/workflows/main-deploy.yml      # → production
+```
+
+### Deploying through a VPN
+
+`ec2-vpn` is for an EC2 whose private IP is only reachable over WireGuard. The runner
+raises `wg0`, deploys, and tears it down:
+
+```yaml
+with:
+  run_deploy: true
+  deploy_target: 'ec2-vpn'
+  environment: 'develop'
+secrets: inherit          # WG_* secrets travel through inherit
+```
+
+The six `WG_*` secrets belong to the **environment**, not the repository, because the
+tunnel differs per environment. Setting them at repository level makes `develop` and `cert`
+deploy through the same tunnel and one of them reaches the wrong host.
+
+### OIDC instead of static AWS keys
+
+```yaml
+jobs:
+  pipeline:
+    uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@v1
+    permissions:
+      contents: write
+      packages: write
+      issues: write
+      id-token: write     # required, and the caller has to grant it
+    with:
+      aws_role_to_assume: 'arn:aws:iam::123456789012:role/github-actions-deploy'
+    secrets: inherit
+```
+
+Setting `aws_role_to_assume` is enough — the static keys are read only when it is empty.
+The trust policy the role needs is in [AWS authentication](#aws-authentication).
+
+### Running the JVM jobs inside a prebuilt image
+
+```yaml
+with:
+  container_image: 'ghcr.io/codehunters-io/ci-base-images:1.0.0'
+```
+
+Skips `actions/setup-java` in `java-build`, `java-test`, `java-owasp`, `java-architecture`
+and `java-artifact-dependency-github`. Use the `-graalvm` tag where `./gradlew nativeCompile`
+runs. The Docker artifact and deploy jobs stay on the runner in every stack.
+
+### Contracts — gating on your own coverage rule
+
+```yaml
+with:
+  run_coverage: true
+  coverage_command: './scripts/check-coverage.sh'   # its exit code fails the job
+```
+
+Prefer this over `coverage_threshold` whenever the real rule is anything other than a
+global line percentage — see [Two coverage gates](#two-coverage-gates-and-which-one-to-use).
+
+### Publishing container images
+
+```yaml
+jobs:
+  images:
+    uses: <org>/ci-templates/.github/workflows/shared-build-publish-image.yml@v1
+    permissions:
+      packages: write
+      security-events: write     # omitting this silently loses the scan upload
+    with:
+      images: |
+        [
+          {"name": "api", "dockerfile": "Dockerfile", "scan_severity": "HIGH,CRITICAL"},
+          {"name": "ci",  "dockerfile": "docker/ci.Dockerfile", "scan_severity": "CRITICAL"}
+        ]
+      smoke_command: 'docker run --rm "$IMAGE" --version'
+    secrets: inherit
+```
+
+### Pinning a version that will not move
+
+```yaml
+uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@v1.4.1
+```
+
+Use this when a pipeline must not pick up anything, including fixes. `@v1` is the normal
+choice; `@main` only to test an unreleased change on purpose.
 
 ## Versioning
 
@@ -82,9 +284,9 @@ uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@v1
 
 `v1` is a floating alias that moves to the newest `v1.x.y`. Pinning it means a
 consumer picks up fixes and backward-compatible additions without editing its
-workflows, and never picks up a breaking change unannounced. Pin `@v1.4.2`
-instead when a pipeline must not move at all, and `@main` only to test an
-unreleased change on purpose.
+workflows, and never picks up a breaking change unannounced. Pin an exact
+release such as `@v1.4.1` when a pipeline must not move at all, and `@main`
+only to test an unreleased change on purpose.
 
 Releases are cut automatically: every push to `main` runs `release.yml`, which
 derives the version from the commits since the last tag, creates `vX.Y.Z` plus a
@@ -362,15 +564,28 @@ ci-templates/
 │   ├── shared-deploy-eks.yml
 │   ├── shared-notifications.yml    # in-pipeline Slack notifier (bot token, chat.postMessage)
 │   └── ...
-├── templates/                    # Copy these to your repo
-│   ├── java-*.yml                #   develop-deploy · main-deploy · tag-deploy (workflow_dispatch)
+├── templates/                    # Copy these to your repo — see "Templates by stack"
+│   ├── java-*.yml                #   validate · develop-deploy · main-deploy · tag-deploy
 │   ├── krakend-*.yml
+│   ├── nginx-*.yml
+│   ├── react-*.yml
 │   ├── contracts-*.yml
-│   └── react-*.yml
-├── .github/ruleset/              # Org rulesets (import to GitHub): develop · main · krakend · tags
+│   └── shared-*.yml              #   build-publish-image · cleanup-packages
+├── .github/ruleset/              # Rulesets as source files (import to GitHub) + their README
+├── jenkins/                      # Pre-GitHub-Actions Jenkins stack, kept for reference
+│   ├── pipelines/                #   java · react · krakend shared libraries (.groovy)
+│   ├── templates/                #   Jenkinsfile per stack
+│   ├── casc/                     #   configuration-as-code
+│   └── docker-compose.yml
 ├── scripts/                      # clone-environments.sh · ssh-deploy-debug.sh
+├── commitlint.config.js          # This repository's own commit linting
 └── README.md
 ```
+
+A consumer does **not** need to copy `commitlint.config.js`. `shared-commit-lint.yml` looks
+for eleven config filenames in the calling repository and, finding none, writes
+`extends: ['@commitlint/config-conventional']` for the duration of the job. Add a config
+only to depart from conventional commits.
 
 ## Contracts (Hardhat/Solidity) Stack
 
@@ -488,15 +703,36 @@ The AWS IAM principal must have `ecr:DescribeRepositories` and `ecr:CreateReposi
 
 ## Environments
 
-Each consuming repo must declare these GitHub Environments (**Settings → Environments**):
+Each consuming repo must declare the GitHub Environments its own stack references
+(**Settings → Environments**). **The names are not the same across stacks** — copying the
+Java list into a React repo produces a pipeline that binds to environments that do not
+exist, and the secrets resolve to empty rather than failing loudly:
 
-| Environment | Reached by | Protection |
-|-------------|-----------|------------|
-| `develop` | push to `develop` | none |
-| `cert` | push to `main` | optional |
-| `prod` | `Release to Production` workflow (`workflow_dispatch` from `main`) | **required reviewers** (the gate) |
+| Stack | `develop` push | `release/*` push | `main` push | Manual promotion |
+|---|---|---|---|---|
+| Java | `develop` | — | `cert` | `prod` |
+| KrakenD | `develop` | — | `cert` | `prod` |
+| React | `develop` | `staging` | `production` | — |
+| NGINX | `develop` | `staging` | `production` | — |
+| Contracts | — | `staging` | `production` | — |
 
-> `release/vX.Y.Z` branches do not map to an environment — they only carry the (manual) PR to `main`.
+| Environment | Protection |
+|-------------|------------|
+| `develop` | none |
+| `staging` | optional |
+| `cert` | optional |
+| `production` | recommended: required reviewers — it is the last stop on those three stacks |
+| `prod` | **required reviewers** (the gate) |
+
+Two consequences worth stating plainly. On Java and KrakenD, `main` reaches `cert` and
+production is a separate, approval-gated `workflow_dispatch` — so a merge to `main` is
+safe by construction. On React, NGINX and Contracts there is no such step: **merging to
+`main` deploys to `production`**, and the only thing standing between a merge and
+production traffic is whatever protection you put on the `production` Environment. If that
+list of required reviewers is empty, there is no gate.
+
+> On Java and KrakenD, `release/vX.Y.Z` branches do not map to an environment — they only
+> carry the (manual) PR to `main`. On the other three stacks they deploy to `staging`.
 
 - The deploy jobs bind `environment: <name>` at job level, so GitHub Environment protection rules
   (required reviewers, wait timers) apply automatically — no workflow code change.
@@ -522,6 +758,13 @@ does not change live rules until imported.
 | `ruleset-main.json` | branch `main` | `codehunters-ms-*`, `codehunters-sdk-*` | same as develop |
 | `ruleset-krakend.json` | branches `develop`+`main` | `codehunters-gw-*` | same, but check `validate / Test & Audit` (KrakenD pipeline) |
 | `ruleset-tags.json` | tag `v*.*.*` | `codehunters-ms-*`, `codehunters-sdk-*`, `codehunters-gw-*` | immutable tags (creation/deletion/update/non-fast-forward) |
+| `ruleset-ci-templates-develop.json` | branch `develop` | this repository | PR-only, squash |
+| `ruleset-ci-templates-main.json` | branch `main` | this repository | PR-only, merge commit |
+
+The last two protect `ci-templates` itself rather than the consuming repositories, and they
+are the reason the merge method differs by branch here: `develop` squashes, `main` takes a
+merge commit. This repository has no back-merge — `main` accumulates merge commits that
+`develop` never sees, which is expected and not drift.
 
 - **Bypass:** repo admins (RepositoryRole 5) and **GitHub Actions** (Integration `15368`) bypass the tag
   rules — the latter lets the `Release to Production` workflow create the `vX.Y.Z` tag.
@@ -578,6 +821,81 @@ second one silently loses the code scanning upload rather than failing.
 `selftest-build-publish-image.yml` builds a fixture through this workflow with
 `push: false` on every pull request that touches it, so it is not YAML that
 first runs in somebody else's repository.
+
+## Validating images before the merge
+
+`shared-validate-image-pr.yml` is the pre-merge half of the workflow above. It
+lints every Dockerfile, optionally lints the repository's shell scripts, runs
+one repository-specific gate, then builds and smoke-tests each image on each
+architecture and fails on fixable CVEs. It has no publishing path at all.
+
+| Input | Description | Default |
+|-------|-------------|---------|
+| `images` | JSON array of image definitions | required |
+| `platforms` | Architectures to build and smoke-test | `linux/amd64,linux/arm64` |
+| `runner_amd64` | Runner for the amd64 jobs | `ubuntu-latest` |
+| `runner_arm64` | Runner for the arm64 jobs | `ubuntu-latest` (QEMU) |
+| `smoke_command` | Run against each built image; `IMAGE` and `PLATFORM` are exported | none |
+| `gate_command` | Repository check, run once on a plain checkout | none |
+| `gate_name` | Job name for `gate_command` | `Repository Gate` |
+| `hadolint_failure_threshold` | hadolint level that fails the job | `warning` |
+| `hadolint_ignore` | hadolint rules to ignore | none |
+| `shellcheck_scandir` | Directory to lint; empty skips the job | none |
+| `shellcheck_severity` | Lowest severity that fails | `warning` |
+| `trivyignores` / `ignore_policy` | As above | none |
+
+Per image: `name`, `dockerfile`, and optionally `context`, `scan_severity`,
+`smoke_env`.
+
+**Validate every architecture you publish.** A multi-arch manifest validated on
+amd64 only is how an arm64-only break reaches a default branch behind a green
+pull request — in `ci-base-images` an `ARG TARGETARCH=amd64` shadowed the value
+BuildKit injects, and the arm64 build silently downloaded x86_64 artefacts.
+Nothing but an arm64 build catches that.
+
+**`runner_arm64` is why this workflow does not simply reuse the publish one.**
+That workflow is a single job per image, and a job has one runner, so its arm64
+build is always QEMU. Here the architecture is a matrix dimension, so a caller
+with access to native arm64 runners — free on public repositories — can pass
+`ubuntu-24.04-arm` and keep the check fast enough that people wait for it. The
+default stays QEMU, which works everywhere.
+
+**`gate_command` is deliberately opaque.** It runs on a plain checkout from the
+repository root with no image in scope, and what it asserts is the caller's
+business: a digest-pin auditor, a codegen drift check, a licence header sweep.
+Pushing those into this workflow would mean growing an input per repository.
+
+`selftest-validate-image-pr.yml` runs the whole thing against a fixture on every
+pull request that touches it.
+
+## Rescanning images after they are published
+
+`shared-scan-published-images.yml` scans the tags consumers actually pull, on a
+schedule, and uploads the findings to code scanning.
+
+The pull request gate and the publish gate both check an image at the moment it
+is built — the one moment it is least likely to be vulnerable. Advisories land
+against packages that already shipped, so an image that passed every gate is
+quietly wrong three weeks later and nothing in the pipeline says so.
+
+| Input | Description | Default |
+|-------|-------------|---------|
+| `images` | JSON array of image definitions | required |
+| `version` | Semver to scan; empty scans the rolling tags | none |
+| `registry` | Container registry | `ghcr.io` |
+| `image_name` | Image repository | calling repo, lowercased |
+| `trivyignores` / `ignore_policy` | As above | none |
+
+Per image: `name`, plus `rolling_tag` and/or `tag_suffix`, and optionally
+`scan_severity`.
+
+**A `version` older than an image fails on that image**, because the tag was
+never published — a repository that added a variant in 1.2.0 cannot scan it at
+1.1.0. The scheduled run passes no version and scans the rolling tags, which is
+the case that matters.
+
+This one has no self-test: it scans a published tag, and the fixture the other
+self-tests build is never published. It is exercised by its consumers instead.
 
 ## Package cleanup
 

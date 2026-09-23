@@ -1,0 +1,190 @@
+name: Shared - Scan Published Images
+
+# Rescans images that are already published, on a schedule.
+#
+# The pull request gate and the publish gate both check an image at the moment
+# it is built. That is the one moment it is least likely to be vulnerable.
+# Advisories land against packages that were already shipped, so an image that
+# passed every gate in a repository is quietly wrong three weeks later and
+# nothing in the pipeline says so. This is the job that says so.
+#
+# It scans the tags consumers actually pull, not a freshly built local image.
+
+on:
+  workflow_call:
+    inputs:
+      images:
+        description: >-
+          JSON array of image definitions. Each object takes:
+            name             required, identifies the job and the SARIF category
+            tag_suffix       optional, appended to `version` when one is given
+            rolling_tag      required when no version is scanned — the tag to
+                             pull, e.g. 'latest' or 'java-runtime'
+            scan_severity    optional, Trivy severities that fail the job
+                             (default 'CRITICAL,HIGH')
+        required: true
+        type: string
+      version:
+        description: >-
+          Semver to scan, e.g. '1.2.0'. Empty scans each image's rolling_tag.
+          A version predating an image fails on that image: the tag was never
+          published. Scan a version no older than the newest image.
+        required: false
+        type: string
+        default: ''
+      registry:
+        description: 'Container registry'
+        required: false
+        type: string
+        default: 'ghcr.io'
+      image_name:
+        description: 'Image repository (defaults to the calling repository, lowercased)'
+        required: false
+        type: string
+        default: ''
+      trivyignores:
+        description: 'Path to a Trivy ignore file. Empty means none.'
+        required: false
+        type: string
+        default: ''
+      ignore_policy:
+        description: 'Path to a Trivy Rego ignore policy. Empty means none.'
+        required: false
+        type: string
+        default: ''
+      timeout_minutes:
+        description: 'Per-image timeout'
+        required: false
+        type: number
+        default: 20
+
+permissions:
+  contents: read
+  packages: read
+  security-events: write
+
+jobs:
+  scan:
+    name: Scan (${{ matrix.image.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(inputs.images) }}
+
+    env:
+      SCAN_SEVERITY: ${{ matrix.image.scan_severity || 'CRITICAL,HIGH' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Resolve image reference
+        id: ref
+        env:
+          REGISTRY: ${{ inputs.registry }}
+          IMAGE_NAME: ${{ inputs.image_name || github.repository }}
+          VERSION: ${{ inputs.version }}
+          TAG_SUFFIX: ${{ matrix.image.tag_suffix }}
+          ROLLING_TAG: ${{ matrix.image.rolling_tag }}
+        run: |
+          set -euo pipefail
+          # GHCR lowercases the repository path; github.repository does not.
+          REPO=$(echo "${REGISTRY}/${IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')
+          if [ -n "${VERSION}" ]; then
+            TAG="${VERSION}${TAG_SUFFIX}"
+          elif [ -n "${ROLLING_TAG}" ]; then
+            TAG="${ROLLING_TAG}"
+          else
+            echo "::error::${{ matrix.image.name }} has no rolling_tag and no version was given"
+            exit 1
+          fi
+          echo "image=${REPO}:${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Scanning ${REPO}:${TAG}"
+
+      - name: Login to the registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # SARIF before the gate: the gate fails the job, and a failed job that
+      # uploaded nothing leaves the Security tab showing last week's state.
+      - name: Scan (SARIF for code scanning)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.ref.outputs.image }}
+          scanners: vuln
+          vuln-type: os,library
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          limit-severities-for-sarif: true
+          trivyignores: ${{ inputs.trivyignores }}
+          ignore-policy: ${{ inputs.ignore_policy }}
+          format: sarif
+          output: trivy-${{ matrix.image.name }}.sarif
+          exit-code: '0'
+          timeout: '15m'
+
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        with:
+          sarif_file: trivy-${{ matrix.image.name }}.sarif
+          category: published-${{ matrix.image.name }}
+
+      - name: Scan (table for the summary)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.ref.outputs.image }}
+          scanners: vuln
+          vuln-type: os,library
+          severity: ${{ env.SCAN_SEVERITY }}
+          ignore-unfixed: true
+          trivyignores: ${{ inputs.trivyignores }}
+          ignore-policy: ${{ inputs.ignore_policy }}
+          format: table
+          output: trivy-${{ matrix.image.name }}.txt
+          exit-code: '0'
+          timeout: '15m'
+          skip-setup-trivy: true
+
+      - name: Publish scan result
+        if: always()
+        env:
+          IMAGE_REF: ${{ steps.ref.outputs.image }}
+          REPORT: trivy-${{ matrix.image.name }}.txt
+        run: |
+          {
+            echo "### ${{ matrix.image.name }} — \`${IMAGE_REF}\`"
+            echo ""
+            echo "Gate: \`${SCAN_SEVERITY}\`, fixable only."
+            echo ""
+            echo '```'
+            if [ -s "${REPORT}" ]; then
+              head -c 40000 "${REPORT}"
+            else
+              echo "No vulnerabilities at or above the gate."
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # A published image with a fixable finding at the gate is one every
+      # consumer already inherits, and they have no way to see it.
+      - name: Vulnerability gate
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.ref.outputs.image }}
+          scanners: vuln
+          vuln-type: os,library
+          severity: ${{ env.SCAN_SEVERITY }}
+          ignore-unfixed: true
+          trivyignores: ${{ inputs.trivyignores }}
+          ignore-policy: ${{ inputs.ignore_policy }}
+          format: table
+          exit-code: '1'
+          timeout: '15m'
+          skip-setup-trivy: true

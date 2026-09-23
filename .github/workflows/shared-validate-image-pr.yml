@@ -1,0 +1,317 @@
+name: Shared - Validate Container Images (PR)
+
+# Lints, gates and builds a set of container images on a pull request, without
+# publishing anything.
+#
+# This is the pre-merge half of shared-build-publish-image.yml. That workflow
+# runs after the decision has been made; this one is what makes the decision
+# safe. It exists for the same reason: ci-base-images had all of it inline, and
+# validating a Dockerfile before it ships is not a thing one repository does.
+#
+# The architecture matrix is a first-class input rather than a QEMU afterthought.
+# Publishing a multi-arch manifest while validating only amd64 is how a
+# TARGETARCH bug reached a default branch behind a green pull request: an ARG
+# declared with a default shadowed the value BuildKit injects, and the arm64
+# build downloaded x86_64 artefacts. Only an arm64 build catches that, and on a
+# large image only a native runner does it fast enough that people wait for it.
+
+on:
+  workflow_call:
+    inputs:
+      images:
+        description: >-
+          JSON array of image definitions. Each object takes:
+            name             required, identifies the job and the cache scope
+            dockerfile       required, path to the Dockerfile
+            context          optional, build context (default '.')
+            scan_severity    optional, Trivy severities that fail the build
+                             (default 'CRITICAL,HIGH')
+            smoke_env        optional, KEY=VALUE lines exported before
+                             smoke_command runs
+        required: true
+        type: string
+      platforms:
+        description: >-
+          Comma-separated platforms to build and smoke-test. Each one becomes a
+          job per image, so 'linux/amd64,linux/arm64' over eight images is
+          sixteen jobs.
+        required: false
+        type: string
+        default: 'linux/amd64,linux/arm64'
+      runner_amd64:
+        description: 'Runner for the linux/amd64 jobs'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      runner_arm64:
+        description: >-
+          Runner for the linux/arm64 jobs. The default builds arm64 under QEMU
+          on an x86 runner, which works everywhere and is slow. Pass a native
+          arm64 runner ('ubuntu-24.04-arm') where one is available — on a public
+          repository they are free, and on a large image the difference is the
+          difference between a check people wait for and one they ignore.
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      smoke_command:
+        description: >-
+          Command run against each built image. IMAGE is exported to it, plus
+          whatever the image's smoke_env carries. Empty skips smoke testing.
+        required: false
+        type: string
+        default: ''
+      gate_command:
+        description: >-
+          Repository-specific pre-merge check, run once on a plain checkout —
+          a pin auditor, a codegen drift check, anything that answers a question
+          about the sources rather than about a built image. Empty skips it.
+        required: false
+        type: string
+        default: ''
+      gate_name:
+        description: 'Job name for gate_command, so the check reads as itself'
+        required: false
+        type: string
+        default: 'Repository Gate'
+      hadolint_failure_threshold:
+        description: 'hadolint level that fails the job'
+        required: false
+        type: string
+        default: 'warning'
+      hadolint_ignore:
+        description: >-
+          Comma-separated hadolint rules to ignore, e.g. 'DL3008,DL3018'.
+          Empty ignores none.
+        required: false
+        type: string
+        default: ''
+      shellcheck_scandir:
+        description: 'Directory of shell scripts to lint. Empty skips the job.'
+        required: false
+        type: string
+        default: ''
+      shellcheck_severity:
+        description: 'Lowest ShellCheck severity that fails the job'
+        required: false
+        type: string
+        default: 'warning'
+      trivyignores:
+        description: 'Path to a Trivy ignore file. Empty means none.'
+        required: false
+        type: string
+        default: ''
+      ignore_policy:
+        description: 'Path to a Trivy Rego ignore policy. Empty means none.'
+        required: false
+        type: string
+        default: ''
+      timeout_minutes:
+        description: 'Per-image-per-architecture timeout'
+        required: false
+        type: number
+        default: 40
+
+permissions:
+  contents: read
+
+jobs:
+  # platforms is a string and runs-on cannot be derived from one inside a
+  # matrix, so the architecture matrix is built here instead. It also keeps the
+  # caller's contract identical to shared-build-publish-image.yml, which takes
+  # the same `platforms` string.
+  setup:
+    name: Resolve architecture matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      arches: ${{ steps.arches.outputs.arches }}
+    steps:
+      - name: Build the architecture matrix
+        id: arches
+        env:
+          PLATFORMS: ${{ inputs.platforms }}
+          RUNNER_AMD64: ${{ inputs.runner_amd64 }}
+          RUNNER_ARM64: ${{ inputs.runner_arm64 }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os, sys
+
+          runners = {
+              'linux/amd64': ('amd64', os.environ['RUNNER_AMD64']),
+              'linux/arm64': ('arm64', os.environ['RUNNER_ARM64']),
+          }
+          out = []
+          for p in (x.strip() for x in os.environ['PLATFORMS'].split(',')):
+              if not p:
+                  continue
+              if p not in runners:
+                  sys.exit(f"::error::unsupported platform {p!r}; "
+                           f"expected one of {', '.join(runners)}")
+              arch, runner = runners[p]
+              out.append({'arch': arch, 'platform': p, 'runner': runner})
+          if not out:
+              sys.exit("::error::platforms resolved to nothing")
+          print('arches=' + json.dumps(out))
+          PY
+
+  hadolint:
+    name: Dockerfile Lint (${{ matrix.image.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(inputs.images) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Hadolint
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: ${{ matrix.image.dockerfile }}
+          failure-threshold: ${{ inputs.hadolint_failure_threshold }}
+          ignore: ${{ inputs.hadolint_ignore }}
+
+  shellcheck:
+    name: Shell Script Lint
+    if: inputs.shellcheck_scandir != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: ShellCheck
+        uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # 2.0.0
+        with:
+          scandir: ${{ inputs.shellcheck_scandir }}
+          severity: ${{ inputs.shellcheck_severity }}
+
+  gate:
+    name: ${{ inputs.gate_name }}
+    if: inputs.gate_command != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Run the repository gate
+        env:
+          GATE_COMMAND: ${{ inputs.gate_command }}
+        run: bash -c "${GATE_COMMAND}"
+
+  build-test:
+    name: Build & Smoke Test (${{ matrix.image.name }}, ${{ matrix.arch.arch }})
+    needs: setup
+    runs-on: ${{ matrix.arch.runner }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(inputs.images) }}
+        arch: ${{ fromJSON(needs.setup.outputs.arches) }}
+    env:
+      LOCAL_IMAGE: local-build:pr-${{ matrix.image.name }}-${{ matrix.arch.arch }}
+      SCAN_SEVERITY: ${{ matrix.image.scan_severity || 'CRITICAL,HIGH' }}
+      BUILD_CONTEXT: ${{ matrix.image.context || '.' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Harmless and nearly free when the runner is already the target
+      # architecture, and required when it is not. Deciding between the two
+      # would mean encoding which runner labels are arm64, which is exactly the
+      # kind of knowledge that goes stale.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Build image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: ${{ env.BUILD_CONTEXT }}
+          file: ${{ matrix.image.dockerfile }}
+          platforms: ${{ matrix.arch.platform }}
+          push: false
+          load: true
+          tags: ${{ env.LOCAL_IMAGE }}
+          cache-from: type=gha,scope=${{ matrix.image.name }}-pr-${{ matrix.arch.arch }}
+          cache-to: type=gha,scope=${{ matrix.image.name }}-pr-${{ matrix.arch.arch }},mode=max
+
+      - name: Smoke test
+        if: inputs.smoke_command != ''
+        env:
+          IMAGE: ${{ env.LOCAL_IMAGE }}
+          PLATFORM: ${{ matrix.arch.platform }}
+          SMOKE_ENV: ${{ matrix.image.smoke_env }}
+          SMOKE_COMMAND: ${{ inputs.smoke_command }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r line; do
+            [ -n "${line}" ] || continue
+            export "${line?}"
+          done <<< "${SMOKE_ENV}"
+          bash -c "${SMOKE_COMMAND}"
+
+      # Report first with exit-code 0, gate second. If the gate ran alone its
+      # table would go to the output file and a failure would leave nothing
+      # readable in the log — which is precisely when somebody needs to read it.
+      - name: Scan image for vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.LOCAL_IMAGE }}
+          scanners: vuln
+          vuln-type: os,library
+          severity: ${{ env.SCAN_SEVERITY }}
+          ignore-unfixed: true
+          trivyignores: ${{ inputs.trivyignores }}
+          ignore-policy: ${{ inputs.ignore_policy }}
+          format: table
+          output: trivy-${{ matrix.image.name }}-${{ matrix.arch.arch }}.txt
+          exit-code: '0'
+          timeout: '15m'
+
+      - name: Publish scan result
+        if: always()
+        env:
+          REPORT: trivy-${{ matrix.image.name }}-${{ matrix.arch.arch }}.txt
+        run: |
+          {
+            echo "### Vulnerability scan — ${{ matrix.image.name }} (${{ matrix.arch.arch }})"
+            echo ""
+            echo "Gate: \`${SCAN_SEVERITY}\`, fixable only."
+            echo ""
+            echo '```'
+            if [ -s "${REPORT}" ]; then
+              head -c 40000 "${REPORT}"
+            else
+              echo "No vulnerabilities at or above the gate."
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Vulnerability gate
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.LOCAL_IMAGE }}
+          scanners: vuln
+          vuln-type: os,library
+          severity: ${{ env.SCAN_SEVERITY }}
+          ignore-unfixed: true
+          trivyignores: ${{ inputs.trivyignores }}
+          ignore-policy: ${{ inputs.ignore_policy }}
+          format: table
+          exit-code: '1'
+          timeout: '15m'
+          skip-setup-trivy: true
+
+      - name: Report image size
+        if: always()
+        run: |
+          SIZE=$(docker image inspect "${LOCAL_IMAGE}" --format '{{.Size}}')
+          {
+            echo "### Image Size — ${{ matrix.image.name }} (${{ matrix.arch.arch }}, uncompressed)"
+            echo ""
+            echo "**$((SIZE / 1024 / 1024)) MB**"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,47 @@
+# Rescan the images this repository has already published.
+#
+# Copy into .github/workflows/ of any repository that ships a container image.
+# The build-time gates check an image at the moment it is least likely to be
+# vulnerable; advisories land afterwards. This is what notices.
+#
+# The permissions block is not optional: a reusable workflow cannot grant itself
+# more than the caller has, and without `security-events: write` the findings
+# never reach the Security tab.
+name: Scheduled Image Scan
+
+on:
+  schedule:
+    # Monday 06:00 UTC — before the week's work, after the weekend's advisories.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Semver to scan (e.g. 1.2.0). Empty scans the rolling tags.'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  packages: read
+  security-events: write
+
+jobs:
+  scan:
+    # A release tag, never @main — see the note in the other shared templates.
+    uses: Codehunters-IO/ci-templates/.github/workflows/shared-scan-published-images.yml@v1
+    with:
+      # Empty on the schedule, so the weekly run scans the rolling tags. A
+      # version older than an image fails on it: that tag was never published.
+      version: ${{ inputs.version || '' }}
+      trivyignores: '.trivyignore.yaml'
+      ignore_policy: '.trivy/ignore-policy.rego'
+      images: |
+        [
+          {
+            "name": "app",
+            "rolling_tag": "latest",
+            "tag_suffix": "",
+            "scan_severity": "CRITICAL,HIGH"
+          }
+        ]
