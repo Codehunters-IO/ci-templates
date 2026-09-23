@@ -362,6 +362,53 @@ jobs:
     secrets: inherit
 ```
 
+## Shared workflows with no template yet
+
+Two reusable workflows are complete and callable but ship no template, so nothing in this
+repository references them and they are easy to mistake for dead code. They are not — they
+cover cases the templated path does not.
+
+### `shared-deploy-ec2-vpn-compose.yml`
+
+Deploys a **multi-service `docker compose` stack** to an EC2 host over WireGuard. The
+templated `ec2-vpn` target deploys one image pulled from ECR; this one syncs the repository
+itself — compose file plus config directories — and runs `docker compose up -d`, letting
+compose pull upstream images. It is the shape an observability stack needs, where there is
+nothing of yours to build.
+
+| Input | Default | |
+|---|---|---|
+| `compose_file` | `docker-compose.yml` | Compose file at the repository root |
+| `external_networks` | `codehunters_net` | Networks to create if missing (space-separated) |
+| `external_volumes` | `shared_logs` | Volumes to create if missing (space-separated) |
+| `verify_vpn_connectivity` | `false` | Ping the host before deploying |
+| `environment` | `develop` | GitHub Environment to bind |
+
+Takes the same six `WG_*` secrets as `shared-deploy-ec2-vpn.yml`, plus `STACK_ENV_FILE` for
+the stack's own `.env`.
+
+### `shared-validate-source-branch.yml`
+
+Fails a pull request whose source branch does not match an allowed prefix. Useful where the
+branching model is a convention nobody enforces and `release/` branches start appearing as
+`releases/`.
+
+| Input | Required | |
+|---|---|---|
+| `target_branch` | yes | Branch being merged into (`develop` or `main`) |
+| `allowed_prefixes` | no | Comma-separated, e.g. `feature/,fix/,chore/` |
+
+Call either directly until a template exists:
+
+```yaml
+jobs:
+  branch-name:
+    uses: <org>/ci-templates/.github/workflows/shared-validate-source-branch.yml@v1
+    with:
+      target_branch: develop
+      allowed_prefixes: 'feature/,bugfix/,hotfix/'
+```
+
 ## Token permissions
 
 Every workflow declares the `GITHUB_TOKEN` permissions it needs. Before this,

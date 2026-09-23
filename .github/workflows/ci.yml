@@ -90,6 +90,55 @@ jobs:
           fi
           echo "All template references pin a release tag."
 
+  action-pin-drift:
+    name: One SHA per action
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: No action may be pinned at two different SHAs
+        run: |
+          python3 - <<'PY'
+          import glob, re, sys, collections
+
+          # Dependabot's github-actions ecosystem only scans .github/workflows/. Anything
+          # under templates/ is invisible to it, so a SHA pinned there is frozen the day
+          # it lands. That is how templates/java-tag-deploy.yml and krakend-tag-deploy.yml
+          # sat on actions/checkout v5.1.0 while every workflow here ran v7.0.1 -- two
+          # major versions of drift in the two templates that deploy to production.
+          #
+          # Divergence is the detectable half: if the same action is pinned at two SHAs,
+          # one of them is stale. A single shared SHA means Dependabot's bump covers the
+          # templates too, because this job fails until they are moved together.
+          pins = collections.defaultdict(set)
+          where = collections.defaultdict(list)
+          pat = re.compile(r'uses:\s*([^\s@]+)@([0-9a-f]{40})')
+
+          for f in sorted(glob.glob('.github/workflows/*.yml') + glob.glob('templates/*.yml')):
+              for n, line in enumerate(open(f), 1):
+                  if line.lstrip().startswith('#'):
+                      continue
+                  m = pat.search(line)
+                  if m:
+                      action, sha = m.group(1), m.group(2)
+                      pins[action].add(sha)
+                      where[(action, sha)].append(f"{f}:{n}")
+
+          bad = 0
+          for action, shas in sorted(pins.items()):
+              if len(shas) > 1:
+                  bad += 1
+                  print(f"::error::{action} is pinned at {len(shas)} different SHAs")
+                  for sha in sorted(shas):
+                      print(f"  {sha[:12]}")
+                      for loc in where[(action, sha)]:
+                          print(f"    {loc}")
+
+          print(f"{len(pins)} actions pinned, {bad} with divergent SHAs")
+          sys.exit(1 if bad else 0)
+          PY
+
   inputs-declared:
     name: Forwarded inputs exist
     runs-on: ubuntu-latest
