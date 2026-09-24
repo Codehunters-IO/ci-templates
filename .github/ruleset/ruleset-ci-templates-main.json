@@ -46,6 +46,12 @@
           },
           {
             "context": "Forwarded inputs exist"
+          },
+          {
+            "context": "One SHA per action"
+          },
+          {
+            "context": "Commit messages / Lint Commit Messages"
           }
         ]
       }
