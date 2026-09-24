@@ -619,11 +619,6 @@ ci-templates/
 │   ├── contracts-*.yml
 │   └── shared-*.yml              #   build-publish-image · cleanup-packages
 ├── .github/ruleset/              # Rulesets as source files (import to GitHub) + their README
-├── jenkins/                      # Pre-GitHub-Actions Jenkins stack, kept for reference
-│   ├── pipelines/                #   java · react · krakend shared libraries (.groovy)
-│   ├── templates/                #   Jenkinsfile per stack
-│   ├── casc/                     #   configuration-as-code
-│   └── docker-compose.yml
 ├── scripts/                      # clone-environments.sh · ssh-deploy-debug.sh
 ├── commitlint.config.js          # This repository's own commit linting
 └── README.md
