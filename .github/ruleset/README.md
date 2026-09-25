@@ -7,6 +7,8 @@ sent to the API.
 |------|-------|-----------|-----------|
 | `ruleset-ci-templates-develop.json` | **repo** | this repository, `develop` | **yes** — ruleset `22278207` |
 | `ruleset-ci-templates-main.json` | **repo** | this repository, `main` | **yes** — ruleset `22284847` |
+| `ruleset-ci-templates-tags.json` | **repo** | this repository, `vX.Y.Z` tags | **yes** — ruleset `23957169` |
+| `ruleset-ci-templates-tag-alias.json` | **repo** | this repository, the `vX` alias | **yes** — ruleset `23957170` |
 | `ruleset-develop.json` | org | `codehunters-ms-*`, `codehunters-sdk-*`, `develop` | no |
 | `ruleset-main.json` | org | same, `main` | no |
 | `ruleset-krakend.json` | org | KrakenD repos, `develop` + `main` | no |
@@ -14,10 +16,15 @@ sent to the API.
 
 The four org-level files carry a `repository_name` condition and `ci-templates` matches
 none of their patterns, which is how this repository went unprotected for so long: until
-these two rulesets were applied, anyone with write access could push straight to `develop`
-or `main`, force-push over either, or delete them — and `main` is what every consumer's
-`@v1` alias resolves to. The repo-level files have no `repository_name` condition because
-repo-level rulesets do not take one.
+the repo-level rulesets were applied, anyone with write access could push straight to
+`develop` or `main`, force-push over either, or delete them — and `main` is what every
+consumer's `@v1` alias resolves to. The repo-level files have no `repository_name`
+condition because repo-level rulesets do not take one.
+
+**The org-level files cannot be applied at all on the current plan.** It is not a question
+of scope: `gh api orgs/Codehunters-IO/rulesets` answers `403 Upgrade to GitHub Team`
+whatever the token. They are kept as the definitions to apply the day the organisation is
+on Team or above; until then every protection this repository has must be repo-level.
 
 Check what is actually in force rather than trusting this table:
 
@@ -29,7 +36,7 @@ gh api repos/Codehunters-IO/ci-templates/rules/branches/develop --jq '.[].type'
 The second command is the one that matters. A ruleset can exist and still not apply to the
 branch you care about.
 
-## Why two rulesets and not one
+## Why the branches need two rulesets
 
 `allowed_merge_methods` lives on the `pull_request` rule, and a rule applies to every ref
 its ruleset includes. One ruleset covering both branches cannot ask for squash on one and
@@ -76,6 +83,53 @@ on `main` directly — a hotfix that cannot wait for `develop` — `develop` nee
 back, and squash-only leaves cherry-pick as the path. Add `merge` to `develop`'s
 `allowed_merge_methods` at that point rather than in advance.
 
+## Why the tags need two rulesets
+
+`v1` is what every consumer resolves. Until these were applied nothing protected it:
+`gh api repos/Codehunters-IO/ci-templates/rules/branches/refs%2Ftags%2Fv1` returned zero
+rules, so anyone with write access could delete the alias or repoint it at an arbitrary
+commit, and the next pipeline in every consuming repository would run whatever they chose.
+No pull request, no check, no record.
+
+The two tag rulesets exist because the release flow treats the two kinds of tag in
+opposite ways. `shared-tag-release` **creates** `vX.Y.Z` once and never touches it again;
+`release.yml` then **force-moves** the `vX` alias on every single release:
+
+```bash
+git tag -f -a "$MAJOR" -m "Floating alias for ${VERSION_TAG}"
+git push origin "refs/tags/${MAJOR}" --force
+```
+
+So `vX.Y.Z` can be sealed against `update`, `deletion` and `non_fast_forward`, while the
+alias can only be protected against `deletion` — blocking its update would break the
+release at the "Move floating major tag" step. Hence one ruleset per pattern, with the
+alias ruleset excluding `refs/tags/v[0-9]*.[0-9]*.[0-9]*` so the two never overlap.
+
+**Neither blocks `creation`,** and that is forced, not chosen. `release.yml` pushes tags as
+`github-actions[bot]` with `GITHUB_TOKEN`, which holds write, not admin, so it does not
+inherit the `bypass_actors` escape hatch. Granting the GitHub Actions app an explicit
+bypass is not available here either — a repo-level ruleset answers
+`422 Actor GitHub Actions integration must be part of the ruleset source or owner
+organization`. Blocking creation would therefore block the release itself. The residual
+risk is that someone can still hand-cut a tag, and `shared-tag-release` derives the next
+version from `git tag -l --sort=-v:refname | head -n1`, so a bogus `v9.9.9` would poison
+the following release. Nothing here prevents that; it is the price of keeping the release
+able to tag at all.
+
+Verified by probe rather than by reading the JSON, with `bypass_actors` temporarily
+emptied so the admin escape hatch could not mask the result:
+
+| Operation | Expected | Result |
+|-----------|----------|--------|
+| create `v0.0.999` | allowed | allowed |
+| force-move `v0.0.999` | rejected | rejected |
+| delete `v0.0.999` | rejected | rejected |
+| create `v0` | allowed | allowed |
+| force-move `v0` | allowed | allowed |
+| delete `v0` | rejected | rejected |
+
+The two probe tags were deleted afterwards and the bypass restored.
+
 ## Why the rest is shaped the way it is
 
 **Zero required approvals, no code-owner review.** Not an oversight. `CODEOWNERS` lists a
@@ -94,9 +148,16 @@ way back.
 incompatible with the merge commits the release flow produces on `main` — `16d4a51` and
 `cd6b2ac` are two.
 
-**Required checks must have run at least once.** The four contexts are jobs in
+**Required checks must have run at least once.** The six contexts are jobs in
 `.github/workflows/ci.yml`. Applying a ruleset before that workflow has ever run leaves
 every pull request blocked on checks GitHub has never seen.
+
+**The self-test jobs are deliberately not required.** `selftest-build-publish-image` and
+`selftest-validate-image-pr` are filtered by `paths`, so they do not start on a pull
+request that touches nothing under `.github/selftest/**` or the two workflows they
+exercise. A required check that never starts is a pull request that never merges, so
+requiring them would deadlock every unrelated change. They still run, and still have to be
+green, on the pull requests that do touch those files.
 
 ## Applying
 
@@ -114,7 +175,9 @@ gh api -X PUT repos/Codehunters-IO/ci-templates/rulesets/22278207 \
   --input .github/ruleset/ruleset-ci-templates-develop.json
 ```
 
-Org-level (the other four) needs the `admin:org` scope:
+Org-level (the other four) needs the `admin:org` scope **and an organisation on GitHub
+Team or above**. On the current plan the second command answers `403 Upgrade to GitHub
+Team` and there is nothing a token can do about it:
 
 ```bash
 gh auth refresh -h github.com -s admin:org
