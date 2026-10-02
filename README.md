@@ -939,6 +939,36 @@ the case that matters.
 This one has no self-test: it scans a published tag, and the fixture the other
 self-tests build is never published. It is exercised by its consumers instead.
 
+## Scanning the stack pipelines' images
+
+The Java, KrakenD, NGINX and Contracts main pipelines publish through
+`shared-artifact-docker-ecr.yml` or `java-artifact-docker-github.yml`, not the
+workflows above. Both build the image locally, scan it with Trivy, and only then
+push it. A gate after the push would come too late: the tag is in the registry
+and the deploy jobs pull it.
+
+| Input | Description | Default |
+|-------|-------------|---------|
+| `vulnerability_gate` | Fail the artifact job, before the push, on a fixable finding | `true` |
+| `scan_severity` | Severities the gate acts on | `CRITICAL,HIGH` |
+| `trivyignores` / `ignore_policy` | As above | none |
+
+The main pipelines take the same four inputs and forward them. The findings go
+to the job summary. They do not go to code scanning: that needs
+`security-events: write`, and asking every consumer's caller for it would break
+the callers that do not grant it. The weekly rescan above is the code scanning
+path.
+
+The first entry of `docker_platform` is what gets scanned, because `--load`
+takes one platform. The push reuses that build's layers, so the image pushed is
+the image scanned.
+
+**Turning it on is a behaviour change for existing consumers.** A service that
+already ships an image with a fixable HIGH starts failing at the artifact job.
+To roll out without blocking a release, set `vulnerability_gate: false`: the
+scan still runs and reports, and the gate can be enabled once the summary is
+clean.
+
 ## Package cleanup
 
 `shared-cleanup-packages.yml` prunes **untagged** versions from a GHCR container
