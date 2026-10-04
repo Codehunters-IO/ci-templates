@@ -1,6 +1,6 @@
 # CI Templates
 
-Reusable GitHub Actions workflows for Java, Krakend, React and Solidity/Hardhat projects following a GitFlow branching strategy.
+Reusable GitHub Actions workflows for Java, KrakenD, NGINX, React and Solidity/Hardhat projects following a GitFlow branching strategy.
 
 ## Stacks
 
@@ -26,7 +26,7 @@ feature/* ──► build
      │                       └── uses java-pr-pipeline.yml (quality gates only)
      │
      ▼ (merge to develop)   build → test → coverage → owasp
-     │                              → artifact (ECR) → deploy (DEVELOP)
+     │                              → trivy gate → artifact (ECR) → deploy (DEVELOP)
      │                              → delete merged feature branch
      │                              → auto-create branch release/vX.Y.Z (semver)   ← no deploy
      │                              → auto-open PR release/vX.Y.Z -> main, changelog in body
@@ -34,7 +34,7 @@ feature/* ──► build
      │
      ▼ (release/vX.Y.Z)     PR is already open — review & merge when ready (stabilization branch — no deploy)
      │
-     ▼ (merge to main)      build → artifact (ECR) → deploy (CERT)
+     ▼ (merge to main)      build → trivy gate → artifact (ECR) → deploy (CERT)
      │                              → delete merged release branch
      │
      ▼ ("Release to Production"  │  workflow_dispatch from main, input: version vX.Y.Z)
@@ -112,7 +112,9 @@ Four stack-agnostic templates sit alongside these, covering the whole life of a
 container image: `shared-validate-image-pr.yml` before the merge,
 `shared-build-publish-image.yml` at the merge, `shared-scan-published-images.yml`
 weekly afterwards, and `shared-cleanup-packages.yml` for what the registry
-accumulates. Each is covered in its own section.
+accumulates. Each is covered in its own section. The stack pipelines do not use
+them for their images; they scan in their own artifact job, covered in
+[Scanning the stack pipelines' images](#scanning-the-stack-pipelines-images).
 
 ## Usage examples
 
@@ -264,6 +266,20 @@ jobs:
       smoke_command: 'docker run --rm "$IMAGE" --version'
     secrets: inherit
 ```
+
+### Rolling out the vulnerability gate
+
+```yaml
+uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@v1
+with:
+  run_artifact: true
+  vulnerability_gate: false              # report only, until the job summary is clean
+  trivyignores: '.trivyignore.yaml'      # accepted findings, each with a reason
+```
+
+The four stacks that publish an image take the same inputs. Remove
+`vulnerability_gate: false` once the summary is clean. See
+[Scanning the stack pipelines' images](#scanning-the-stack-pipelines-images).
 
 ### Pinning a version that will not move
 
@@ -733,7 +749,7 @@ GHCR package public first.
 
 ### ECR Repository
 
-The ECR repository is created automatically by the pipeline if it does not exist. The repository name equals the GitHub repo name (e.g., `codehunters-blockchain-contracts`). Repos are created with `MUTABLE` tags and scan-on-push enabled.
+The ECR repository is created automatically by the pipeline if it does not exist. The repository name equals the GitHub repo name (e.g., `codehunters-blockchain-contracts`). Repos are created with `MUTABLE` tags and scan-on-push enabled. ECR's scan-on-push reports after the image is already in the registry; the pipeline's own Trivy gate is what keeps a vulnerable image out (see [Scanning the stack pipelines' images](#scanning-the-stack-pipelines-images)).
 
 The AWS IAM principal must have `ecr:DescribeRepositories` and `ecr:CreateRepository` in addition to push permissions.
 
