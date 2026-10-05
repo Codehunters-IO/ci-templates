@@ -44,6 +44,31 @@ jobs:
           # Revisit once that backlog is down.
           ./actionlint -shellcheck= -oneline .github/workflows/*.yml
 
+  job-timeouts:
+    name: Every runnable job has a timeout
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      # A job without timeout-minutes holds a runner for six hours when a step
+      # hangs, and in a reusable workflow it does so in every consumer at once.
+      # Jobs that only `uses:` another workflow cannot set one and are skipped.
+      - name: Check
+        run: |
+          python3 - <<'PY'
+          import glob, sys, yaml
+          bad = 0
+          for f in sorted(glob.glob('.github/workflows/*.yml')):
+              for name, job in (yaml.safe_load(open(f)).get('jobs') or {}).items():
+                  if 'uses' in job or 'timeout-minutes' in job:
+                      continue
+                  print(f"::error file={f}::job '{name}' has no timeout-minutes")
+                  bad += 1
+          print(f"{bad} jobs without a timeout")
+          sys.exit(1 if bad else 0)
+          PY
+
   yaml:
     name: Parse YAML
     runs-on: ubuntu-latest

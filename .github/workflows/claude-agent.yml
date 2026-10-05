@@ -39,6 +39,9 @@ jobs:
         (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) &&
         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))
     runs-on: ubuntu-latest
+    # Long agent runs are expected; this caps a hung one rather than holding the
+    # runner for GitHub's six-hour default.
+    timeout-minutes: 30
     permissions:
       contents: write
       pull-requests: write

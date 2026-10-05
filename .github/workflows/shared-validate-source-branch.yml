@@ -28,6 +28,9 @@ jobs:
   validate:
     name: Validate Source Branch
     runs-on: ${{ inputs.runner }}
+    # String checks; a hung step should not hold the runner for GitHub's
+    # six-hour default in every consumer at once.
+    timeout-minutes: 5
     steps:
       - name: Get source branch
         id: branch
