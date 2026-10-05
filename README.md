@@ -813,15 +813,18 @@ does not change live rules until imported.
 | Ruleset | Target | Scope | Enforces |
 |---------|--------|-------|----------|
 | `ruleset-develop.json` | branch `develop` | `codehunters-ms-*`, `codehunters-sdk-*` | PR-only, 2 approvals, linear, squash, check `validate / PR Quality Gates` |
-| `ruleset-main.json` | branch `main` | `codehunters-ms-*`, `codehunters-sdk-*` | same as develop |
-| `ruleset-krakend.json` | branches `develop`+`main` | `codehunters-gw-*` | same, but check `validate / Test & Audit` (KrakenD pipeline) |
+| `ruleset-main.json` | branch `main` | `codehunters-ms-*`, `codehunters-sdk-*` | PR-only, 2 approvals, merge commit, same check |
+| `ruleset-krakend-develop.json` | branch `develop` | `codehunters-gw-*` | as `ruleset-develop.json`, but check `validate / Test & Audit` (KrakenD pipeline) |
+| `ruleset-krakend-main.json` | branch `main` | `codehunters-gw-*` | as `ruleset-main.json`, but check `validate / Test & Audit` |
 | `ruleset-tags.json` | tag `v*.*.*` | `codehunters-ms-*`, `codehunters-sdk-*`, `codehunters-gw-*` | immutable tags (creation/deletion/update/non-fast-forward) |
 | `ruleset-ci-templates-develop.json` | branch `develop` | this repository | PR-only, squash |
 | `ruleset-ci-templates-main.json` | branch `main` | this repository | PR-only, merge commit |
 
-The last two protect `ci-templates` itself rather than the consuming repositories, and they
-are the reason the merge method differs by branch here: `develop` squashes, `main` takes a
-merge commit. This repository has no back-merge — `main` accumulates merge commits that
+The last two protect `ci-templates` itself rather than the consuming repositories. Every
+stack uses the same rule as this repository: `develop` squashes, `main` takes a merge
+commit. That is why each stack has one ruleset per branch: the merge method is set on the
+`pull_request` rule, and one ruleset applies it to every branch it covers. See
+[`.github/ruleset/README.md`](.github/ruleset/README.md#why-main-takes-a-merge-commit-in-consumer-repositories-too). This repository has no back-merge — `main` accumulates merge commits that
 `develop` never sees, which is expected and not drift.
 
 - **Bypass:** repo admins (RepositoryRole 5) and **GitHub Actions** (Integration `15368`) bypass the tag
