@@ -78,6 +78,30 @@ on:
         type: string
         default: ''
 
+      # Vulnerability scan (Trivy) before the push
+      vulnerability_gate:
+        description: >-
+          Fail the job, before anything is pushed, on a fixable vulnerability at
+          or above scan_severity. false still scans and reports, without failing.
+        required: false
+        type: boolean
+        default: true
+      scan_severity:
+        description: 'Trivy severities the gate acts on'
+        required: false
+        type: string
+        default: 'CRITICAL,HIGH'
+      trivyignores:
+        description: 'Path to a Trivy ignore file. Empty means none.'
+        required: false
+        type: string
+        default: ''
+      ignore_policy:
+        description: 'Path to a Trivy Rego ignore policy. Empty means none.'
+        required: false
+        type: string
+        default: ''
+
     secrets:
       AWS_ACCESS_KEY_ID:
         required: true
@@ -117,7 +141,8 @@ jobs:
     name: Build and Push to ECR
     runs-on: ${{ inputs.runner }}
     environment: ${{ inputs.environment }}
-    timeout-minutes: 20
+    # Two builds and a Trivy DB download; 20 was sized for one build.
+    timeout-minutes: 30
 
     outputs:
       image_tag: ${{ steps.set-tag.outputs.tag }}
@@ -236,6 +261,79 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
 
+      # Scan before the push, not after. A pushed tag is already deployable — the
+      # EKS and EC2 jobs downstream pull it — so a gate after the push would stop
+      # this pipeline and leave the image in the registry. The first platform
+      # stands in for the rest: --load takes one platform, and a Dockerfile
+      # installs the same packages on each.
+      - name: Build image for scanning
+        env:
+          DOCKER_PLATFORM: ${{ inputs.docker_platform }}
+          DOCKERFILE_PATH: ${{ inputs.dockerfile_path }}
+        run: |
+          set -euo pipefail
+          docker buildx build \
+            --platform "${DOCKER_PLATFORM%%,*}" \
+            --no-cache \
+            --load \
+            -t local-scan:artifact \
+            "$DOCKERFILE_PATH"
+
+      # Report first with exit-code 0, gate second. If the gate ran alone its
+      # table would go to the output file and a failure would leave nothing
+      # readable in the log — which is precisely when somebody needs to read it.
+      - name: Scan image for vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: local-scan:artifact
+          scanners: vuln
+          vuln-type: os,library
+          severity: ${{ inputs.scan_severity }}
+          ignore-unfixed: true
+          trivyignores: ${{ inputs.trivyignores }}
+          ignore-policy: ${{ inputs.ignore_policy }}
+          format: table
+          output: trivy-artifact.txt
+          exit-code: '0'
+          timeout: '15m'
+
+      - name: Publish scan result
+        if: always()
+        env:
+          REPORT: trivy-artifact.txt
+          SCAN_SEVERITY: ${{ inputs.scan_severity }}
+          GATE: ${{ inputs.vulnerability_gate && 'blocking' || 'report only' }}
+        run: |
+          {
+            echo "### Vulnerability scan"
+            echo ""
+            echo "Severity: \`${SCAN_SEVERITY}\`, fixable only. Gate: ${GATE}."
+            echo ""
+            echo '```'
+            if [ -s "${REPORT}" ]; then
+              head -c 40000 "${REPORT}"
+            else
+              echo "No vulnerabilities at or above the gate."
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Vulnerability gate
+        if: inputs.vulnerability_gate
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: local-scan:artifact
+          scanners: vuln
+          vuln-type: os,library
+          severity: ${{ inputs.scan_severity }}
+          ignore-unfixed: true
+          trivyignores: ${{ inputs.trivyignores }}
+          ignore-policy: ${{ inputs.ignore_policy }}
+          format: table
+          exit-code: '1'
+          timeout: '15m'
+          skip-setup-trivy: true
+
       - name: Build and push to ECR
         id: push-ecr
         env:
@@ -252,9 +350,15 @@ jobs:
 
           echo "Building and pushing Docker image: $IMAGE_URI"
           echo "Platform: ${{ inputs.docker_platform }}"
+          # No --no-cache here: the scan build ran without cache moments ago, and
+          # reusing its layers is what makes the pushed image the scanned one.
+          # SBOM and provenance travel with the image as attestations, the same as
+          # shared-build-publish-image. Without them a consumer asking "what is in
+          # this image, and what built it" has to pull it apart. ECR and GHCR both
+          # store the resulting OCI index; docker and containerd ignore the
+          # attestation manifests when they pull.
           docker buildx build \
             --platform ${{ inputs.docker_platform }} \
-            --no-cache \
             $TAGS \
             --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
             --label "org.opencontainers.image.revision=${{ github.sha }}" \
@@ -268,6 +372,9 @@ jobs:
             --label "observability.service=$ECR_REPOSITORY" \
             --label "observability.environment=${{ inputs.environment }}" \
             --label "observability.domain=${ECR_REPOSITORY%%-*}" \
+            --sbom=true \
+            --provenance=mode=max \
+            --metadata-file "$RUNNER_TEMP/build-meta.json" \
             --push \
             ${{ inputs.dockerfile_path }}
 

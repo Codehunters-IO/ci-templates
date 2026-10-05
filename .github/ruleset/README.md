@@ -7,6 +7,7 @@ sent to the API.
 |------|-------|-----------|-----------|
 | `ruleset-ci-templates-develop.json` | **repo** | this repository, `develop` | **yes** — ruleset `22278207` |
 | `ruleset-ci-templates-main.json` | **repo** | this repository, `main` | **yes** — ruleset `22284847` |
+| `ruleset-ci-templates-hardening.json` | **repo** | this repository, `develop` + `main` | **yes** — ruleset `23976465` |
 | `ruleset-ci-templates-tags.json` | **repo** | this repository, `vX.Y.Z` tags | **yes** — ruleset `23957169` |
 | `ruleset-ci-templates-tag-alias.json` | **repo** | this repository, the `vX` alias | **yes** — ruleset `23957170` |
 | `ruleset-develop.json` | org | `codehunters-ms-*`, `codehunters-sdk-*`, `develop` | no |
@@ -36,11 +37,29 @@ gh api repos/Codehunters-IO/ci-templates/rules/branches/develop --jq '.[].type'
 The second command is the one that matters. A ruleset can exist and still not apply to the
 branch you care about.
 
-## Why the branches need two rulesets
+## Why the branches need three rulesets
+
+GitHub evaluates every ruleset that matches a ref and applies the union, so a branch's
+protection is the sum of the rulesets covering it, not whichever one you happen to open.
+The split is by *what varies*, so no policy is written down twice:
+
+| Ruleset | Holds | Because |
+|---|---|---|
+| `…-develop` / `…-main` | `deletion`, `non_fast_forward`, `pull_request` | `allowed_merge_methods` differs per branch |
+| `…-hardening` | `required_signatures`, `required_status_checks` | identical for both branches |
 
 `allowed_merge_methods` lives on the `pull_request` rule, and a rule applies to every ref
 its ruleset includes. One ruleset covering both branches cannot ask for squash on one and
-a merge commit on the other, so there is one per branch.
+a merge commit on the other, so that rule has to be stated once per branch. Everything
+that is the same for both is stated once, in the hardening ruleset — keeping the required
+checks in two files meant two lists to forget to update, and two `strict` flags that could
+disagree with no obvious winner.
+
+Check the union rather than any single file:
+
+```bash
+gh api repos/Codehunters-IO/ci-templates/rules/branches/develop --jq '[.[].type]|unique'
+```
 
 **`develop` is squash-only.** Feature branches land as a single commit. Nothing else is
 permitted.
@@ -140,17 +159,42 @@ bypass would mean no pull request could ever merge. The rules that carry the wei
 checks — none of which need a second person. Raise the count to 1 or 2 the day there is a
 second maintainer.
 
-**Repository admins can bypass.** An escape hatch for the case where a required check
-itself breaks. Without it a broken `ci.yml` would make the repository unmergeable with no
-way back.
+**Repository admins can bypass, but only through a pull request.** `bypass_mode` is
+`pull_request`, not `always`. The escape hatch is still there for the case that justifies
+it — a broken `ci.yml` would otherwise make the repository unmergeable with no way back,
+and an admin can still merge a pull request over a failing required check. What it no
+longer allows is a direct push to `develop` or `main` that skips the pull request
+entirely. The tag rulesets stay on `always`: a tag has no pull request to bypass through,
+so `pull_request` there would mean a bad tag could never be removed by anyone.
+
+**`required_signatures`.** Every commit landing on `develop` or `main` must carry a valid
+signature. In practice nothing has to change in anyone's workflow: commits reach these
+branches only as the squash or merge commit GitHub itself creates, and GitHub signs those
+with its own key. Two commits already in history predate the rule and are unsigned
+(`d4bab10`, `656c896`, June–July 2026); the rule is evaluated on push, so they are not
+affected and do not need rewriting.
+
+**`strict_required_status_checks_policy`.** A pull request must be up to date with its
+base before it can merge. Without it, checks that went green against an older `develop`
+still count, so two pull requests that pass independently can merge into a state neither
+was tested against. The cost is real — a merge now invalidates every other open pull
+request until it is updated — and is worth paying in a repository whose output is other
+repositories' CI.
+
+**Branch deletion on merge is a repository setting, not a rule.** `delete_branch_on_merge`
+is on, set with
+`gh api -X PATCH repos/Codehunters-IO/ci-templates -f delete_branch_on_merge=true`. No
+ruleset can express it, which is why it is recorded here rather than in one of these
+files.
 
 **No `required_linear_history`.** The org files set it; these do not, on purpose. It is
 incompatible with the merge commits the release flow produces on `main` — `16d4a51` and
 `cd6b2ac` are two.
 
 **Required checks must have run at least once.** The six contexts are jobs in
-`.github/workflows/ci.yml`. Applying a ruleset before that workflow has ever run leaves
-every pull request blocked on checks GitHub has never seen.
+`.github/workflows/ci.yml`, and they live in the hardening ruleset. Applying a ruleset
+before that workflow has ever run leaves every pull request blocked on checks GitHub has
+never seen.
 
 **The self-test jobs are deliberately not required.** `selftest-build-publish-image` and
 `selftest-validate-image-pr` are filtered by `paths`, so they do not start on a pull

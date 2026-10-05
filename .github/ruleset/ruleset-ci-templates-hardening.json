@@ -1,0 +1,52 @@
+{
+  "name": "ci-templates • Hardening (develop + main)",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "include": [
+        "refs/heads/develop",
+        "refs/heads/main"
+      ],
+      "exclude": []
+    }
+  },
+  "rules": [
+    {
+      "type": "required_signatures"
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": true,
+        "required_status_checks": [
+          {
+            "context": "Lint workflows"
+          },
+          {
+            "context": "Parse YAML"
+          },
+          {
+            "context": "Templates pin a release"
+          },
+          {
+            "context": "Forwarded inputs exist"
+          },
+          {
+            "context": "One SHA per action"
+          },
+          {
+            "context": "Commit messages / Lint Commit Messages"
+          }
+        ]
+      }
+    }
+  ],
+  "bypass_actors": [
+    {
+      "actor_id": 5,
+      "actor_type": "RepositoryRole",
+      "bypass_mode": "pull_request"
+    }
+  ]
+}

@@ -159,6 +159,27 @@ on:
         required: false
         type: string
         default: 'linux/arm64'
+      # Trivy scan of the image before it is pushed
+      vulnerability_gate:
+        description: 'Fail the artifact job on a fixable vulnerability at or above scan_severity. false reports only.'
+        required: false
+        type: boolean
+        default: true
+      scan_severity:
+        description: 'Trivy severities the vulnerability gate acts on'
+        required: false
+        type: string
+        default: 'CRITICAL,HIGH'
+      trivyignores:
+        description: 'Path to a Trivy ignore file. Empty means none.'
+        required: false
+        type: string
+        default: ''
+      ignore_policy:
+        description: 'Path to a Trivy Rego ignore policy. Empty means none.'
+        required: false
+        type: string
+        default: ''
 
       # Deploy options
       run_deploy:
@@ -481,6 +502,10 @@ jobs:
       runner: ${{ inputs.runner }}
       image_tag: ${{ inputs.image_tag }}
       docker_platform: ${{ inputs.docker_platform }}
+      vulnerability_gate: ${{ inputs.vulnerability_gate }}
+      scan_severity: ${{ inputs.scan_severity }}
+      trivyignores: ${{ inputs.trivyignores }}
+      ignore_policy: ${{ inputs.ignore_policy }}
       environment: ${{ inputs.environment }}
       # Reuse the JAR already built (and gated by passing tests) instead of recompiling.
       # build_from_source stays true only as a fallback when no artifact was uploaded.
@@ -511,6 +536,10 @@ jobs:
       java_distribution: ${{ inputs.java_distribution }}
       image_tag: ${{ inputs.image_tag }}
       docker_platform: ${{ inputs.docker_platform }}
+      vulnerability_gate: ${{ inputs.vulnerability_gate }}
+      scan_severity: ${{ inputs.scan_severity }}
+      trivyignores: ${{ inputs.trivyignores }}
+      ignore_policy: ${{ inputs.ignore_policy }}
       artifact_name: ${{ needs.build.outputs.artifact_name }}
       environment: ${{ inputs.environment }}
     secrets: inherit
