@@ -377,11 +377,15 @@ jobs:
             fi
           fi
 
-          # Remove only old images for this repo (keep the new one)
+          # Remove every image of this repo except the one about to start. By image
+          # ID, not by tag: an image pulled by digest has no tag, lists as
+          # repo:<none>, and `docker rmi repo:<none>` fails, so a tag filter would
+          # never remove anything once digest deploys start. -f because one ID can
+          # carry several refs (a tag and a digest), and rmi without it refuses.
           echo "Removing old images for ${REPO_NAME}..."
-          docker images "${AWS_ECR_URL}/${REPO_NAME}" --format '{{.Repository}}:{{.Tag}}' \
-            | grep -v ":${IMAGE_TAG}$" \
-            | xargs -r docker rmi 2>/dev/null || true
+          KEEP=$(docker image inspect --format '{{.Id}}' "${IMAGE_REF}")
+          docker images "${AWS_ECR_URL}/${REPO_NAME}" --no-trunc --format '{{.ID}}' \
+            | sort -u | grep -vxF "$KEEP" | xargs -r docker rmi -f 2>/dev/null || true
 
           # Start new container
           echo "Starting new container..."
@@ -473,16 +477,19 @@ jobs:
 
           # Post-deploy verification: if container is running w/ correct image, success regardless of transport error
           echo "Verifying container state..."
-          VERIFY_OUTPUT=$(ssh $SSH_COMMON_OPTS ${AWS_EC2_USER}@${AWS_EC2_HOST} "docker ps --filter name=^${REPO_NAME}$ --format '{{.Image}}|{{.Status}}' 2>/dev/null" || echo "")
+          # docker inspect, not docker ps: for a container created from repo@sha256:…
+          # `docker ps` prints the short image ID, while .Config.Image keeps the ref
+          # the container was created from, in both the digest and the tag form.
+          VERIFY_OUTPUT=$(ssh $SSH_COMMON_OPTS ${AWS_EC2_USER}@${AWS_EC2_HOST} "docker inspect --format '{{.Config.Image}}|{{.State.Status}}' '${REPO_NAME}' 2>/dev/null" || echo "")
           RUNNING_IMAGE=$(echo "$VERIFY_OUTPUT" | cut -d'|' -f1)
           RUNNING_STATUS=$(echo "$VERIFY_OUTPUT" | cut -d'|' -f2)
           echo "Container image: '$RUNNING_IMAGE'"
           echo "Container status: '$RUNNING_STATUS'"
 
-          # -F matches the '@sha256:' of a digest ref literally, and a tag ref
-          # still matches. It is not anchored at the end, so a tag that is a
-          # prefix of the running one would pass; commit-SHA tags have fixed length.
-          if echo "$RUNNING_IMAGE" | grep -qF "${IMAGE_REF#"${AWS_ECR_URL}/"}"; then
+          # Exact equality, not a pattern: a tag 1.2.3 must not match 1.2.30, and
+          # '@sha256:' needs no escaping. The status check keeps what `docker ps`
+          # used to imply, since inspect also answers for a stopped container.
+          if [ "$RUNNING_IMAGE" = "$IMAGE_REF" ] && [ "$RUNNING_STATUS" = "running" ]; then
             echo "Container is running with target image."
             echo "status=success" >> $GITHUB_OUTPUT
           elif [ "$DEPLOY_RC" -eq 0 ]; then
