@@ -352,6 +352,11 @@ jobs:
           echo "Platform: ${{ inputs.docker_platform }}"
           # No --no-cache here: the scan build ran without cache moments ago, and
           # reusing its layers is what makes the pushed image the scanned one.
+          # SBOM and provenance travel with the image as attestations, the same as
+          # shared-build-publish-image. Without them a consumer asking "what is in
+          # this image, and what built it" has to pull it apart. ECR and GHCR both
+          # store the resulting OCI index; docker and containerd ignore the
+          # attestation manifests when they pull.
           docker buildx build \
             --platform ${{ inputs.docker_platform }} \
             $TAGS \
@@ -367,6 +372,9 @@ jobs:
             --label "observability.service=$ECR_REPOSITORY" \
             --label "observability.environment=${{ inputs.environment }}" \
             --label "observability.domain=${ECR_REPOSITORY%%-*}" \
+            --sbom=true \
+            --provenance=mode=max \
+            --metadata-file "$RUNNER_TEMP/build-meta.json" \
             --push \
             ${{ inputs.dockerfile_path }}
 
