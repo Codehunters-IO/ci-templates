@@ -12,6 +12,14 @@ on:
         description: 'Docker image tag to deploy'
         required: true
         type: string
+      image_digest:
+        description: >-
+          Digest to deploy (sha256:…). When set, the deploy pins the image by
+          digest and the tag is only a label. Empty deploys by tag, which is what
+          a promotion with no artifact job in the run does.
+        required: false
+        type: string
+        default: ''
       environment:
         description: 'GitHub environment (develop, prod)'
         required: false
@@ -195,6 +203,7 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
           IMAGE_TAG: ${{ inputs.image_tag }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
           APP_PORT: ${{ secrets.AWS_APP_PORT }}
           REPO_NAME: ${{ steps.repo.outputs.name }}
           ENVIRONMENT: ${{ inputs.environment }}
@@ -209,6 +218,12 @@ jobs:
           if [ "${INJECT_AWS_CREDENTIALS}" = "true" ]; then
             echo "::warning::inject_aws_credentials is on: this deploy puts the pipeline's AWS keys inside the application container. They can push to ECR. Move to an EC2 instance profile or a scoped runtime key; this input is removed in v2."
           fi
+
+          # Computed on the runner and shipped in deploy.env: the compose file and
+          # the pull live in deploy.sh, which runs on the host and sees only that file.
+          IMAGE_REPO="${AWS_ECR_URL}/${REPO_NAME}"
+          IMAGE_REF="${IMAGE_REPO}:${IMAGE_TAG}"
+          if [ -n "${IMAGE_DIGEST}" ]; then IMAGE_REF="${IMAGE_REPO}@${IMAGE_DIGEST}"; fi
 
           # Setup SSH
           mkdir -p ~/.ssh
@@ -281,7 +296,7 @@ jobs:
           {
             echo "services:"
             echo "  ${REPO_NAME}:"
-            echo "    image: ${AWS_ECR_URL}/${REPO_NAME}:${IMAGE_TAG}"
+            echo "    image: ${IMAGE_REF}"
             echo "    platform: ${DOCKER_PLATFORM}"
             echo "    container_name: ${REPO_NAME}"
             echo "    restart: unless-stopped"
@@ -349,7 +364,7 @@ jobs:
 
           # Pull latest image from ECR
           echo "Pulling latest image..."
-          docker pull ${AWS_ECR_URL}/${REPO_NAME}:${IMAGE_TAG}
+          docker pull "${IMAGE_REF}"
 
           # Stop existing container if running (force-kill fallback if hung)
           if docker ps -aq -f name=${REPO_NAME} 2>/dev/null | grep -q .; then
@@ -421,6 +436,7 @@ jobs:
             {
               printf 'REPO_NAME=%q\n'               "$REPO_NAME"
               printf 'IMAGE_TAG=%q\n'               "$IMAGE_TAG"
+              printf 'IMAGE_REF=%q\n'               "$IMAGE_REF"
               printf 'AWS_ECR_URL=%q\n'             "$AWS_ECR_URL"
               printf 'AWS_ACCESS_KEY_ID=%q\n'       "$AWS_ACCESS_KEY_ID"
               printf 'AWS_SECRET_ACCESS_KEY=%q\n'   "$AWS_SECRET_ACCESS_KEY"
@@ -463,7 +479,10 @@ jobs:
           echo "Container image: '$RUNNING_IMAGE'"
           echo "Container status: '$RUNNING_STATUS'"
 
-          if echo "$RUNNING_IMAGE" | grep -q "${REPO_NAME}:${IMAGE_TAG}$"; then
+          # -F matches the '@sha256:' of a digest ref literally, and a tag ref
+          # still matches. It is not anchored at the end, so a tag that is a
+          # prefix of the running one would pass; commit-SHA tags have fixed length.
+          if echo "$RUNNING_IMAGE" | grep -qF "${IMAGE_REF#"${AWS_ECR_URL}/"}"; then
             echo "Container is running with target image."
             echo "status=success" >> $GITHUB_OUTPUT
           elif [ "$DEPLOY_RC" -eq 0 ]; then

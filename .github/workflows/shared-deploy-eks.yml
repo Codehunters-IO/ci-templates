@@ -12,6 +12,14 @@ on:
         description: 'Docker image tag to deploy'
         required: true
         type: string
+      image_digest:
+        description: >-
+          Digest to deploy (sha256:…). When set, the deploy pins the image by
+          digest and the tag is only a label. Empty deploys by tag, which is what
+          a promotion with no artifact job in the run does.
+        required: false
+        type: string
+        default: ''
       environment:
         description: 'GitHub environment (develop, prod)'
         required: false
@@ -152,7 +160,7 @@ jobs:
 
     outputs:
       status: ${{ steps.deploy.outputs.status }}
-      image: ${{ steps.setup.outputs.image_uri }}
+      image: ${{ steps.setup.outputs.image_ref }}
 
     steps:
       - name: Checkout
@@ -176,6 +184,8 @@ jobs:
         id: setup
         env:
           AWS_ECR_URL: ${{ secrets.AWS_ECR_URL }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           REPO_NAME="${{ github.repository }}"
           REPO_NAME="${REPO_NAME##*/}"
@@ -190,12 +200,18 @@ jobs:
             CTR_NAME="$REPO_NAME"
           fi
 
-          IMAGE_URI="${AWS_ECR_URL}/${REPO_NAME}:${{ inputs.image_tag }}"
+          IMAGE_REPO="${AWS_ECR_URL}/${REPO_NAME}"
+          IMAGE_URI="${IMAGE_REPO}:${IMAGE_TAG}"
+          # Helm keeps IMAGE_URI: charts take repository and tag separately, and a
+          # digest ref split on ':' is garbage. kubectl takes the pinned ref.
+          IMAGE_REF="${IMAGE_REPO}:${IMAGE_TAG}"
+          if [ -n "${IMAGE_DIGEST}" ]; then IMAGE_REF="${IMAGE_REPO}@${IMAGE_DIGEST}"; fi
 
           echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
           echo "deploy_name=$DEPLOY_NAME" >> $GITHUB_OUTPUT
           echo "container_name=$CTR_NAME" >> $GITHUB_OUTPUT
           echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
+          echo "image_ref=$IMAGE_REF" >> "$GITHUB_OUTPUT"
 
       - name: Update kubeconfig
         run: |
@@ -252,7 +268,7 @@ jobs:
         if: "!inputs.use_helm && steps.check-deploy.outputs.exists == 'true'"
         run: |
           kubectl set image deployment/${{ steps.setup.outputs.deploy_name }} \
-            ${{ steps.setup.outputs.container_name }}=${{ steps.setup.outputs.image_uri }} \
+            ${{ steps.setup.outputs.container_name }}=${{ steps.setup.outputs.image_ref }} \
             -n ${{ inputs.namespace }}
 
       - name: Create new deployment
@@ -260,7 +276,7 @@ jobs:
         env:
           DEPLOY_NAME: ${{ steps.setup.outputs.deploy_name }}
           CTR_NAME: ${{ steps.setup.outputs.container_name }}
-          IMAGE_URI: ${{ steps.setup.outputs.image_uri }}
+          IMAGE_REF: ${{ steps.setup.outputs.image_ref }}
           NAMESPACE: ${{ inputs.namespace }}
           CONTAINER_ENV_VARS: ${{ inputs.container_env_vars }}
         run: |
@@ -299,7 +315,7 @@ jobs:
               spec:
                 containers:
                   - name: ${CTR_NAME}
-                    image: ${IMAGE_URI}
+                    image: ${IMAGE_REF}
                     ports:
                       - containerPort: ${{ inputs.container_port }}
                     resources:
@@ -352,6 +368,8 @@ jobs:
       - name: Set deploy status
         id: deploy
         if: always()
+        env:
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
         run: |
           if kubectl get deployment ${{ steps.setup.outputs.deploy_name }} \
             -n ${{ inputs.namespace }} -o jsonpath='{.status.readyReplicas}' 2>/dev/null | grep -q "[1-9]"; then
@@ -368,5 +386,6 @@ jobs:
           echo "| **Namespace** | ${{ inputs.namespace }} |" >> $GITHUB_STEP_SUMMARY
           echo "| **Deployment** | ${{ steps.setup.outputs.deploy_name }} |" >> $GITHUB_STEP_SUMMARY
           echo "| **Image** | ${{ steps.setup.outputs.image_uri }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Digest** | ${IMAGE_DIGEST:-none (deployed by tag)} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| **Replicas** | ${{ inputs.replicas }} |" >> $GITHUB_STEP_SUMMARY
           echo "| **Environment** | ${{ inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
