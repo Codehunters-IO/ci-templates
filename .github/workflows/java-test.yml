@@ -381,7 +381,9 @@ jobs:
           # Search in both Gradle and Maven output directories
           for dir in "build/test-results" "target/surefire-reports"; do
             if [ -d "$dir" ]; then
-              for file in $(find "$dir" -name "*.xml" 2>/dev/null); do
+              # NUL-delimited: report paths come from test class names, and a word-split
+              # `for` breaks on the first one with a space in a parameterised display name.
+              while IFS= read -r -d '' file; do
                 if [ -f "$file" ]; then
                   FILE_TESTS=$(grep -oP 'tests="\K[0-9]+' "$file" 2>/dev/null | head -1 || echo "0")
                   FILE_FAILURES=$(grep -oP 'failures="\K[0-9]+' "$file" 2>/dev/null | head -1 || echo "0")
@@ -395,7 +397,7 @@ jobs:
                   FAILED=$((FAILED + TOTAL_FAILED))
                   SKIPPED=$((SKIPPED + FILE_SKIPPED))
                 fi
-              done
+              done < <(find "$dir" -name "*.xml" -print0 2>/dev/null)
             fi
           done
 

@@ -187,6 +187,10 @@ jobs:
           fi
 
           echo "Bringing up stack on host..."
+          # Unquoted on purpose: DEPLOY_DIR and the network/volume lists are the
+          # runner's values and must be expanded here; anything meant for the host
+          # is escaped as \$var below.
+          # shellcheck disable=SC2087
           ssh $SSH_OPTS "${AWS_EC2_USER}@${AWS_EC2_HOST}" bash -s <<REMOTE
           set -Eeo pipefail
           cd '${DEPLOY_DIR}'
