@@ -979,6 +979,11 @@ The first entry of `docker_platform` is what gets scanned, because `--load`
 takes one platform. The push reuses that build's layers, so the image pushed is
 the image scanned.
 
+The pushed image also carries an SBOM and SLSA provenance (`mode=max`) as
+attestations, as `shared-build-publish-image` already does. That makes each tag
+an OCI index instead of a bare manifest. `docker pull`, EKS and ECS resolve it
+transparently, so callers need no change.
+
 **Turning it on is a behaviour change for existing consumers.** A service that
 already ships an image with a fixable HIGH starts failing at the artifact job.
 To roll out without blocking a release, set `vulnerability_gate: false`: the
