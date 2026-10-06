@@ -22,8 +22,8 @@ on:
         type: boolean
         default: true
 
-# Deploys on one ref run one at a time, in order. Never cancel one mid-flight:
-# a half-applied deploy is worse than a late one.
+# Runs on one ref queue and run one at a time. Never cancel one mid-flight:
+# a half-finished cleanup or scan upload is worse than a late one.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false

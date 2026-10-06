@@ -142,15 +142,34 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-      # A deploy template without it lets two merges deploy at once, and the
-      # older one can finish last. Cancelling is a per-template choice; having
-      # a group is not.
+      # A deploy template without a group lets two merges deploy at once, and
+      # the older one can finish last. A group alone doesn't say which runs may
+      # be cancelled: a stale validation run should go, a deploy cancelled
+      # mid-flight leaves a service half-shipped. "Never cancel a deploy" is
+      # the property that matters, so it is asserted below, not just the key.
       - name: Check
         run: |
           python3 - <<'PY'
-          import glob, sys, yaml
-          bad = [f for f in sorted(glob.glob('templates/*.yml')) if 'concurrency' not in (yaml.safe_load(open(f)) or {})]
-          for f in bad: print(f"::error file={f}::no top-level concurrency")
+          import glob, re, sys, yaml
+
+          cancels_stale = re.compile(r'(java-validate|-feature-build|-pr-develop|contracts-pr-full|shared-validate-image-pr)\.yml$')
+
+          bad = []
+          for f in sorted(glob.glob('templates/*.yml')):
+              doc = yaml.safe_load(open(f)) or {}
+              concurrency = doc.get('concurrency')
+              if concurrency is None:
+                  bad.append(f"::error file={f}::no top-level concurrency")
+                  continue
+              cancel_in_progress = concurrency.get('cancel-in-progress')
+              if cancels_stale.search(f):
+                  if cancel_in_progress is not True:
+                      bad.append(f"::error file={f}::{f}: a validation template should cancel stale runs")
+              elif cancel_in_progress is not False:
+                  bad.append(f"::error file={f}::{f}: a deploy/publish template must not cancel in progress")
+
+          for line in bad:
+              print(line)
           sys.exit(1 if bad else 0)
           PY
 
