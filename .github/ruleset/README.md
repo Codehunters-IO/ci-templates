@@ -214,12 +214,17 @@ files.
 do not, on purpose. It is incompatible with the merge commits the release flow produces on
 `main` — `16d4a51` and `cd6b2ac` are two.
 
-**Required checks must have run at least once.** The six contexts are jobs in
-`.github/workflows/ci.yml`, and they live in the hardening ruleset. Applying a ruleset
+**Required checks must have run at least once.** The nine contexts are jobs in
+`.github/workflows/ci.yml`, and they live in the hardening ruleset. Three of them were
+added after the jobs had run on `develop`: `Every runnable job has a timeout`, `Templates
+declare concurrency` and `Script self-tests`. Until then they were advisory, so a pull
+request could merge with a job missing its timeout or a deploy template set to cancel. Applying a ruleset
 before that workflow has ever run leaves every pull request blocked on checks GitHub has
 never seen.
 
-**The self-test jobs are deliberately not required.** `selftest-build-publish-image` and
+**The image self-test workflows are deliberately not required.** This is not the same
+as `Script self-tests`, which is a `ci.yml` job with no `paths` filter and runs on every
+pull request. `selftest-build-publish-image` and
 `selftest-validate-image-pr` are filtered by `paths`, so they do not start on a pull
 request that touches nothing under `.github/selftest/**` or the two workflows they
 exercise. A required check that never starts is a pull request that never merges, so
