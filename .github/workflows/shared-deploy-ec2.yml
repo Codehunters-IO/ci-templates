@@ -183,6 +183,10 @@ jobs:
           # Login to ECR
           echo "Logging in to ECR..."
           aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ECR_URL}
+          # The keys did their job: docker pull uses the login above, not these. Unset them so
+          # a container_env_vars line that names one (or interpolates it) cannot pass the
+          # build-plane keys, which can push to ECR, into the application container.
+          unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
 
           # Decode env vars from base64
           CONTAINER_ENV_VARS=$(echo "${CONTAINER_ENV_VARS_B64}" | base64 -d)
@@ -337,8 +341,8 @@ jobs:
               printf 'IMAGE_TAG=%q\n'               "$IMAGE_TAG"
               printf 'IMAGE_REF=%q\n'               "$IMAGE_REF"
               printf 'AWS_ECR_URL=%q\n'             "$AWS_ECR_URL"
-              # The keys stay on the host side: deploy.sh needs them for the ECR login
-              # and pull, and the compose file names no variable that would pass them on.
+              # The keys stay on the host side: deploy.sh needs them for the ECR login,
+              # then unsets them before compose runs, so nothing can pass them on.
               printf 'AWS_ACCESS_KEY_ID=%q\n'       "$AWS_ACCESS_KEY_ID"
               printf 'AWS_SECRET_ACCESS_KEY=%q\n'   "$AWS_SECRET_ACCESS_KEY"
               printf 'AWS_REGION=%q\n'              "$AWS_REGION"

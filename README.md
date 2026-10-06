@@ -542,7 +542,8 @@ a mode-600 `.aws.env` behind an opt-in input; v2 stops sending them at all.
 
 v2 never puts the pipeline credentials in the container. They are build-plane
 keys that can push to ECR, so they stay on the host side for the ECR login and
-pull, and nothing in the compose file passes them on. The application gets its
+are unset before `docker compose` runs: not even a `container_env_vars` line
+that names them can pass them on. The application gets its
 own credentials one of two ways:
 
 - **An EC2 instance profile.** Give the instance an IAM role and the

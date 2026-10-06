@@ -8,7 +8,7 @@
 
 ## Consumer impact
 
-<!-- Everything here ships to every repository pinned to @v1 on the next release. -->
+<!-- Everything here ships to every repository pinned to the floating major alias (@v2 today) on the next release. -->
 
 - [ ] No change for existing callers (new optional input, internal refactor, docs)
 - [ ] Behaviour changes for existing callers — describe the migration below
@@ -18,11 +18,11 @@
 
 ## Version
 
-<!-- Every push to main cuts a release and moves the floating v1 alias. -->
+<!-- Every push to main cuts a release and moves the floating major alias (v2 today). -->
 
 - [ ] patch — fix, no interface change
 - [ ] minor — new optional input, new workflow
-- [ ] major — removed or renamed input, changed default, removed workflow (freezes v1)
+- [ ] major — removed or renamed input, changed default, removed workflow (freezes the current major)
 
 ## Verification
 

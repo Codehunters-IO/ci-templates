@@ -129,7 +129,7 @@ jobs:
           # the default branch in every consumer. Releases are what consumers pin.
           if BAD=$(grep -rnE 'uses:.*ci-templates/\.github/workflows/.*@' templates/ \
                    | grep -vE '@v[0-9]+$'); then
-            echo "::error::Templates must pin a release tag (@v1), not a branch or SHA."
+            echo "::error::Templates must pin a release tag (@vN, e.g. @v2), not a branch or SHA."
             echo "$BAD" | sed 's/^/  /'
             exit 1
           fi
