@@ -29,7 +29,7 @@ jobs:
     # A release tag, never @main. Consumers copy this file verbatim, so the ref
     # named here is what runs in their repository — @main would push every
     # commit of this repo straight into them with no review and no version bump.
-    uses: Codehunters-IO/ci-templates/.github/workflows/shared-validate-image-pr.yml@v1
+    uses: Codehunters-IO/ci-templates/.github/workflows/shared-validate-image-pr.yml@v2
     with:
       # Validate every architecture the publish workflow ships. Validating only
       # amd64 while publishing a multi-arch manifest is how an arm64-only break

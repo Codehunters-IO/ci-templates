@@ -35,7 +35,7 @@ concurrency:
 
 jobs:
   validate:
-    uses: <org>/ci-templates/.github/workflows/java-pr-pipeline.yml@v1
+    uses: <org>/ci-templates/.github/workflows/java-pr-pipeline.yml@v2
     with:
       run_commit_lint: true
       run_test: true
