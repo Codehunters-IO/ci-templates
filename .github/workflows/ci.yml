@@ -53,19 +53,39 @@ jobs:
 
       # A job without timeout-minutes holds a runner for six hours when a step
       # hangs, and in a reusable workflow it does so in every consumer at once.
-      # Jobs that only `uses:` another workflow cannot set one and are skipped.
+      # A value must be an int from 1 to 360, or an expression (e.g. the
+      # `${{ inputs.timeout_minutes }}` a reusable workflow forwards from its
+      # caller) -- 0, out-of-range and non-numeric values hang or misfire just
+      # the same. Jobs that only `uses:` another workflow cannot set one and
+      # are skipped. templates/ is scanned too: consumers copy those jobs
+      # verbatim, so a missing timeout there ships straight into every repo
+      # that copies the file.
       - name: Check
         run: |
           python3 - <<'PY'
           import glob, sys, yaml
+
+          expr_prefix = '$' + '{{'  # split so actionlint's own expression lexer doesn't trip on this literal
+
+          def is_valid(value):
+              if isinstance(value, str):
+                  return value.startswith(expr_prefix)
+              return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 360
+
           bad = 0
-          for f in sorted(glob.glob('.github/workflows/*.yml')):
+          for f in sorted(glob.glob('.github/workflows/*.yml') + glob.glob('templates/*.yml')):
               for name, job in (yaml.safe_load(open(f)).get('jobs') or {}).items():
-                  if 'uses' in job or 'timeout-minutes' in job:
+                  if 'uses' in job:
                       continue
-                  print(f"::error file={f}::job '{name}' has no timeout-minutes")
-                  bad += 1
-          print(f"{bad} jobs without a timeout")
+                  if 'timeout-minutes' not in job:
+                      print(f"::error file={f}::job '{name}' has no timeout-minutes")
+                      bad += 1
+                      continue
+                  value = job['timeout-minutes']
+                  if not is_valid(value):
+                      print(f"::error file={f}::job '{name}' has timeout-minutes {value}; expected 1-360 or an expression")
+                      bad += 1
+          print(f"{bad} jobs without a valid timeout")
           sys.exit(1 if bad else 0)
           PY
 
