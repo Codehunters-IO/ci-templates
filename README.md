@@ -356,7 +356,7 @@ unaffected by all of this.
 
 | Kind | Name | Replacement |
 |---|---|---|
-| Workflow | the 11 `[DEPRECATED]` workflows in the table above | the `shared-*` workflow beside each |
+| Workflow | `java-commit-lint.yml`, `krakend-commit-lint.yml`, `react-commit-lint.yml`, `java-delete-branch.yml`, `krakend-delete-branch.yml`, `react-delete-branch.yml`, `java-artifact-docker-ecr.yml`, `krakend-artifact-docker-ecr.yml`, `java-deploy-ec2.yml`, `krakend-deploy-ec2.yml`, `java-semver.yml` — the 11 `[DEPRECATED]` workflows | the `shared-*` workflow beside each, per the table above |
 | Input | `inject_aws_credentials` (both EC2 deploys, four main pipelines) | an EC2 instance profile, or a scoped key via `container_env_vars` |
 
 v2 removes exactly this list and nothing else. Anything added to it later is
@@ -540,7 +540,10 @@ Two things this does **not** fix, both worth knowing:
   change substitution semantics for every consumer at once, so it is a separate
   decision rather than a side effect of this one.
 
-The real fix for the credentials is to stop shipping them:
+The real fix for the credentials is to stop shipping them. `inject_aws_credentials`
+defaults to `false`, so leaving it unset already does that — no secrets go
+onto the box. The snippet below is only for a caller that currently sets it
+to `true` and wants back to that default:
 
 ```yaml
 with:
@@ -549,8 +552,7 @@ with:
 
 Give the instance an IAM role and the application reads short-lived credentials
 from the instance metadata service, with no long-lived key on the box at all.
-The input defaults to `false` and warns at run time when set; it is going
-away in v2.
+The input warns at run time when set to `true`; it is going away in v2.
 
 ### WireGuard VPN (`deploy_target: ec2-vpn` only)
 
