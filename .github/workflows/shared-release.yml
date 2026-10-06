@@ -57,6 +57,9 @@ jobs:
   release:
     name: Create Release Branch
     runs-on: ubuntu-latest
+    # Branch, semver and PR create; a hung step should not hold the runner for
+    # GitHub's six-hour default in every consumer at once.
+    timeout-minutes: 10
 
     outputs:
       version: ${{ steps.semver.outputs.version }}
