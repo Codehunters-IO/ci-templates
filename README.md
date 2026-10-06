@@ -84,6 +84,12 @@ feature/* ──► build
 3. Configure the required secrets (see below) and declare the GitHub Environments your
    stack's templates reference — they differ per stack, see [Environments](#environments).
 
+4. Keep the `concurrency:` block at the top of each template. Validation
+   templates cancel a superseded run; deploy templates queue instead, so two
+   quick merges deploy in order and never in parallel. GitHub keeps one pending
+   run per group, so with three merges in quick succession the middle one is
+   skipped. That is intended: the newest commit is the one that should land.
+
 ## Templates by stack
 
 Not every stack ships the same set, and the gaps are real rather than oversights waiting
