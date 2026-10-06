@@ -27,6 +27,14 @@ on:
         required: true
         type: string
 
+# Deploys on one ref run one at a time, in order. Never cancel one mid-flight:
+# a half-applied deploy is worse than a late one.
+# A promotion waiting at the prod approval gate is replaced if a later
+# version is dispatched behind it; re-dispatch it if it was still wanted.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write   # create tag + GitHub Release
   id-token: write

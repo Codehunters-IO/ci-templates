@@ -84,6 +84,17 @@ feature/* ──► build
 3. Configure the required secrets (see below) and declare the GitHub Environments your
    stack's templates reference — they differ per stack, see [Environments](#environments).
 
+4. Keep the `concurrency:` block where each template puts it: after `on:`,
+   above `permissions:` (or above `jobs:` when there is none). Validation
+   templates cancel a superseded run; deploy, publish, cleanup and scan
+   templates queue instead — on merges, schedules and `workflow_dispatch`
+   alike, the newer run of the same workflow on the same ref is what lands,
+   and three runs in quick succession skip the middle pending one.
+
+   `contracts-pr-develop.yml` and `contracts-pr-full.yml` share the name
+   `PR Validation`, so installing both cancels each other's runs via that
+   shared group key — install one, or give one a different `name:`.
+
 ## Templates by stack
 
 Not every stack ships the same set, and the gaps are real rather than oversights waiting

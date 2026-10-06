@@ -16,6 +16,11 @@ on:
       - 'scripts/**'
       - '.github/workflows/**'
 
+# A newer push to the same PR or branch makes this run's answer stale.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
