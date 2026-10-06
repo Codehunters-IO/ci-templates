@@ -13,6 +13,12 @@ on:
     branches:
       - develop
 
+# Deploys on one ref run one at a time, in order. Never cancel one mid-flight:
+# a half-applied deploy is worse than a late one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
@@ -23,7 +29,7 @@ jobs:
     with:
       # Node comes from the image, not from a per-run download. The tag pins
       # the version a repository declares in `engines` / `.nvmrc`.
-      container_image: 'ghcr.io/codehunters-io/ci-base-images:1.0.0-node'
+      container_image: 'ghcr.io/codehunters-io/ci-base-images:1.3.3-node'
       run_build: true
       run_test: true
       run_coverage: false

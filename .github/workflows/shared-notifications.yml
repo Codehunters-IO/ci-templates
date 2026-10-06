@@ -66,9 +66,9 @@ jobs:
 
           # --- classify PR vs deploy, pick channel ---
           if [ "$EVENT_NAME" = pull_request ]; then
-            KIND=pr;     CHANNEL="${CHANNEL_PR:-$CHANNEL_DEFAULT}"; EMOJI="🔀"
+            KIND="pr";     CHANNEL="${CHANNEL_PR:-$CHANNEL_DEFAULT}"; EMOJI="🔀"
           else
-            KIND=deploy; CHANNEL="${CHANNEL_DEPLOY:-$CHANNEL_DEFAULT}"; EMOJI=""
+            KIND="deploy"; CHANNEL="${CHANNEL_DEPLOY:-$CHANNEL_DEFAULT}"; EMOJI=""
           fi
           if [ -z "$CHANNEL" ]; then
             echo "::warning::No Slack channel variable set for kind=$KIND, skipping"

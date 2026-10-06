@@ -21,10 +21,12 @@ fails=0
 case_() {
   local name=$1 expect=$2; shift 2
   local rc=0
+  # -eo pipefail: the step now runs under `shell: bash`, which GitHub resolves to
+  # `bash --noprofile --norc -eo pipefail {0}`. Match those flags, not bare `bash -c`.
   env -i PATH="$PATH" GITHUB_STEP_SUMMARY=/dev/null \
       LINE_THRESHOLD=0 INSTR_THRESHOLD=0 BRANCH_THRESHOLD=0 \
       LINE_PCT= INSTR_PCT= BRANCH_PCT= HAS_JACOCO_LOG=false \
-      "$@" bash -c "$SCRIPT" >/dev/null 2>&1 || rc=$?
+      "$@" bash -eo pipefail -c "$SCRIPT" >/dev/null 2>&1 || rc=$?
   local got=pass; [ "$rc" -eq 0 ] || got=fail
   if [ "$got" = "$expect" ]; then echo "ok   $name"; else echo "FAIL $name (expected $expect, got $got)"; fails=$((fails+1)); fi
 }

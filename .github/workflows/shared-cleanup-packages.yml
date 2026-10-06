@@ -21,6 +21,17 @@ name: Shared - Cleanup Container Packages
 # reachable from a tag as untouchable no matter how it is listed. Only versions
 # that are both untagged and unreferenced are candidates.
 #
+# `keep_releases` extends that to tagged versions, for packages that publish a
+# semver release per variant and want only the last few. Off by default (0).
+# Set to N, it keeps the N newest releases and retires every other tagged
+# version whose tags are all retirable: the semver tags of an older release
+# (`1.2.0`, `1.2.0-graalvm`), aliases whose `X.Y` or `X` no kept release
+# shares (`1.2`, `1.2-graalvm`), and `sha-*` build tags. A version with any
+# other tag — `latest`, a rolling variant tag, a branch tag, anything this does
+# not recognise — stays. Retired versions then go through the same walk as
+# everything else: what a kept tag can reach survives, the rest of each retired
+# image goes with it.
+#
 # `dry_run` defaults to true, and the plan is printed on every run including the
 # deleting one.
 
@@ -46,6 +57,15 @@ on:
         required: false
         type: number
         default: 10
+      keep_releases:
+        description: >-
+          Semver releases to keep, newest first; older releases and `sha-*`
+          build tags are retired with their images. 0 (default) touches no
+          tagged version. A suffix after X.Y.Z is read as a variant, not a
+          pre-release.
+        required: false
+        type: number
+        default: 0
       dry_run:
         description: 'Only report what would be deleted. Default true — deletion is opt-in.'
         required: false
@@ -72,8 +92,13 @@ on:
           Untagged versions that a tagged manifest still points at - platform
           and attestation manifests of live images. Never deletable.
         value: ${{ jobs.cleanup.outputs.referenced }}
+      retired:
+        description: 'Tagged versions retired by keep_releases'
+        value: ${{ jobs.cleanup.outputs.retired }}
       deletable:
-        description: 'Untagged, unreferenced, and beyond min_versions_to_keep'
+        description: >-
+          Retired images plus untagged, unreferenced versions beyond
+          min_versions_to_keep
         value: ${{ jobs.cleanup.outputs.deletable }}
 
 permissions:
@@ -90,6 +115,7 @@ jobs:
       tagged: ${{ steps.plan.outputs.tagged }}
       untagged: ${{ steps.plan.outputs.untagged }}
       referenced: ${{ steps.plan.outputs.referenced }}
+      retired: ${{ steps.plan.outputs.retired }}
       deletable: ${{ steps.plan.outputs.deletable }}
 
     steps:
@@ -113,13 +139,15 @@ jobs:
           OWNER: ${{ steps.resolve.outputs.owner }}
           PKG: ${{ steps.resolve.outputs.package }}
           KEEP: ${{ inputs.min_versions_to_keep }}
+          KEEP_RELEASES: ${{ inputs.keep_releases }}
         run: |
           set -euo pipefail
           python3 - <<'PY' | tee plan.log
-          import base64, json, os, subprocess, sys, urllib.error, urllib.request
+          import base64, json, os, re, subprocess, sys, urllib.error, urllib.request
 
           owner, pkg = os.environ["OWNER"], os.environ["PKG"]
           keep = int(os.environ["KEEP"])
+          keep_releases = int(os.environ["KEEP_RELEASES"])
           repo_path = f"{owner}/{pkg}".lower()
 
           def api(path, *args):
@@ -168,9 +196,49 @@ jobs:
                   _cache[digest] = json.load(urllib.request.urlopen(r, timeout=30))
               return _cache[digest]
 
-          # Everything reachable from a tag. One pass is enough in practice, but
-          # the walk is transitive so a nested index cannot slip through.
-          referenced, queue, seen = set(), [v["name"] for v in versions if v["tags"]], set()
+          # Retirement by release. A version is retired only when every tag it
+          # carries is retirable, so one unrecognised or kept tag protects it.
+          # Aliases (`1.2`, `1-graalvm`) count only when they belong to a
+          # release that exists, which keeps a tag like `2026-10-05` from being
+          # read as major 2026 and retired.
+          SEMVER = re.compile(r"^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-.+)?$")
+
+          def semver(tag):
+              m = SEMVER.match(tag)
+              return tuple(None if g is None else int(g) for g in m.groups()) if m else None
+
+          releases = sorted({s for v in versions for t in v["tags"]
+                             if (s := semver(t)) and s[2] is not None}, reverse=True)
+          kept = set(releases[:keep_releases])
+          known_minor = {r[:2] for r in releases}
+          known_major = {r[0] for r in releases}
+          kept_minor = {r[:2] for r in kept}
+          kept_major = {r[0] for r in kept}
+
+          def retirable(tag):
+              if tag.startswith("sha-"):
+                  return True
+              s = semver(tag)
+              if s is None:
+                  return False
+              if s[2] is not None:
+                  return s not in kept
+              if s[1] is not None:
+                  return s[:2] in known_minor and s[:2] not in kept_minor
+              return s[0] in known_major and s[0] not in kept_major
+
+          retired = []
+          if keep_releases > 0 and not releases:
+              print("::warning::keep_releases is set but no X.Y.Z tag was found; "
+                    "retiring nothing.")
+          elif keep_releases > 0:
+              retired = [v for v in versions if v["tags"] and all(map(retirable, v["tags"]))]
+          retired_names = {v["name"] for v in retired}
+
+          # Everything reachable from a kept tag. One pass is enough in practice,
+          # but the walk is transitive so a nested index cannot slip through.
+          referenced, seen = set(), set()
+          queue = [v["name"] for v in versions if v["tags"] and v["name"] not in retired_names]
           unreadable = []
           while queue:
               d = queue.pop()
@@ -190,7 +258,10 @@ jobs:
           tagged = [v for v in versions if v["tags"]]
           untagged = [v for v in versions if not v["tags"]]
           reachable_untagged = [v for v in untagged if v["name"] in referenced]
-          candidates = [v for v in untagged if v["name"] not in referenced]
+          # A retired version a kept tag still reaches stays: a digest can be
+          # shared, and the walk above is what decides.
+          candidates = ([v for v in untagged if v["name"] not in referenced]
+                        + [v for v in retired if v["name"] not in referenced])
 
           # Group the candidates back into the images they came from. An orphan
           # is rarely one version: a multi-arch image a tag has moved off leaves
@@ -215,27 +286,34 @@ jobs:
 
           # A manifest we could not read might reference anything, so nothing is
           # deleted on that run. Failing closed is the only safe direction here.
+          # Emptying `groups`, not `candidates`: the groups are already built
+          # from the candidates by this point, and they are what gets deleted.
           if unreadable:
               print(f"::error::{len(unreadable)} tagged manifests could not be read; "
                     "refusing to classify anything as deletable.")
               for d, e in unreadable[:5]:
                   print(f"  {d}: {e}")
-              candidates = []
+              groups = []
 
-          # Retain whole images until at least `keep` versions are held. The
-          # input still means "keep at least this many versions"; it rounds up
-          # to an image boundary rather than splitting one.
+          # A retired image goes whole and is not subject to min_versions_to_keep:
+          # retiring it is the point. Orphans are retained whole until at least
+          # `keep` versions are held, rounding up to an image boundary.
+          retired_groups = [g for g in groups if any(m["tags"] for m in g)]
+          orphan_groups = [g for g in groups if not any(m["tags"] for m in g)]
           retained_groups, held = 0, 0
-          for g in groups:
+          for g in orphan_groups:
               if held >= keep:
                   break
               retained_groups += 1
               held += len(g)
-          deletable = [v for g in groups[retained_groups:] for v in g]
+          deletable = ([v for g in retired_groups for v in g]
+                       + [v for g in orphan_groups[retained_groups:] for v in g])
 
           out = {
               "total": len(versions), "tagged": len(tagged), "untagged": len(untagged),
-              "referenced": len(reachable_untagged), "deletable": len(deletable),
+              "referenced": len(reachable_untagged),
+              "retired": sum(1 for g in retired_groups for m in g if m["tags"]),
+              "deletable": len(deletable),
           }
           with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
               for k, v in out.items():
@@ -250,9 +328,19 @@ jobs:
               fh.write(f"| Tagged | {out['tagged']} |\n")
               fh.write(f"| Untagged | {out['untagged']} |\n")
               fh.write(f"| Untagged but reachable from a tag (protected) | {out['referenced']} |\n")
-              fh.write(f"| Orphaned images (index + platforms + attestations) | {len(groups)} |\n")
+              if keep_releases > 0:
+                  shown = ", ".join(".".join(map(str, r)) for r in sorted(kept, reverse=True))
+                  fh.write(f"| Releases kept (`keep_releases: {keep_releases}`) | {shown or 'none'} |\n")
+                  fh.write(f"| Tagged versions retired | {out['retired']} in {len(retired_groups)} images |\n")
+              fh.write(f"| Orphaned images (index + platforms + attestations) | {len(orphan_groups)} |\n")
               fh.write(f"| Retained by `min_versions_to_keep` | {held} in {retained_groups} images |\n")
               fh.write(f"| **Would be deleted** | **{out['deletable']}** |\n\n")
+              if retired_groups:
+                  tags = sorted({t for g in retired_groups for m in g for t in m["tags"]
+                                 if not t.startswith("sha-")})
+                  fh.write(f"Release tags retired: {', '.join(f'`{t}`' for t in tags) or 'none'} "
+                           f"(plus {sum(1 for g in retired_groups for m in g for t in m['tags'] if t.startswith('sha-'))} "
+                           "`sha-*` build tags).\n\n")
               if reachable_untagged:
                   fh.write(f"{len(reachable_untagged)} untagged versions are platform or "
                            "attestation manifests belonging to a tagged image. Deleting them "
@@ -283,7 +371,7 @@ jobs:
           {
             echo "### Deleted"
             echo ""
-            echo "Removed ${n} unreferenced untagged versions from \`${OWNER}/${PKG}\`."
+            echo "Removed ${n} versions from \`${OWNER}/${PKG}\`: retired releases and builds, and unreferenced untagged versions."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Report skip

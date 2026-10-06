@@ -44,6 +44,51 @@ jobs:
           # Revisit once that backlog is down.
           ./actionlint -shellcheck= -oneline .github/workflows/*.yml
 
+  job-timeouts:
+    name: Every runnable job has a timeout
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      # A job without timeout-minutes holds a runner for six hours when a step
+      # hangs, and in a reusable workflow it does so in every consumer at once.
+      # A value must be an int from 1 to 360, or an expression (e.g. the
+      # `${{ inputs.timeout_minutes }}` a reusable workflow forwards from its
+      # caller) -- 0, out-of-range and non-numeric values hang or misfire just
+      # the same. Jobs that only `uses:` another workflow cannot set one and
+      # are skipped. templates/ is scanned too: consumers copy those jobs
+      # verbatim, so a missing timeout there ships straight into every repo
+      # that copies the file.
+      - name: Check
+        run: |
+          python3 - <<'PY'
+          import glob, sys, yaml
+
+          expr_prefix = '$' + '{{'  # split so actionlint's own expression lexer doesn't trip on this literal
+
+          def is_valid(value):
+              if isinstance(value, str):
+                  return value.startswith(expr_prefix)
+              return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 360
+
+          bad = 0
+          for f in sorted(glob.glob('.github/workflows/*.yml') + glob.glob('templates/*.yml')):
+              for name, job in (yaml.safe_load(open(f)).get('jobs') or {}).items():
+                  if 'uses' in job:
+                      continue
+                  if 'timeout-minutes' not in job:
+                      print(f"::error file={f}::job '{name}' has no timeout-minutes")
+                      bad += 1
+                      continue
+                  value = job['timeout-minutes']
+                  if not is_valid(value):
+                      print(f"::error file={f}::job '{name}' has timeout-minutes {value}; expected 1-360 or an expression")
+                      bad += 1
+          print(f"{bad} jobs without a valid timeout")
+          sys.exit(1 if bad else 0)
+          PY
+
   yaml:
     name: Parse YAML
     runs-on: ubuntu-latest
@@ -89,6 +134,44 @@ jobs:
             exit 1
           fi
           echo "All template references pin a release tag."
+
+  template-concurrency:
+    name: Templates declare concurrency
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      # A deploy template without a group lets two merges deploy at once, and
+      # the older one can finish last. A group alone doesn't say which runs may
+      # be cancelled: a stale validation run should go, a deploy cancelled
+      # mid-flight leaves a service half-shipped. "Never cancel a deploy" is
+      # the property that matters, so it is asserted below, not just the key.
+      - name: Check
+        run: |
+          python3 - <<'PY'
+          import glob, re, sys, yaml
+
+          cancels_stale = re.compile(r'(java-validate|-feature-build|-pr-develop|contracts-pr-full|shared-validate-image-pr)\.yml$')
+
+          bad = []
+          for f in sorted(glob.glob('templates/*.yml')):
+              doc = yaml.safe_load(open(f)) or {}
+              concurrency = doc.get('concurrency')
+              if concurrency is None:
+                  bad.append(f"::error file={f}::no top-level concurrency")
+                  continue
+              cancel_in_progress = concurrency.get('cancel-in-progress')
+              if cancels_stale.search(f):
+                  if cancel_in_progress is not True:
+                      bad.append(f"::error file={f}::{f}: a validation template should cancel stale runs")
+              elif cancel_in_progress is not False:
+                  bad.append(f"::error file={f}::{f}: a deploy/publish template must not cancel in progress")
+
+          for line in bad:
+              print(line)
+          sys.exit(1 if bad else 0)
+          PY
 
   action-pin-drift:
     name: One SHA per action

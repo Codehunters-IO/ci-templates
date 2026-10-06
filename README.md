@@ -84,6 +84,17 @@ feature/* ──► build
 3. Configure the required secrets (see below) and declare the GitHub Environments your
    stack's templates reference — they differ per stack, see [Environments](#environments).
 
+4. Keep the `concurrency:` block where each template puts it: after `on:`,
+   above `permissions:` (or above `jobs:` when there is none). Validation
+   templates cancel a superseded run; deploy, publish, cleanup and scan
+   templates queue instead — on merges, schedules and `workflow_dispatch`
+   alike, the newer run of the same workflow on the same ref is what lands,
+   and three runs in quick succession skip the middle pending one.
+
+   `contracts-pr-develop.yml` and `contracts-pr-full.yml` share the name
+   `PR Validation`, so installing both cancels each other's runs via that
+   shared group key — install one, or give one a different `name:`.
+
 ## Templates by stack
 
 Not every stack ships the same set, and the gaps are real rather than oversights waiting
@@ -230,7 +241,7 @@ The trust policy the role needs is in [AWS authentication](#aws-authentication).
 
 ```yaml
 with:
-  container_image: 'ghcr.io/codehunters-io/ci-base-images:1.0.0'
+  container_image: 'ghcr.io/codehunters-io/ci-base-images:1.3.3'
 ```
 
 Skips `actions/setup-java` in `java-build`, `java-test`, `java-owasp`, `java-architecture`
@@ -351,6 +362,17 @@ The `*-main-pipeline.yml` entrypoints already call the `shared-*` workflows
 directly — verified, none of the five references a deprecated workflow — so a
 repository consuming a pipeline rather than an individual workflow is
 unaffected by all of this.
+
+### Removal list for v2
+
+| Kind | Name | Replacement |
+|---|---|---|
+| Workflow | `java-commit-lint.yml`, `krakend-commit-lint.yml`, `react-commit-lint.yml`, `java-delete-branch.yml`, `krakend-delete-branch.yml`, `react-delete-branch.yml`, `java-artifact-docker-ecr.yml`, `krakend-artifact-docker-ecr.yml`, `java-deploy-ec2.yml`, `krakend-deploy-ec2.yml`, `java-semver.yml` — the 11 `[DEPRECATED]` workflows | the `shared-*` workflow beside each, per the table above |
+| Input | `inject_aws_credentials` (both EC2 deploys, four main pipelines) | an EC2 instance profile, or a scoped key via `container_env_vars` |
+
+v2 removes exactly this list and nothing else. Anything added to it later is
+announced in a v1 release first, so `@v1` callers see the warning before the
+removal.
 
 ## Deploy Targets
 
@@ -529,7 +551,10 @@ Two things this does **not** fix, both worth knowing:
   change substitution semantics for every consumer at once, so it is a separate
   decision rather than a side effect of this one.
 
-The real fix for the credentials is to stop shipping them:
+The real fix for the credentials is to stop shipping them. `inject_aws_credentials`
+defaults to `false`, so leaving it unset already does that — no secrets go
+onto the box. The snippet below is only for a caller that currently sets it
+to `true` and wants back to that default:
 
 ```yaml
 with:
@@ -538,7 +563,7 @@ with:
 
 Give the instance an IAM role and the application reads short-lived credentials
 from the instance metadata service, with no long-lived key on the box at all.
-The input defaults to `true` and warns at run time; it is going away in v2.
+The input warns at run time when set to `true`; it is going away in v2.
 
 ### WireGuard VPN (`deploy_target: ec2-vpn` only)
 
@@ -674,7 +699,7 @@ Jobs behind the pipeline:
 
 | Input | Description | Default |
 |-------|-------------|---------|
-| `container_image` | Run the Node jobs in this image instead of `actions/setup-node` (e.g. `ghcr.io/codehunters-io/ci-base-images:1.0.0-node`) | `''` |
+| `container_image` | Run the Node jobs in this image instead of `actions/setup-node` (e.g. `ghcr.io/codehunters-io/ci-base-images:1.3.3-node`) | `''` |
 | `node_version` | Node.js version (ignored when `container_image` is set) | `'20'` |
 | `package_manager` | `npm`, `yarn`, or `pnpm` | `'pnpm'` |
 | `pnpm_version` | pnpm version (when `package_manager: pnpm`) | `'10'` |
@@ -726,7 +751,7 @@ The Java stack takes the same input. `java-build`, `java-test`, `java-owasp`,
 ```yaml
 uses: Codehunters-IO/ci-templates/.github/workflows/java-main-pipeline.yml@v1
 with:
-  container_image: 'ghcr.io/codehunters-io/ci-base-images:1.0.0'
+  container_image: 'ghcr.io/codehunters-io/ci-base-images:1.3.3'
 ```
 
 Use the `-graalvm` tag for repositories that run `./gradlew nativeCompile`.
@@ -1005,9 +1030,9 @@ clean.
 
 ## Package cleanup
 
-`shared-cleanup-packages.yml` prunes **untagged** versions from a GHCR container
-package. Copy `templates/shared-cleanup-packages.yml` into the publishing repo;
-it defaults to that repo's own name, so most need no edits.
+`shared-cleanup-packages.yml` prunes a GHCR container package. Copy
+`templates/shared-cleanup-packages.yml` into the publishing repo; it defaults to
+that repo's own name, so most need no edits.
 
 Untagged versions are what a registry accumulates by itself. Every time a tag
 moves to a new digest the old manifest stays behind — unreferenced, unreachable
@@ -1019,20 +1044,33 @@ of the registry was garbage nothing could pull.
 |-------|-------------|---------|
 | `package_name` | Container package name | repository name |
 | `owner` | Org or user owning the package | repository owner |
-| `min_versions_to_keep` | Untagged versions retained, newest first | `10` |
+| `min_versions_to_keep` | Unreferenced untagged versions retained, newest first, rounded up to whole images | `10` |
+| `keep_releases` | Semver releases to keep; older releases and `sha-*` build tags are retired. `0` retires nothing tagged | `0` |
 | `dry_run` | Only report | `true` |
 
-**A tagged version is never a candidate.** That comes from
-`delete-only-untagged-versions` in the underlying action, not from a filter
-written here — semver tags, rolling tags and `sha-` tags are safe by
-construction rather than by a regex that could be wrong. A retention window is
-kept on top of that, because the most recent untagged manifests are the ones a
-half-finished multi-arch push leaves behind.
+**Untagged is not unreachable.** A multi-arch image is a tagged index plus
+untagged platform and attestation manifests, and the API lists every one of
+those children as an untagged version. The plan reads every kept tag's manifest
+out of the registry and protects whatever it reaches; only versions no kept tag
+can reach are candidates. If any tagged manifest cannot be read, nothing is
+deleted on that run.
 
-The `plan` job runs first and always. It prints the counts and the surviving
-tags to the step summary, so the deletion is reviewable before it happens. The
-scheduled run only ever plans; deleting means dispatching the workflow by hand
-with `dry_run` unchecked.
+**`keep_releases` is the only way a tagged version goes.** With it set to N,
+the N newest `X.Y.Z` releases stay, with their variants (`X.Y.Z-graalvm`) and
+the `X.Y` / `X` aliases they share. A tagged version is retired only when every
+tag on it is retirable: a semver tag of an older release, an alias no kept
+release shares, or a `sha-*` build tag. Anything else on it — `latest`, a
+rolling variant tag, a branch tag, a tag this does not recognise — keeps it.
+A retired image goes whole, index, platforms and attestations, and
+`min_versions_to_keep` does not apply to it.
+
+Retiring a release breaks every consumer still pinned to it, and a deleted
+version cannot be restored. Move the consumers first, then read the plan.
+
+The plan step runs first and always. It prints the counts, the releases kept
+and the release tags retired to the step summary, so the deletion is reviewable
+before it happens. The scheduled run only ever plans; deleting means
+dispatching the workflow by hand with `dry_run` unchecked.
 
 ## Requirements on the EC2 host
 
