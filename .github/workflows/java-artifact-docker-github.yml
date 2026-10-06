@@ -300,6 +300,9 @@ jobs:
           # rather than failing a step whose image is already pushed.
           DIGEST=""
           if command -v jq >/dev/null; then DIGEST=$(jq -r '."containerimage.digest" // empty' "$RUNNER_TEMP/build-meta.json"); fi
+          if [ -z "$DIGEST" ]; then
+            echo "::warning::No image digest recorded (jq missing or metadata absent); deploys will fall back to the tag."
+          fi
           echo "image_digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
           echo "### Docker Image Pushed to GitHub Registry" >> $GITHUB_STEP_SUMMARY

@@ -160,7 +160,10 @@ jobs:
 
     outputs:
       status: ${{ steps.deploy.outputs.status }}
-      image: ${{ steps.setup.outputs.image_ref }}
+      # Helm takes the repo:tag URI (image_uri); kubectl set image takes the
+      # resolved ref, digest-pinned when available (image_ref). Report whichever
+      # one the deploy step actually used, not always the kubectl one.
+      image: ${{ inputs.use_helm && steps.setup.outputs.image_uri || steps.setup.outputs.image_ref }}
 
     steps:
       - name: Checkout
