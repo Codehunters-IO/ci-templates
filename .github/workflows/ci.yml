@@ -171,6 +171,19 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
+  selftest-scripts:
+    name: Script self-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      # java-test's threshold check is the one script here whose bug was silent:
+      # a wrong comparison skipped the gate and the job stayed green. Run it
+      # against a table of inputs on every PR rather than trusting a read-through.
+      - name: Run the coverage gate against its case table
+        run: .github/selftest/coverage-gate.test.sh
+
   commit-lint:
     name: Commit messages
     # Dogfooding: this repository's own commit-lint workflow, run against this

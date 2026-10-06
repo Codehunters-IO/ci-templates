@@ -12,10 +12,11 @@ sent to the API.
 | `ruleset-ci-templates-tag-alias.json` | **repo** | this repository, the `vX` alias | **yes** — ruleset `23957170` |
 | `ruleset-develop.json` | org | `codehunters-ms-*`, `codehunters-sdk-*`, `develop` | no |
 | `ruleset-main.json` | org | same, `main` | no |
-| `ruleset-krakend.json` | org | KrakenD repos, `develop` + `main` | no |
+| `ruleset-krakend-develop.json` | org | KrakenD repos, `develop` | no |
+| `ruleset-krakend-main.json` | org | KrakenD repos, `main` | no |
 | `ruleset-tags.json` | org | release tags `vX.Y.Z`, immutable | no |
 
-The four org-level files carry a `repository_name` condition and `ci-templates` matches
+The five org-level files carry a `repository_name` condition and `ci-templates` matches
 none of their patterns, which is how this repository went unprotected for so long: until
 the repo-level rulesets were applied, anyone with write access could push straight to
 `develop` or `main`, force-push over either, or delete them — and `main` is what every
@@ -72,6 +73,28 @@ Measured on the v1.3.0 release: merged, it produced `v1.3.0`; squashed, the same
 would have produced `v1.2.1`, and `v1` would have moved to a version that understates what
 changed. Merge-only also means nobody can squash a release by reflex — the method is not
 offered.
+
+## Why `main` takes a merge commit in consumer repositories too
+
+The consumer flow differs from this repository's: the release pull request is
+`release/vX.Y.Z` → `main`, and the version is computed **on `develop`**.
+`shared-release` reads `git log "${LAST_TAG}..HEAD"` with `HEAD` on `develop`, while
+`LAST_TAG` is created on `main` by the production release. That range is only correct if
+the tag's commit has `develop`'s commits as ancestors.
+
+- **Merge commit:** the tag sits on a merge whose parent is the release branch, which was
+  cut from `develop`. Everything released is an ancestor of the tag, so the next range
+  holds only what is new.
+- **Squash:** the tag sits on a new commit that `develop` never contains. `git log
+  vX.Y.Z..develop` then lists every commit since the repository began. The next version
+  is bumped by commits that already shipped, and the release pull request's changelog
+  repeats them.
+
+So `ruleset-main.json` and `ruleset-krakend-main.json` allow `merge` only and drop
+`required_linear_history`, which would reject that merge commit. The `develop` files keep
+squash and linear history. KrakenD used to have one ruleset for both branches; it is now
+split in two, because one ruleset cannot ask for squash on one branch and a merge commit
+on the other.
 
 ## Why there is no back-merge
 
@@ -187,9 +210,9 @@ is on, set with
 ruleset can express it, which is why it is recorded here rather than in one of these
 files.
 
-**No `required_linear_history`.** The org files set it; these do not, on purpose. It is
-incompatible with the merge commits the release flow produces on `main` — `16d4a51` and
-`cd6b2ac` are two.
+**No `required_linear_history`.** Of the org files, only the `develop` ones set it; these
+do not, on purpose. It is incompatible with the merge commits the release flow produces on
+`main` — `16d4a51` and `cd6b2ac` are two.
 
 **Required checks must have run at least once.** The six contexts are jobs in
 `.github/workflows/ci.yml`, and they live in the hardening ruleset. Applying a ruleset
@@ -219,7 +242,7 @@ gh api -X PUT repos/Codehunters-IO/ci-templates/rulesets/22278207 \
   --input .github/ruleset/ruleset-ci-templates-develop.json
 ```
 
-Org-level (the other four) needs the `admin:org` scope **and an organisation on GitHub
+Org-level (the other five) needs the `admin:org` scope **and an organisation on GitHub
 Team or above**. On the current plan the second command answers `403 Upgrade to GitHub
 Team` and there is nothing a token can do about it:
 

@@ -475,40 +475,49 @@ jobs:
           echo "### Code Coverage" >> $GITHUB_STEP_SUMMARY
           echo "**Line Coverage: ${COVERAGE}%**" >> $GITHUB_STEP_SUMMARY
 
+      # Thresholds are `number` inputs, so a caller may pass 80.5. `[ -gt ]` takes
+      # integers only: on a decimal it errors, the `if` reads that as false, and the
+      # gate was skipped while the job stayed green. A missing percentage did the
+      # same through `bc`. Compare in awk, and treat "threshold set, no number to
+      # compare" as a failure, not a pass.
       - name: Check coverage threshold
         if: inputs.run_coverage && always()
+        env:
+          LINE_THRESHOLD: ${{ inputs.coverage_line_threshold }}
+          INSTR_THRESHOLD: ${{ inputs.coverage_instruction_threshold }}
+          BRANCH_THRESHOLD: ${{ inputs.coverage_branch_threshold }}
+          LINE_PCT: ${{ steps.coverage.outputs.percentage }}
+          INSTR_PCT: ${{ steps.jacoco-log.outputs.instruction_pct }}
+          BRANCH_PCT: ${{ steps.jacoco-log.outputs.branch_pct }}
+          HAS_JACOCO_LOG: ${{ steps.jacoco-log.outputs.has_log }}
         run: |
+          set -uo pipefail
           FAILED=false
-          COVERAGE_THRESHOLD=${{ inputs.coverage_line_threshold }}
-          COVERAGE="${{ steps.coverage.outputs.percentage }}"
 
-          # Always print line coverage
-          echo "Line coverage: ${COVERAGE}%"
+          is_number() { [[ "$1" =~ ^[0-9]+([.][0-9]+)?$ ]]; }
+          is_enabled() { is_number "$1" && awk -v t="$1" 'BEGIN { exit !(t > 0) }'; }
+          is_below() { awk -v v="$1" -v t="$2" 'BEGIN { exit !(v < t) }'; }
 
-          # Validate only if threshold > 0
-          if [ "$COVERAGE_THRESHOLD" -gt 0 ] && [ "$(echo "$COVERAGE < $COVERAGE_THRESHOLD" | bc -l)" -eq 1 ]; then
-            echo "::error::Line coverage ${COVERAGE}% is below threshold of ${COVERAGE_THRESHOLD}%"
-            FAILED=true
-          fi
-
-          # Check instruction coverage threshold (from jacocoLogCodeCoverage)
-          if [ "${{ inputs.coverage_instruction_threshold }}" -gt 0 ] && [ "${{ steps.jacoco-log.outputs.has_log }}" = "true" ]; then
-            INSTR="${{ steps.jacoco-log.outputs.instruction_pct }}"
-            INSTR_THRESHOLD="${{ inputs.coverage_instruction_threshold }}"
-            if [ "$(echo "$INSTR < $INSTR_THRESHOLD" | bc -l)" -eq 1 ]; then
-              echo "::error::Instruction coverage ${INSTR}% is below threshold of ${INSTR_THRESHOLD}%"
+          check() {
+            local label=$1 pct=$2 threshold=$3
+            if ! is_number "$pct"; then
+              echo "::error::${label} coverage threshold is ${threshold}% but no coverage figure was produced (got '${pct}')"
               FAILED=true
-            fi
-          fi
-
-          # Check branch coverage threshold (from jacocoLogCodeCoverage)
-          if [ "${{ inputs.coverage_branch_threshold }}" -gt 0 ] && [ "${{ steps.jacoco-log.outputs.has_log }}" = "true" ]; then
-            BRANCH="${{ steps.jacoco-log.outputs.branch_pct }}"
-            BRANCH_THRESHOLD="${{ inputs.coverage_branch_threshold }}"
-            if [ "$(echo "$BRANCH < $BRANCH_THRESHOLD" | bc -l)" -eq 1 ]; then
-              echo "::error::Branch coverage ${BRANCH}% is below threshold of ${BRANCH_THRESHOLD}%"
+            elif is_below "$pct" "$threshold"; then
+              echo "::error::${label} coverage ${pct}% is below threshold of ${threshold}%"
               FAILED=true
+            else
+              echo "${label} coverage ${pct}% meets threshold of ${threshold}%"
             fi
+          }
+
+          echo "Line coverage: ${LINE_PCT:-n/a}%"
+          if is_enabled "$LINE_THRESHOLD"; then check Line "$LINE_PCT" "$LINE_THRESHOLD"; fi
+          if is_enabled "$INSTR_THRESHOLD" && [ "$HAS_JACOCO_LOG" = "true" ]; then
+            check Instruction "$INSTR_PCT" "$INSTR_THRESHOLD"
+          fi
+          if is_enabled "$BRANCH_THRESHOLD" && [ "$HAS_JACOCO_LOG" = "true" ]; then
+            check Branch "$BRANCH_PCT" "$BRANCH_THRESHOLD"
           fi
 
           if [ "$FAILED" = "true" ]; then

@@ -230,7 +230,7 @@ The trust policy the role needs is in [AWS authentication](#aws-authentication).
 
 ```yaml
 with:
-  container_image: 'ghcr.io/codehunters-io/ci-base-images:1.0.0'
+  container_image: 'ghcr.io/codehunters-io/ci-base-images:1.3.3'
 ```
 
 Skips `actions/setup-java` in `java-build`, `java-test`, `java-owasp`, `java-architecture`
@@ -674,7 +674,7 @@ Jobs behind the pipeline:
 
 | Input | Description | Default |
 |-------|-------------|---------|
-| `container_image` | Run the Node jobs in this image instead of `actions/setup-node` (e.g. `ghcr.io/codehunters-io/ci-base-images:1.0.0-node`) | `''` |
+| `container_image` | Run the Node jobs in this image instead of `actions/setup-node` (e.g. `ghcr.io/codehunters-io/ci-base-images:1.3.3-node`) | `''` |
 | `node_version` | Node.js version (ignored when `container_image` is set) | `'20'` |
 | `package_manager` | `npm`, `yarn`, or `pnpm` | `'pnpm'` |
 | `pnpm_version` | pnpm version (when `package_manager: pnpm`) | `'10'` |
@@ -726,7 +726,7 @@ The Java stack takes the same input. `java-build`, `java-test`, `java-owasp`,
 ```yaml
 uses: Codehunters-IO/ci-templates/.github/workflows/java-main-pipeline.yml@v1
 with:
-  container_image: 'ghcr.io/codehunters-io/ci-base-images:1.0.0'
+  container_image: 'ghcr.io/codehunters-io/ci-base-images:1.3.3'
 ```
 
 Use the `-graalvm` tag for repositories that run `./gradlew nativeCompile`.
@@ -813,15 +813,18 @@ does not change live rules until imported.
 | Ruleset | Target | Scope | Enforces |
 |---------|--------|-------|----------|
 | `ruleset-develop.json` | branch `develop` | `codehunters-ms-*`, `codehunters-sdk-*` | PR-only, 2 approvals, linear, squash, check `validate / PR Quality Gates` |
-| `ruleset-main.json` | branch `main` | `codehunters-ms-*`, `codehunters-sdk-*` | same as develop |
-| `ruleset-krakend.json` | branches `develop`+`main` | `codehunters-gw-*` | same, but check `validate / Test & Audit` (KrakenD pipeline) |
+| `ruleset-main.json` | branch `main` | `codehunters-ms-*`, `codehunters-sdk-*` | PR-only, 2 approvals, merge commit, same check |
+| `ruleset-krakend-develop.json` | branch `develop` | `codehunters-gw-*` | as `ruleset-develop.json`, but check `validate / Test & Audit` (KrakenD pipeline) |
+| `ruleset-krakend-main.json` | branch `main` | `codehunters-gw-*` | as `ruleset-main.json`, but check `validate / Test & Audit` |
 | `ruleset-tags.json` | tag `v*.*.*` | `codehunters-ms-*`, `codehunters-sdk-*`, `codehunters-gw-*` | immutable tags (creation/deletion/update/non-fast-forward) |
 | `ruleset-ci-templates-develop.json` | branch `develop` | this repository | PR-only, squash |
 | `ruleset-ci-templates-main.json` | branch `main` | this repository | PR-only, merge commit |
 
-The last two protect `ci-templates` itself rather than the consuming repositories, and they
-are the reason the merge method differs by branch here: `develop` squashes, `main` takes a
-merge commit. This repository has no back-merge — `main` accumulates merge commits that
+The last two protect `ci-templates` itself rather than the consuming repositories. Every
+stack uses the same rule as this repository: `develop` squashes, `main` takes a merge
+commit. That is why each stack has one ruleset per branch: the merge method is set on the
+`pull_request` rule, and one ruleset applies it to every branch it covers. See
+[`.github/ruleset/README.md`](.github/ruleset/README.md#why-main-takes-a-merge-commit-in-consumer-repositories-too). This repository has no back-merge — `main` accumulates merge commits that
 `develop` never sees, which is expected and not drift.
 
 - **Bypass:** repo admins (RepositoryRole 5) and **GitHub Actions** (Integration `15368`) bypass the tag
@@ -992,9 +995,9 @@ clean.
 
 ## Package cleanup
 
-`shared-cleanup-packages.yml` prunes **untagged** versions from a GHCR container
-package. Copy `templates/shared-cleanup-packages.yml` into the publishing repo;
-it defaults to that repo's own name, so most need no edits.
+`shared-cleanup-packages.yml` prunes a GHCR container package. Copy
+`templates/shared-cleanup-packages.yml` into the publishing repo; it defaults to
+that repo's own name, so most need no edits.
 
 Untagged versions are what a registry accumulates by itself. Every time a tag
 moves to a new digest the old manifest stays behind — unreferenced, unreachable
@@ -1006,20 +1009,33 @@ of the registry was garbage nothing could pull.
 |-------|-------------|---------|
 | `package_name` | Container package name | repository name |
 | `owner` | Org or user owning the package | repository owner |
-| `min_versions_to_keep` | Untagged versions retained, newest first | `10` |
+| `min_versions_to_keep` | Unreferenced untagged versions retained, newest first, rounded up to whole images | `10` |
+| `keep_releases` | Semver releases to keep; older releases and `sha-*` build tags are retired. `0` retires nothing tagged | `0` |
 | `dry_run` | Only report | `true` |
 
-**A tagged version is never a candidate.** That comes from
-`delete-only-untagged-versions` in the underlying action, not from a filter
-written here — semver tags, rolling tags and `sha-` tags are safe by
-construction rather than by a regex that could be wrong. A retention window is
-kept on top of that, because the most recent untagged manifests are the ones a
-half-finished multi-arch push leaves behind.
+**Untagged is not unreachable.** A multi-arch image is a tagged index plus
+untagged platform and attestation manifests, and the API lists every one of
+those children as an untagged version. The plan reads every kept tag's manifest
+out of the registry and protects whatever it reaches; only versions no kept tag
+can reach are candidates. If any tagged manifest cannot be read, nothing is
+deleted on that run.
 
-The `plan` job runs first and always. It prints the counts and the surviving
-tags to the step summary, so the deletion is reviewable before it happens. The
-scheduled run only ever plans; deleting means dispatching the workflow by hand
-with `dry_run` unchecked.
+**`keep_releases` is the only way a tagged version goes.** With it set to N,
+the N newest `X.Y.Z` releases stay, with their variants (`X.Y.Z-graalvm`) and
+the `X.Y` / `X` aliases they share. A tagged version is retired only when every
+tag on it is retirable: a semver tag of an older release, an alias no kept
+release shares, or a `sha-*` build tag. Anything else on it — `latest`, a
+rolling variant tag, a branch tag, a tag this does not recognise — keeps it.
+A retired image goes whole, index, platforms and attestations, and
+`min_versions_to_keep` does not apply to it.
+
+Retiring a release breaks every consumer still pinned to it, and a deleted
+version cannot be restored. Move the consumers first, then read the plan.
+
+The plan step runs first and always. It prints the counts, the releases kept
+and the release tags retired to the step summary, so the deletion is reviewable
+before it happens. The scheduled run only ever plans; deleting means
+dispatching the workflow by hand with `dry_run` unchecked.
 
 ## Requirements on the EC2 host
 
