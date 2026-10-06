@@ -12,6 +12,14 @@ on:
         description: 'Docker image tag to deploy'
         required: true
         type: string
+      image_digest:
+        description: >-
+          Digest to deploy (sha256:…). When set, the deploy pins the image by
+          digest and the tag is only a label. Empty deploys by tag, as Helm
+          deploys do and as any direct caller that passes no digest does.
+        required: false
+        type: string
+        default: ''
       environment:
         description: 'GitHub environment (develop, prod)'
         required: false
@@ -195,6 +203,7 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
           IMAGE_TAG: ${{ inputs.image_tag }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
           APP_PORT: ${{ secrets.AWS_APP_PORT }}
           REPO_NAME: ${{ steps.repo.outputs.name }}
           ENVIRONMENT: ${{ inputs.environment }}
@@ -209,6 +218,12 @@ jobs:
           if [ "${INJECT_AWS_CREDENTIALS}" = "true" ]; then
             echo "::warning::inject_aws_credentials is on: this deploy puts the pipeline's AWS keys inside the application container. They can push to ECR. Move to an EC2 instance profile or a scoped runtime key; this input is removed in v2."
           fi
+
+          # Computed on the runner and shipped in deploy.env: the compose file and
+          # the pull live in deploy.sh, which runs on the host and sees only that file.
+          IMAGE_REPO="${AWS_ECR_URL}/${REPO_NAME}"
+          IMAGE_REF="${IMAGE_REPO}:${IMAGE_TAG}"
+          if [ -n "${IMAGE_DIGEST}" ]; then IMAGE_REF="${IMAGE_REPO}@${IMAGE_DIGEST}"; fi
 
           # Setup SSH
           mkdir -p ~/.ssh
@@ -281,7 +296,7 @@ jobs:
           {
             echo "services:"
             echo "  ${REPO_NAME}:"
-            echo "    image: ${AWS_ECR_URL}/${REPO_NAME}:${IMAGE_TAG}"
+            echo "    image: ${IMAGE_REF}"
             echo "    platform: ${DOCKER_PLATFORM}"
             echo "    container_name: ${REPO_NAME}"
             echo "    restart: unless-stopped"
@@ -349,7 +364,7 @@ jobs:
 
           # Pull latest image from ECR
           echo "Pulling latest image..."
-          docker pull ${AWS_ECR_URL}/${REPO_NAME}:${IMAGE_TAG}
+          docker pull "${IMAGE_REF}"
 
           # Stop existing container if running (force-kill fallback if hung)
           if docker ps -aq -f name=${REPO_NAME} 2>/dev/null | grep -q .; then
@@ -362,11 +377,15 @@ jobs:
             fi
           fi
 
-          # Remove only old images for this repo (keep the new one)
+          # Remove every image of this repo except the one about to start. By image
+          # ID, not by tag: an image pulled by digest has no tag, lists as
+          # repo:<none>, and `docker rmi repo:<none>` fails, so a tag filter would
+          # never remove anything once digest deploys start. -f because one ID can
+          # carry several refs (a tag and a digest), and rmi without it refuses.
           echo "Removing old images for ${REPO_NAME}..."
-          docker images "${AWS_ECR_URL}/${REPO_NAME}" --format '{{.Repository}}:{{.Tag}}' \
-            | grep -v ":${IMAGE_TAG}$" \
-            | xargs -r docker rmi 2>/dev/null || true
+          KEEP=$(docker image inspect --format '{{.Id}}' "${IMAGE_REF}")
+          docker images "${AWS_ECR_URL}/${REPO_NAME}" --no-trunc --format '{{.ID}}' \
+            | sort -u | grep -vxF "$KEEP" | xargs -r docker rmi -f 2>/dev/null || true
 
           # Start new container
           echo "Starting new container..."
@@ -421,6 +440,7 @@ jobs:
             {
               printf 'REPO_NAME=%q\n'               "$REPO_NAME"
               printf 'IMAGE_TAG=%q\n'               "$IMAGE_TAG"
+              printf 'IMAGE_REF=%q\n'               "$IMAGE_REF"
               printf 'AWS_ECR_URL=%q\n'             "$AWS_ECR_URL"
               printf 'AWS_ACCESS_KEY_ID=%q\n'       "$AWS_ACCESS_KEY_ID"
               printf 'AWS_SECRET_ACCESS_KEY=%q\n'   "$AWS_SECRET_ACCESS_KEY"
@@ -457,13 +477,19 @@ jobs:
 
           # Post-deploy verification: if container is running w/ correct image, success regardless of transport error
           echo "Verifying container state..."
-          VERIFY_OUTPUT=$(ssh $SSH_COMMON_OPTS ${AWS_EC2_USER}@${AWS_EC2_HOST} "docker ps --filter name=^${REPO_NAME}$ --format '{{.Image}}|{{.Status}}' 2>/dev/null" || echo "")
+          # docker inspect, not docker ps: for a container created from repo@sha256:…
+          # `docker ps` prints the short image ID, while .Config.Image keeps the ref
+          # the container was created from, in both the digest and the tag form.
+          VERIFY_OUTPUT=$(ssh $SSH_COMMON_OPTS ${AWS_EC2_USER}@${AWS_EC2_HOST} "docker inspect --format '{{.Config.Image}}|{{.State.Status}}' '${REPO_NAME}' 2>/dev/null" || echo "")
           RUNNING_IMAGE=$(echo "$VERIFY_OUTPUT" | cut -d'|' -f1)
           RUNNING_STATUS=$(echo "$VERIFY_OUTPUT" | cut -d'|' -f2)
           echo "Container image: '$RUNNING_IMAGE'"
           echo "Container status: '$RUNNING_STATUS'"
 
-          if echo "$RUNNING_IMAGE" | grep -q "${REPO_NAME}:${IMAGE_TAG}$"; then
+          # Exact equality, not a pattern: a tag 1.2.3 must not match 1.2.30, and
+          # '@sha256:' needs no escaping. The status check keeps what `docker ps`
+          # used to imply, since inspect also answers for a stopped container.
+          if [ "$RUNNING_IMAGE" = "$IMAGE_REF" ] && [ "$RUNNING_STATUS" = "running" ]; then
             echo "Container is running with target image."
             echo "status=success" >> $GITHUB_OUTPUT
           elif [ "$DEPLOY_RC" -eq 0 ]; then

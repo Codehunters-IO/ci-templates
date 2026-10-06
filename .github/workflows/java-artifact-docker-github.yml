@@ -85,6 +85,9 @@ on:
       image_uri:
         description: 'Full Docker image URI'
         value: ${{ jobs.artifact.outputs.image_uri }}
+      image_digest:
+        description: 'Digest of the pushed image (sha256:…), for deploying exactly what was scanned'
+        value: ${{ jobs.artifact.outputs.image_digest }}
       commit_sha:
         description: 'Short commit SHA used'
         value: ${{ jobs.artifact.outputs.commit_sha }}
@@ -107,6 +110,7 @@ jobs:
     outputs:
       image_tag: ${{ steps.set-tag.outputs.tag }}
       image_uri: ${{ steps.push-ghcr.outputs.image_uri }}
+      image_digest: ${{ steps.push-ghcr.outputs.image_digest }}
       commit_sha: ${{ steps.set-tag.outputs.commit_sha }}
 
     steps:
@@ -292,6 +296,14 @@ jobs:
             ${{ inputs.dockerfile_path }}
 
           echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
+          # Without jq the digest is left empty and the deploy falls back to the tag,
+          # rather than failing a step whose image is already pushed.
+          DIGEST=""
+          if command -v jq >/dev/null; then DIGEST=$(jq -r '."containerimage.digest" // empty' "$RUNNER_TEMP/build-meta.json"); fi
+          if [ -z "$DIGEST" ]; then
+            echo "::warning::No image digest recorded (jq missing or metadata absent); deploys will fall back to the tag."
+          fi
+          echo "image_digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
           echo "### Docker Image Pushed to GitHub Registry" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

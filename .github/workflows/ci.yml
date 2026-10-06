@@ -267,6 +267,11 @@ jobs:
       - name: Run the coverage gate against its case table
         run: .github/selftest/coverage-gate.test.sh
 
+      # The digest-or-tag rule is copied into three deploy workflows. This keeps
+      # the copies identical and pins what the rule does with and without a digest.
+      - name: Run the image-ref rule against its cases
+        run: .github/selftest/image-ref.test.sh
+
   commit-lint:
     name: Commit messages
     # Dogfooding: this repository's own commit-lint workflow, run against this

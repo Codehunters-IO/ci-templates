@@ -354,6 +354,9 @@ on:
       image_uri:
         description: 'Full Docker image URI'
         value: ${{ jobs.artifact.outputs.image_uri }}
+      image_digest:
+        description: 'Digest of the pushed image'
+        value: ${{ jobs.artifact.outputs.image_digest }}
       coverage_percentage:
         description: 'Line coverage percentage'
         value: ${{ jobs.test.outputs.coverage_percentage }}
@@ -572,6 +575,7 @@ jobs:
     with:
       runner: ${{ inputs.runner }}
       image_tag: ${{ needs.artifact.outputs.image_tag }}
+      image_digest: ${{ needs.artifact.outputs.image_digest }}
       docker_platform: ${{ inputs.docker_platform }}
       environment: ${{ inputs.environment }}
       memory_limit: ${{ inputs.memory_limit }}
@@ -596,6 +600,7 @@ jobs:
     with:
       runner: ${{ inputs.runner }}
       image_tag: ${{ needs.artifact.outputs.image_tag }}
+      image_digest: ${{ needs.artifact.outputs.image_digest }}
       docker_platform: ${{ inputs.docker_platform }}
       environment: ${{ inputs.environment }}
       memory_limit: ${{ inputs.memory_limit }}
