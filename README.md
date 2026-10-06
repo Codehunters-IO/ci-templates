@@ -756,8 +756,12 @@ The AWS IAM principal must have `ecr:DescribeRepositories` and `ecr:CreateReposi
 Tags stay `MUTABLE`, but the stack pipelines no longer depend on that: the
 artifact job outputs the pushed digest, and the deploy pins `repo@sha256:…`.
 What runs is what Trivy scanned, even if the tag moves before the deploy job
-starts. Helm deploys and promotions with no artifact job in the run (the
-`tag-deploy` templates) still deploy by tag.
+starts. That includes production promotions — `templates/java-tag-deploy.yml`
+and `templates/krakend-tag-deploy.yml` call the main pipeline with
+`run_artifact: true`, so they build, push and deploy by digest too. The tag
+fallback applies to Helm deploys, and to any run where no ECR digest reaches
+the deploy job: Java publishing to GHCR only, a direct caller of the deploy
+workflow that passes no `image_digest`, or a runner without `jq`.
 
 ### Out of scope (deliberate)
 

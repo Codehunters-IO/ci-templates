@@ -15,8 +15,8 @@ on:
       image_digest:
         description: >-
           Digest to deploy (sha256:…). When set, the deploy pins the image by
-          digest and the tag is only a label. Empty deploys by tag, which is what
-          a promotion with no artifact job in the run does.
+          digest and the tag is only a label. Empty deploys by tag, as Helm
+          deploys do and as any direct caller that passes no digest does.
         required: false
         type: string
         default: ''
