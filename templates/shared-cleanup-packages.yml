@@ -33,7 +33,7 @@ permissions:
 
 jobs:
   cleanup:
-    uses: Codehunters-IO/ci-templates/.github/workflows/shared-cleanup-packages.yml@v1
+    uses: Codehunters-IO/ci-templates/.github/workflows/shared-cleanup-packages.yml@v2
     with:
       # Tagged versions are never candidates unless keep_releases is set, so
       # semver and rolling tags are safe regardless of the other inputs.

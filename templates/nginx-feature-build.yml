@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   build:
-    uses: <org>/ci-templates/.github/workflows/nginx-main-pipeline.yml@v1
+    uses: <org>/ci-templates/.github/workflows/nginx-main-pipeline.yml@v2
     with:
       run_build: true
     secrets: inherit

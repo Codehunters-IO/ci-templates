@@ -35,7 +35,7 @@ permissions:
 jobs:
   scan:
     # A release tag, never @main — see the note in the other shared templates.
-    uses: Codehunters-IO/ci-templates/.github/workflows/shared-scan-published-images.yml@v1
+    uses: Codehunters-IO/ci-templates/.github/workflows/shared-scan-published-images.yml@v2
     with:
       # Empty on the schedule, so the weekly run scans the rolling tags. A
       # version older than an image fails on it: that tag was never published.
