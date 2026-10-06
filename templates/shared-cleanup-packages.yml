@@ -29,8 +29,9 @@ jobs:
   cleanup:
     uses: Codehunters-IO/ci-templates/.github/workflows/shared-cleanup-packages.yml@v1
     with:
-      # Tagged versions are never candidates, so semver and rolling tags are safe
-      # regardless of what these are set to.
+      # Tagged versions are never candidates unless keep_releases is set, so
+      # semver and rolling tags are safe regardless of the other inputs.
+      # keep_releases: 2   # keep the two newest X.Y.Z releases, retire the rest
       # On the scheduled run `inputs` is empty, so this evaluates to true and the
       # cron only ever reports. Deleting requires dispatching it by hand.
       dry_run: ${{ inputs.dry_run != false }}
