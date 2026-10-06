@@ -352,6 +352,17 @@ directly — verified, none of the five references a deprecated workflow — so 
 repository consuming a pipeline rather than an individual workflow is
 unaffected by all of this.
 
+### Removal list for v2
+
+| Kind | Name | Replacement |
+|---|---|---|
+| Workflow | the 11 `[DEPRECATED]` workflows in the table above | the `shared-*` workflow beside each |
+| Input | `inject_aws_credentials` (both EC2 deploys, four main pipelines) | an EC2 instance profile, or a scoped key via `container_env_vars` |
+
+v2 removes exactly this list and nothing else. Anything added to it later is
+announced in a v1 release first, so `@v1` callers see the warning before the
+removal.
+
 ## Deploy Targets
 
 The main pipelines accept a `deploy_target` input:
@@ -538,7 +549,8 @@ with:
 
 Give the instance an IAM role and the application reads short-lived credentials
 from the instance metadata service, with no long-lived key on the box at all.
-The input defaults to `true` and warns at run time; it is going away in v2.
+The input defaults to `false` and warns at run time when set; it is going
+away in v2.
 
 ### WireGuard VPN (`deploy_target: ec2-vpn` only)
 
