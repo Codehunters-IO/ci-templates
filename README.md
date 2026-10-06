@@ -241,7 +241,7 @@ The trust policy the role needs is in [AWS authentication](#aws-authentication).
 
 ```yaml
 with:
-  container_image: 'ghcr.io/codehunters-io/ci-base-images:1.3.3'
+  container_image: 'ghcr.io/codehunters-io/ci-base-images:1'
 ```
 
 Skips `actions/setup-java` in `java-build`, `java-test`, `java-owasp`, `java-architecture`
@@ -699,7 +699,7 @@ Jobs behind the pipeline:
 
 | Input | Description | Default |
 |-------|-------------|---------|
-| `container_image` | Run the Node jobs in this image instead of `actions/setup-node` (e.g. `ghcr.io/codehunters-io/ci-base-images:1.3.3-node`) | `''` |
+| `container_image` | Run the Node jobs in this image instead of `actions/setup-node` (e.g. `ghcr.io/codehunters-io/ci-base-images:1-node`) | `''` |
 | `node_version` | Node.js version (ignored when `container_image` is set) | `'20'` |
 | `package_manager` | `npm`, `yarn`, or `pnpm` | `'pnpm'` |
 | `pnpm_version` | pnpm version (when `package_manager: pnpm`) | `'10'` |
@@ -751,7 +751,7 @@ The Java stack takes the same input. `java-build`, `java-test`, `java-owasp`,
 ```yaml
 uses: Codehunters-IO/ci-templates/.github/workflows/java-main-pipeline.yml@v1
 with:
-  container_image: 'ghcr.io/codehunters-io/ci-base-images:1.3.3'
+  container_image: 'ghcr.io/codehunters-io/ci-base-images:1'
 ```
 
 Use the `-graalvm` tag for repositories that run `./gradlew nativeCompile`.
