@@ -84,6 +84,17 @@ feature/* ──► build
 3. Configure the required secrets (see below) and declare the GitHub Environments your
    stack's templates reference — they differ per stack, see [Environments](#environments).
 
+4. Keep the `concurrency:` block where each template puts it: after `on:`,
+   above `permissions:` (or above `jobs:` when there is none). Validation
+   templates cancel a superseded run; deploy, publish, cleanup and scan
+   templates queue instead — on merges, schedules and `workflow_dispatch`
+   alike, the newer run of the same workflow on the same ref is what lands,
+   and three runs in quick succession skip the middle pending one.
+
+   `contracts-pr-develop.yml` and `contracts-pr-full.yml` share the name
+   `PR Validation`, so installing both cancels each other's runs via that
+   shared group key — install one, or give one a different `name:`.
+
 ## Templates by stack
 
 Not every stack ships the same set, and the gaps are real rather than oversights waiting
@@ -352,6 +363,17 @@ directly — verified, none of the five references a deprecated workflow — so 
 repository consuming a pipeline rather than an individual workflow is
 unaffected by all of this.
 
+### Removal list for v2
+
+| Kind | Name | Replacement |
+|---|---|---|
+| Workflow | `java-commit-lint.yml`, `krakend-commit-lint.yml`, `react-commit-lint.yml`, `java-delete-branch.yml`, `krakend-delete-branch.yml`, `react-delete-branch.yml`, `java-artifact-docker-ecr.yml`, `krakend-artifact-docker-ecr.yml`, `java-deploy-ec2.yml`, `krakend-deploy-ec2.yml`, `java-semver.yml` — the 11 `[DEPRECATED]` workflows | the `shared-*` workflow beside each, per the table above |
+| Input | `inject_aws_credentials` (both EC2 deploys, four main pipelines) | an EC2 instance profile, or a scoped key via `container_env_vars` |
+
+v2 removes exactly this list and nothing else. Anything added to it later is
+announced in a v1 release first, so `@v1` callers see the warning before the
+removal.
+
 ## Deploy Targets
 
 The main pipelines accept a `deploy_target` input:
@@ -529,7 +551,10 @@ Two things this does **not** fix, both worth knowing:
   change substitution semantics for every consumer at once, so it is a separate
   decision rather than a side effect of this one.
 
-The real fix for the credentials is to stop shipping them:
+The real fix for the credentials is to stop shipping them. `inject_aws_credentials`
+defaults to `false`, so leaving it unset already does that — no secrets go
+onto the box. The snippet below is only for a caller that currently sets it
+to `true` and wants back to that default:
 
 ```yaml
 with:
@@ -538,7 +563,7 @@ with:
 
 Give the instance an IAM role and the application reads short-lived credentials
 from the instance metadata service, with no long-lived key on the box at all.
-The input defaults to `true` and warns at run time; it is going away in v2.
+The input warns at run time when set to `true`; it is going away in v2.
 
 ### WireGuard VPN (`deploy_target: ec2-vpn` only)
 
@@ -752,6 +777,16 @@ GHCR package public first.
 The ECR repository is created automatically by the pipeline if it does not exist. The repository name equals the GitHub repo name (e.g., `codehunters-blockchain-contracts`). Repos are created with `MUTABLE` tags and scan-on-push enabled. ECR's scan-on-push reports after the image is already in the registry; the pipeline's own Trivy gate is what keeps a vulnerable image out (see [Scanning the stack pipelines' images](#scanning-the-stack-pipelines-images)).
 
 The AWS IAM principal must have `ecr:DescribeRepositories` and `ecr:CreateRepository` in addition to push permissions.
+
+Tags stay `MUTABLE`, but the stack pipelines no longer depend on that: the
+artifact job outputs the pushed digest, and the deploy pins `repo@sha256:…`.
+What runs is what Trivy scanned, even if the tag moves before the deploy job
+starts. That includes production promotions — `templates/java-tag-deploy.yml`
+and `templates/krakend-tag-deploy.yml` call the main pipeline with
+`run_artifact: true`, so they build, push and deploy by digest too. The tag
+fallback applies to Helm deploys, and to any run where no ECR digest reaches
+the deploy job: Java publishing to GHCR only, a direct caller of the deploy
+workflow that passes no `image_digest`, or a runner without `jq`.
 
 ### Out of scope (deliberate)
 

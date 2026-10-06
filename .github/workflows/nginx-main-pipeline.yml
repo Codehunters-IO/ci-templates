@@ -231,6 +231,9 @@ on:
       image_uri:
         description: 'Full Docker image URI'
         value: ${{ jobs.artifact.outputs.image_uri }}
+      image_digest:
+        description: 'Digest of the pushed image'
+        value: ${{ jobs.artifact.outputs.image_digest }}
       deploy_status:
         description: 'Deployment status'
         value: ${{ jobs.deploy-ec2.outputs.deploy_status || jobs.deploy-ec2-vpn.outputs.deploy_status || jobs.deploy-eks.outputs.deploy_status }}
@@ -360,6 +363,7 @@ jobs:
     with:
       runner: ${{ inputs.runner }}
       image_tag: ${{ needs.artifact.outputs.image_tag }}
+      image_digest: ${{ needs.artifact.outputs.image_digest }}
       docker_platform: ${{ inputs.docker_platform }}
       environment: ${{ inputs.environment }}
       memory_limit: ${{ inputs.memory_limit }}
@@ -385,6 +389,7 @@ jobs:
     with:
       runner: ${{ inputs.runner }}
       image_tag: ${{ needs.artifact.outputs.image_tag }}
+      image_digest: ${{ needs.artifact.outputs.image_digest }}
       docker_platform: ${{ inputs.docker_platform }}
       environment: ${{ inputs.environment }}
       memory_limit: ${{ inputs.memory_limit }}
@@ -411,6 +416,7 @@ jobs:
       aws_role_to_assume: ${{ inputs.aws_role_to_assume }}
       runner: ${{ inputs.runner }}
       image_tag: ${{ needs.artifact.outputs.image_tag }}
+      image_digest: ${{ needs.artifact.outputs.image_digest }}
       environment: ${{ inputs.environment }}
       cluster_name: ${{ inputs.eks_cluster_name }}
       namespace: ${{ inputs.eks_namespace }}

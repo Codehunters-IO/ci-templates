@@ -21,6 +21,14 @@ on:
         required: true
         type: string
 
+# Deploys on one ref run one at a time, in order. Never cancel one mid-flight:
+# a half-applied deploy is worse than a late one.
+# A promotion waiting at the prod approval gate is replaced if a later
+# version is dispatched behind it; re-dispatch it if it was still wanted.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
   id-token: write
@@ -29,6 +37,7 @@ jobs:
   validate:
     name: Validate version
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -66,6 +75,7 @@ jobs:
     name: Tag + GitHub Release
     needs: deploy
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
