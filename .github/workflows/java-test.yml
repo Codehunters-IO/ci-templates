@@ -370,9 +370,12 @@ jobs:
             echo "has_log=false" >> $GITHUB_OUTPUT
           fi
 
+      # bash, not the container default: these steps use bash-only syntax, and without it a
+      # bash-less image fails with a syntax error instead of a clear "bash: not found".
       - name: Parse test results
         id: test-summary
         if: always()
+        shell: bash
         run: |
           PASSED=0
           FAILED=0
@@ -484,6 +487,7 @@ jobs:
       # compare" as a failure, not a pass.
       - name: Check coverage threshold
         if: inputs.run_coverage && always()
+        shell: bash
         env:
           LINE_THRESHOLD: ${{ inputs.coverage_line_threshold }}
           INSTR_THRESHOLD: ${{ inputs.coverage_instruction_threshold }}
