@@ -78,7 +78,7 @@ feature/* ──► build
 
 2. Replace `<org>` with your GitHub organization in each template:
    ```yaml
-   uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@v1
+   uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@v2
    ```
 
 3. Configure the required secrets (see below) and declare the GitHub Environments your
@@ -146,7 +146,7 @@ on:
 
 jobs:
   validate:
-    uses: <org>/ci-templates/.github/workflows/java-pr-pipeline.yml@v1
+    uses: <org>/ci-templates/.github/workflows/java-pr-pipeline.yml@v2
     with:
       run_test: true
     secrets: inherit
@@ -170,7 +170,7 @@ permissions:
 jobs:
   pipeline:
     if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
-    uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@v1
+    uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@v2
     with:
       run_build: true
       run_test: false            # already gated on the PR — see the note below
@@ -223,7 +223,7 @@ deploy through the same tunnel and one of them reaches the wrong host.
 ```yaml
 jobs:
   pipeline:
-    uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@v1
+    uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@v2
     permissions:
       contents: write
       packages: write
@@ -264,7 +264,7 @@ global line percentage — see [Two coverage gates](#two-coverage-gates-and-whic
 ```yaml
 jobs:
   images:
-    uses: <org>/ci-templates/.github/workflows/shared-build-publish-image.yml@v1
+    uses: <org>/ci-templates/.github/workflows/shared-build-publish-image.yml@v2
     permissions:
       packages: write
       security-events: write     # omitting this silently loses the scan upload
@@ -281,7 +281,7 @@ jobs:
 ### Rolling out the vulnerability gate
 
 ```yaml
-uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@v1
+uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@v2
 with:
   run_artifact: true
   vulnerability_gate: false              # report only, until the job summary is clean
@@ -295,10 +295,10 @@ The four stacks that publish an image take the same inputs. Remove
 ### Pinning a version that will not move
 
 ```yaml
-uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@v1.4.1
+uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@v2.0.0
 ```
 
-Use this when a pipeline must not pick up anything, including fixes. `@v1` is the normal
+Use this when a pipeline must not pick up anything, including fixes. `@v2` is the normal
 choice; `@main` only to test an unreleased change on purpose.
 
 ## Versioning
@@ -306,18 +306,21 @@ choice; `@main` only to test an unreleased change on purpose.
 Templates pin a release, not a branch:
 
 ```yaml
-uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@v1
+uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@v2
 ```
 
-`v1` is a floating alias that moves to the newest `v1.x.y`. Pinning it means a
-consumer picks up fixes and backward-compatible additions without editing its
-workflows, and never picks up a breaking change unannounced. Pin an exact
-release such as `@v1.4.1` when a pipeline must not move at all, and `@main`
-only to test an unreleased change on purpose.
+`v2` is the current floating alias and moves to the newest `v2.x.y`. Pinning it
+means a consumer picks up fixes and backward-compatible additions without
+editing its workflows, and never picks up a breaking change unannounced. Pin an
+exact release such as `@v2.0.0` when a pipeline must not move at all, and
+`@main` only to test an unreleased change on purpose.
+
+`v1` is frozen at the last 1.x release. It no longer moves, so a caller still on
+`@v1` keeps exactly what it had and gets no further fixes.
 
 Releases are cut automatically: every push to `main` runs `release.yml`, which
 derives the version from the commits since the last tag, creates `vX.Y.Z` plus a
-GitHub Release, and re-points `v1`.
+GitHub Release, and re-points the floating alias of that major.
 
 | Commit contains | Bump |
 |---|---|
@@ -325,30 +328,37 @@ GitHub Release, and re-points `v1`.
 | `feat` | minor |
 | anything else | patch |
 
-A major bump leaves `v1` frozen at the last 1.x release, so consumers pinned to
-`@v1` keep working until they choose to move to `@v2`.
+A major bump freezes the previous alias at its last release, so consumers
+pinned to it keep working until they choose to move. That is how `v1` stopped
+at the last 1.x release when `v2.0.0` was cut.
 
 ## Deprecations
 
-Eleven per-language workflows exist only so that existing callers keep working.
-They carry `[DEPRECATED]` in their name, emit a warning when called, and are
-**scheduled for removal in v2**. Pinning `@v1` keeps them working until you
-migrate.
+v2 removed eleven per-language workflows and one input. They had carried
+`[DEPRECATED]` and a run-time warning through the 1.x line. `@v1` still serves
+all of them, frozen at the last 1.x release, so a caller that has not migrated
+keeps working but gets no further fixes.
 
-Ten of them forward to a `shared-*` equivalent with identical inputs, so
-migrating is a one-line change to the path:
+### Removed in v2
 
-| Deprecated | Call instead |
-|---|---|
-| `java-commit-lint.yml`, `krakend-commit-lint.yml`, `react-commit-lint.yml` | `shared-commit-lint.yml` |
-| `java-delete-branch.yml`, `krakend-delete-branch.yml`, `react-delete-branch.yml` | `shared-delete-branch.yml` |
-| `java-artifact-docker-ecr.yml`, `krakend-artifact-docker-ecr.yml` | `shared-artifact-docker-ecr.yml` |
-| `krakend-deploy-ec2.yml` | `shared-deploy-ec2.yml` |
-| `java-semver.yml` | `shared-semver.yml` |
+| Kind | Removed | Call instead |
+|---|---|---|
+| Workflow | `java-commit-lint.yml`, `krakend-commit-lint.yml`, `react-commit-lint.yml` | `shared-commit-lint.yml` |
+| Workflow | `java-delete-branch.yml`, `krakend-delete-branch.yml`, `react-delete-branch.yml` | `shared-delete-branch.yml` |
+| Workflow | `java-artifact-docker-ecr.yml`, `krakend-artifact-docker-ecr.yml` | `shared-artifact-docker-ecr.yml` |
+| Workflow | `krakend-deploy-ec2.yml`, `java-deploy-ec2.yml` | `shared-deploy-ec2.yml` |
+| Workflow | `java-semver.yml` | `shared-semver.yml` |
+| Input | `inject_aws_credentials` (both EC2 deploys, four main pipelines) | an EC2 instance profile, or a scoped key via `container_env_vars` |
 
-`java-deploy-ec2.yml` is the exception. It also forwards to
-`shared-deploy-ec2.yml`, but it is not a drop-in: it accepts `spring_profiles`,
-which the shared workflow does not, and folds it into `container_env_vars`
+Ten of the workflows forwarded to their `shared-*` equivalent with identical
+inputs, so migrating is a one-line change to the path. A caller that still
+passes `inject_aws_credentials` fails at call time on `@v2`, since GitHub
+rejects an undeclared input; delete the line. See
+[How EC2 deploys handle secrets](#how-ec2-deploys-handle-secrets).
+
+`java-deploy-ec2.yml` is the exception. It also forwarded to
+`shared-deploy-ec2.yml`, but it was not a drop-in: it accepted `spring_profiles`,
+which the shared workflow does not, and folded it into `container_env_vars`
 along with the Spring context path. Migrating means doing that mapping at the
 call site:
 
@@ -358,21 +368,10 @@ container_env_vars: |
   SERVER_CONTEXT_PATH=/<repository-name>
 ```
 
-The `*-main-pipeline.yml` entrypoints already call the `shared-*` workflows
-directly — verified, none of the five references a deprecated workflow — so a
-repository consuming a pipeline rather than an individual workflow is
-unaffected by all of this.
-
-### Removal list for v2
-
-| Kind | Name | Replacement |
-|---|---|---|
-| Workflow | `java-commit-lint.yml`, `krakend-commit-lint.yml`, `react-commit-lint.yml`, `java-delete-branch.yml`, `krakend-delete-branch.yml`, `react-delete-branch.yml`, `java-artifact-docker-ecr.yml`, `krakend-artifact-docker-ecr.yml`, `java-deploy-ec2.yml`, `krakend-deploy-ec2.yml`, `java-semver.yml` — the 11 `[DEPRECATED]` workflows | the `shared-*` workflow beside each, per the table above |
-| Input | `inject_aws_credentials` (both EC2 deploys, four main pipelines) | an EC2 instance profile, or a scoped key via `container_env_vars` |
-
-v2 removes exactly this list and nothing else. Anything added to it later is
-announced in a v1 release first, so `@v1` callers see the warning before the
-removal.
+The `*-main-pipeline.yml` entrypoints already called the `shared-*` workflows
+directly, so a repository consuming a pipeline rather than an individual
+workflow only has to move its pin to `@v2` and drop `inject_aws_credentials` if
+it set it.
 
 ## Deploy Targets
 
@@ -389,7 +388,7 @@ Example:
 ```yaml
 jobs:
   pipeline:
-    uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@v1
+    uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@v2
     with:
       run_build: true
       run_test: true
@@ -441,7 +440,7 @@ Call either directly until a template exists:
 ```yaml
 jobs:
   branch-name:
-    uses: <org>/ci-templates/.github/workflows/shared-validate-source-branch.yml@v1
+    uses: <org>/ci-templates/.github/workflows/shared-validate-source-branch.yml@v2
     with:
       target_branch: develop
       allowed_prefixes: 'feature/,bugfix/,hotfix/'
@@ -488,7 +487,7 @@ the job:
 ```yaml
 jobs:
   pipeline:
-    uses: Codehunters-IO/ci-templates/.github/workflows/java-main-pipeline.yml@v1
+    uses: Codehunters-IO/ci-templates/.github/workflows/java-main-pipeline.yml@v2
     permissions:
       contents: write
       packages: write
@@ -538,32 +537,28 @@ mode-600 file, sourced and removed on the far side.
 
 **`docker-compose.yml`.** `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` were
 written into it in clear text, and that file persists in the deploy directory
-with default permissions long after the deploy finishes. They now go to
-`.aws.env`, created under `umask 077` and pulled in through compose's
-`env_file`.
+with default permissions long after the deploy finishes. Late 1.x moved them to
+a mode-600 `.aws.env` behind an opt-in input; v2 stops sending them at all.
 
-Two things this does **not** fix, both worth knowing:
+v2 never puts the pipeline credentials in the container. They are build-plane
+keys that can push to ECR, so they stay on the host side for the ECR login and
+pull, and nothing in the compose file passes them on. The application gets its
+own credentials one of two ways:
 
-- The values still become container environment, so `docker inspect` shows
-  them. Only not sending them removes that.
-- `container_env_vars` is still written inline into `docker-compose.yml`. If a
-  consumer puts a database password there, it is in that file. Moving it would
-  change substitution semantics for every consumer at once, so it is a separate
-  decision rather than a side effect of this one.
+- **An EC2 instance profile.** Give the instance an IAM role and the
+  application reads short-lived credentials from the instance metadata service,
+  with no long-lived key on the box at all.
+- **A scoped runtime key** through `container_env_vars`, limited to what the
+  application itself calls.
 
-The real fix for the credentials is to stop shipping them. `inject_aws_credentials`
-defaults to `false`, so leaving it unset already does that — no secrets go
-onto the box. The snippet below is only for a caller that currently sets it
-to `true` and wants back to that default:
+A host last deployed through `@v1` with `inject_aws_credentials: true` still
+holds the `.aws.env` that release wrote; the v2 deploy deletes it.
 
-```yaml
-with:
-  inject_aws_credentials: false
-```
-
-Give the instance an IAM role and the application reads short-lived credentials
-from the instance metadata service, with no long-lived key on the box at all.
-The input warns at run time when set to `true`; it is going away in v2.
+One thing this does **not** fix: `container_env_vars` is still written inline
+into `docker-compose.yml`, so a scoped key or a database password passed there
+is in that file. Moving it would change substitution semantics for every
+consumer at once, so it is a separate decision rather than a side effect of
+this one.
 
 ### WireGuard VPN (`deploy_target: ec2-vpn` only)
 
@@ -749,7 +744,7 @@ The Java stack takes the same input. `java-build`, `java-test`, `java-owasp`,
 `actions/setup-java` when it is set and take the JDK from the image:
 
 ```yaml
-uses: Codehunters-IO/ci-templates/.github/workflows/java-main-pipeline.yml@v1
+uses: Codehunters-IO/ci-templates/.github/workflows/java-main-pipeline.yml@v2
 with:
   container_image: 'ghcr.io/codehunters-io/ci-base-images:1'
 ```

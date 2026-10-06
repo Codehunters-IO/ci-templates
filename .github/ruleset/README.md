@@ -20,8 +20,8 @@ The five org-level files carry a `repository_name` condition and `ci-templates` 
 none of their patterns, which is how this repository went unprotected for so long: until
 the repo-level rulesets were applied, anyone with write access could push straight to
 `develop` or `main`, force-push over either, or delete them — and `main` is what every
-consumer's `@v1` alias resolves to. The repo-level files have no `repository_name`
-condition because repo-level rulesets do not take one.
+consumer's floating major alias (`@v2` today) resolves to. The repo-level files have no
+`repository_name` condition because repo-level rulesets do not take one.
 
 **The org-level files cannot be applied at all on the current plan.** It is not a question
 of scope: `gh api orgs/Codehunters-IO/rulesets` answers `403 Upgrade to GitHub Team`
@@ -127,7 +127,8 @@ back, and squash-only leaves cherry-pick as the path. Add `merge` to `develop`'s
 
 ## Why the tags need two rulesets
 
-`v1` is what every consumer resolves. Until these were applied nothing protected it:
+The floating major alias is what every consumer resolves (`v1` then, `v2` now). Until
+these were applied nothing protected it:
 `gh api repos/Codehunters-IO/ci-templates/rules/branches/refs%2Ftags%2Fv1` returned zero
 rules, so anyone with write access could delete the alias or repoint it at an arbitrary
 commit, and the next pipeline in every consuming repository would run whatever they chose.

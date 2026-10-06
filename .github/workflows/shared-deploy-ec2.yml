@@ -55,11 +55,6 @@ on:
         required: false
         type: string
         default: ''
-      inject_aws_credentials:
-        description: 'DEPRECATED. Put the pipeline AWS credentials in the container environment. These are build-plane keys that can push to ECR, so any code execution in the app reads them out of /proc/self/environ and can overwrite the image it is running. Prefer an EC2 instance profile, or pass a scoped runtime key through container_env_vars. Removed in v2.'
-        required: false
-        type: boolean
-        default: false
 
     secrets:
       AWS_ECR_URL:
@@ -134,12 +129,7 @@ jobs:
           INTERNAL_PORT: ${{ inputs.internal_port }}
           CONTAINER_ENV_VARS: ${{ inputs.container_env_vars }}
           EXTRA_VOLUMES: ${{ inputs.extra_volumes }}
-          INJECT_AWS_CREDENTIALS: ${{ inputs.inject_aws_credentials }}
         run: |
-          if [ "${INJECT_AWS_CREDENTIALS}" = "true" ]; then
-            echo "::warning::inject_aws_credentials is on: this deploy puts the pipeline's AWS keys inside the application container. They can push to ECR. Move to an EC2 instance profile or a scoped runtime key; this input is removed in v2."
-          fi
-
           # Computed on the runner and shipped in deploy.env: the compose file and
           # the pull live in deploy.sh, which runs on the host and sees only that file.
           IMAGE_REPO="${AWS_ECR_URL}/${REPO_NAME}"
@@ -198,18 +188,11 @@ jobs:
           CONTAINER_ENV_VARS=$(echo "${CONTAINER_ENV_VARS_B64}" | base64 -d)
           EXTRA_VOLUMES=$(echo "${EXTRA_VOLUMES_B64}" | base64 -d)
 
-          # AWS credentials for the application, kept out of docker-compose.yml.
-          # umask inside a subshell rather than chmod afterwards: chmod leaves a
-          # window in which the file already exists and is world-readable.
-          if [ "${INJECT_AWS_CREDENTIALS}" = "true" ]; then
-            ( umask 077
-              printf 'AWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\n' \
-                "${AWS_ACCESS_KEY_ID}" "${AWS_SECRET_ACCESS_KEY}" > .aws.env )
-            echo "Wrote .aws.env (mode $(stat -c '%a' .aws.env))"
-          else
-            rm -f .aws.env
-            echo "inject_aws_credentials=false - nothing written; the instance profile supplies credentials."
-          fi
+          # The container never gets the pipeline's AWS keys: they can push to ECR, and
+          # the application reads its own credentials from the instance profile. A host
+          # last deployed by a v1 caller may still hold the .aws.env that v1 wrote with
+          # those keys, so it is removed here rather than left on disk.
+          rm -f .aws.env
 
           # Create docker-compose.yml (standard name)
           COMPOSE_FILE_NAME="docker-compose.yml"
@@ -225,13 +208,6 @@ jobs:
             echo "      - APP_NAME=${REPO_NAME}"
             echo "      - PATH_LOGS=/app/log/${REPO_NAME}"
             echo "      - AWS_REGION=${AWS_REGION}"
-            # The two keys are deliberately not echoed here. docker-compose.yml
-            # persists in the deploy directory with default permissions long
-            # after the deploy; they go to .aws.env, mode 600, referenced below.
-            if [ "${INJECT_AWS_CREDENTIALS}" = "true" ]; then
-              echo "    env_file:"
-              echo "      - .aws.env"
-            fi
             if [ -n "${CONTAINER_ENV_VARS}" ]; then
               while IFS= read -r line; do
                 if [ -n "$line" ]; then
@@ -361,6 +337,8 @@ jobs:
               printf 'IMAGE_TAG=%q\n'               "$IMAGE_TAG"
               printf 'IMAGE_REF=%q\n'               "$IMAGE_REF"
               printf 'AWS_ECR_URL=%q\n'             "$AWS_ECR_URL"
+              # The keys stay on the host side: deploy.sh needs them for the ECR login
+              # and pull, and the compose file names no variable that would pass them on.
               printf 'AWS_ACCESS_KEY_ID=%q\n'       "$AWS_ACCESS_KEY_ID"
               printf 'AWS_SECRET_ACCESS_KEY=%q\n'   "$AWS_SECRET_ACCESS_KEY"
               printf 'AWS_REGION=%q\n'              "$AWS_REGION"
@@ -370,7 +348,6 @@ jobs:
               printf 'MEMORY_LIMIT=%q\n'            "$MEMORY_LIMIT"
               printf 'MEMORY_RESERVATION=%q\n'      "$MEMORY_RESERVATION"
               printf 'INTERNAL_PORT=%q\n'           "$INTERNAL_PORT"
-              printf 'INJECT_AWS_CREDENTIALS=%q\n'  "$INJECT_AWS_CREDENTIALS"
               printf 'CONTAINER_ENV_VARS_B64=%q\n'  "$CONTAINER_ENV_VARS_B64"
               printf 'EXTRA_VOLUMES_B64=%q\n'       "$EXTRA_VOLUMES_B64"
             } | ssh $SSH_COMMON_OPTS "${AWS_EC2_USER}@${AWS_EC2_HOST}" 'umask 077 && cat > ~/deploy.env'

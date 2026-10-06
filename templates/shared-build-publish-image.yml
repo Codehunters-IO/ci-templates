@@ -36,7 +36,7 @@ jobs:
     # A release tag, never @main. Consumers copy this file verbatim, so the ref
     # named here is what runs in their repository — @main would push every
     # commit of this repo straight into them with no review and no version bump.
-    uses: Codehunters-IO/ci-templates/.github/workflows/shared-build-publish-image.yml@v1
+    uses: Codehunters-IO/ci-templates/.github/workflows/shared-build-publish-image.yml@v2
     with:
       push_rolling: ${{ inputs.push_rolling || false }}
       # Optional. Receives IMAGE plus each image's smoke_env. Drop it and the
