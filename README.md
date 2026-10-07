@@ -596,6 +596,11 @@ actor, PR title/author/reviewers, commit description, failed stage on failure,
 environment) is auto-derived from context. PR runs flow through `*-main-pipeline` too,
 so the same job covers deploys and PRs.
 
+**What posts:** deploy runs post on every outcome (success, failure, cancelled), since
+that channel is the record of what shipped. PR runs post **only on failure**: every
+push to a PR re-runs the pipeline, so a green post per push would bury the failure
+that needs attention, and a cancelled PR run is the stale one a newer push replaced.
+
 Delivery uses a **Slack bot token** via `chat.postMessage`, with the channel chosen by
 run kind:
 
