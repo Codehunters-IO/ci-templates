@@ -900,6 +900,7 @@ meant the next one started from `docker buildx build --push` and got none of it.
 | `smoke_command` | Run against each built image; `IMAGE` is exported to it | none |
 | `trivyignores` | Trivy ignore file | none |
 | `ignore_policy` | Trivy Rego ignore policy | none |
+| `scanners` | Trivy scanners: `vuln`, or `vuln,secret` | `vuln` |
 | `push` | Push the manifest; `false` builds and scans only | `true` |
 | `push_rolling` | Move rolling tags off the default branch | `false` |
 
@@ -914,6 +915,13 @@ can act on, and a gate that is always red is a gate everybody learns to click
 past. Unfixed advisories are excluded either way: without an upstream patch
 there is nothing the calling repository can do.
 
+**`scanners: vuln,secret` also fails on credentials baked into a layer** — a
+`.npmrc` with a token, a key copied in by a broad `COPY . .`, an `ENV` holding
+a password. Every image inherits whatever its build context had in it, and a
+pushed layer is public to anyone who can pull the tag. Off by default because
+turning it on can fail an image that was green yesterday; set it in all three
+image workflows together so the PR gate, the publish gate and the rescan agree.
+
 The caller must declare `packages: write` and `security-events: write`. A
 reusable workflow cannot grant itself more than its caller has, so omitting the
 second one silently loses the code scanning upload rather than failing.
@@ -921,6 +929,59 @@ second one silently loses the code scanning upload rather than failing.
 `selftest-build-publish-image.yml` builds a fixture through this workflow with
 `push: false` on every pull request that touches it, so it is not YAML that
 first runs in somebody else's repository.
+
+## Signing images
+
+`shared-sign-images.yml` signs what `shared-build-publish-image.yml` pushed,
+with cosign keyless. The SBOM and provenance say what is in an image and how it
+was built; a signature says *who* pushed that digest. Without one, anyone who
+can write to the package can push an image under the same tags.
+
+```yaml
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+  id-token: write          # signing only
+
+jobs:
+  build-publish:
+    uses: Codehunters-IO/ci-templates/.github/workflows/shared-build-publish-image.yml@v2
+    with:
+      images: '[...]'
+  sign:
+    needs: build-publish
+    uses: Codehunters-IO/ci-templates/.github/workflows/shared-sign-images.yml@v2
+```
+
+| Input | Description | Default |
+|-------|-------------|---------|
+| `registry` | Registry the images were pushed to | `ghcr.io` |
+| `runner` | Runner type | `ubuntu-latest` |
+
+**It is a separate workflow because of `id-token: write`.** A reusable workflow
+cannot be granted more than its caller has, so asking for it in the publish
+workflow would make every caller that does not grant it fail before the first
+step. Only callers that want signatures add this job and the permission.
+
+**It signs digests, never tags.** The publish job uploads one `image-digest-*`
+artifact per pushed image; this job signs exactly those. A tag can move between
+the push and the signature, and signing whatever it points at by then would
+vouch for an image this run never built. Every reference is checked before any
+is signed, so a bad one fails the run without leaving half the set signed.
+
+The certificate names the workflow that signed, which is this one, called from
+yours. Verify with:
+
+```bash
+cosign verify ghcr.io/<owner>/<image>@sha256:<digest> \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/Codehunters-IO/ci-templates/\.github/workflows/shared-sign-images\.yml@' \
+  --certificate-github-workflow-repository <owner>/<repo>
+```
+
+`--certificate-github-workflow-repository` is what ties the signature to your
+repository rather than to anyone else who calls the same reusable workflow.
 
 ## Validating images before the merge
 
@@ -943,9 +1004,16 @@ architecture and fails on fixable CVEs. It has no publishing path at all.
 | `shellcheck_scandir` | Directory to lint; empty skips the job | none |
 | `shellcheck_severity` | Lowest severity that fails | `warning` |
 | `trivyignores` / `ignore_policy` | As above | none |
+| `scanners` | As above | `vuln` |
 
 Per image: `name`, `dockerfile`, and optionally `context`, `scan_severity`,
-`smoke_env`.
+`smoke_env`, `max_size_mb`.
+
+**`max_size_mb` is a size budget.** The job always reports the uncompressed size
+of each image per architecture; with a budget set it fails when the image goes
+over. It catches what a diff does not show: a cleanup step that stopped running,
+a package cache that landed in a layer, a dependency that dragged a toolchain
+in. Set it a little above today's size and raise it deliberately.
 
 **Validate every architecture you publish.** A multi-arch manifest validated on
 amd64 only is how an arm64-only break reaches a default branch behind a green
@@ -985,6 +1053,7 @@ quietly wrong three weeks later and nothing in the pipeline says so.
 | `registry` | Container registry | `ghcr.io` |
 | `image_name` | Image repository | calling repo, lowercased |
 | `trivyignores` / `ignore_policy` | As above | none |
+| `scanners` | As above | `vuln` |
 
 Per image: `name`, plus `rolling_tag` and/or `tag_suffix`, and optionally
 `scan_severity`.

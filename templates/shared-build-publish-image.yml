@@ -60,3 +60,13 @@ jobs:
             "smoke_env": "KIND=runtime"
           }
         ]
+
+  # Optional: sign every pushed digest with cosign keyless. Uncomment the job
+  # and add `id-token: write` to the permissions block above. It runs after the
+  # publish job and signs exactly the digests that job pushed. Consumers verify
+  # with `cosign verify` against this repository's workflow identity; see the
+  # ci-templates README, "Signing images".
+  #
+  # sign:
+  #   needs: build-publish
+  #   uses: Codehunters-IO/ci-templates/.github/workflows/shared-sign-images.yml@v2

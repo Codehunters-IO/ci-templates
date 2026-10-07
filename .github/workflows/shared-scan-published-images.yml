@@ -52,6 +52,13 @@ on:
         required: false
         type: string
         default: ''
+      scanners:
+        description: >-
+          Trivy scanners, comma-separated: 'vuln', or 'vuln,secret' to also
+          report credentials baked into a layer. Severity applies to both.
+        required: false
+        type: string
+        default: 'vuln'
       timeout_minutes:
         description: 'Per-image timeout'
         required: false
@@ -117,7 +124,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ steps.ref.outputs.image }}
-          scanners: vuln
+          scanners: ${{ inputs.scanners }}
           vuln-type: os,library
           severity: 'CRITICAL,HIGH'
           ignore-unfixed: true
@@ -140,7 +147,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ steps.ref.outputs.image }}
-          scanners: vuln
+          scanners: ${{ inputs.scanners }}
           vuln-type: os,library
           severity: ${{ env.SCAN_SEVERITY }}
           ignore-unfixed: true
@@ -178,7 +185,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ steps.ref.outputs.image }}
-          scanners: vuln
+          scanners: ${{ inputs.scanners }}
           vuln-type: os,library
           severity: ${{ env.SCAN_SEVERITY }}
           ignore-unfixed: true
