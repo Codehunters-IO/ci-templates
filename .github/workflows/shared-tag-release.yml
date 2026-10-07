@@ -18,6 +18,15 @@ on:
         required: false
         type: string
         default: '(feat)'
+      annotated:
+        description: >-
+          Create an annotated tag. false creates a lightweight tag, which is what a
+          repository must publish when its tags are pinned as reusable-workflow refs:
+          through an annotated tag GitHub cannot resolve a called workflow's nested
+          ./ calls on push events, and the caller aborts at startup.
+        required: false
+        type: boolean
+        default: true
 
     outputs:
       version:
@@ -109,13 +118,18 @@ jobs:
         if: steps.check-tag.outputs.exists == 'false'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANNOTATED: ${{ inputs.annotated }}
         run: |
           TAG="${{ inputs.tag_prefix }}${{ steps.semver.outputs.version }}"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git tag -a "$TAG" -m "Release $TAG"
+          if [ "$ANNOTATED" = "true" ]; then
+            git tag -a "$TAG" -m "Release $TAG"
+          else
+            git tag "$TAG"
+          fi
           git push origin "$TAG"
 
           echo "### Tag Created: $TAG" >> $GITHUB_STEP_SUMMARY

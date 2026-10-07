@@ -295,11 +295,19 @@ The four stacks that publish an image take the same inputs. Remove
 ### Pinning a version that will not move
 
 ```yaml
-uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@v2.0.0
+uses: <org>/ci-templates/.github/workflows/java-main-pipeline.yml@<commit-sha>  # v2.0.0
 ```
 
 Use this when a pipeline must not pick up anything, including fixes. `@v2` is the normal
 choice; `@main` only to test an unreleased change on purpose.
+
+**Pin an exact version by its commit SHA, not by `@v2.0.0` or older.** Release tags up to
+`v2.0.0` were published as annotated tags, and those are immutable. Through an annotated
+tag, GitHub cannot resolve a `*-main-pipeline`'s nested `./` workflow calls on push
+events, so a push-triggered caller aborts at startup with zero jobs and no log.
+Pull-request runs, and workflows that call nothing else, are not affected. The `v1` and
+`v2` aliases are lightweight tags, and so is every release from `v2.0.1` on, so `@v2` and
+later exact tags both work.
 
 ## Versioning
 
