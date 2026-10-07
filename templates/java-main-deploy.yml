@@ -7,8 +7,8 @@
 # Production is NOT deployed here. Promotion to prod is a MANUAL git tag (vX.Y.Z)
 # handled by tag-deploy.yml — do NOT enable run_tag here (tags must be created by a human).
 #
-# Required secrets: Same as develop-deploy.yml. Slack notifications are handled by a
-# separate workflow_run notifier (templates/notify.yml) via the org variable SLACK_WEBHOOK_URL.
+# Required secrets: Same as develop-deploy.yml. Slack notifications are built into the
+# pipeline (its notify job); see develop-deploy.yml or the README for the org settings.
 
 name: Deploy to Cert
 
