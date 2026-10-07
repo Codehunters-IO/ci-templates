@@ -596,6 +596,11 @@ actor, PR title/author/reviewers, commit description, failed stage on failure,
 environment) is auto-derived from context. PR runs flow through `*-main-pipeline` too,
 so the same job covers deploys and PRs.
 
+**What posts:** deploy runs post on every outcome (success, failure, cancelled), since
+that channel is the record of what shipped. PR runs post **only on failure**: every
+push to a PR re-runs the pipeline, so a green post per push would bury the failure
+that needs attention, and a cancelled PR run is the stale one a newer push replaced.
+
 Delivery uses a **Slack bot token** via `chat.postMessage`, with the channel chosen by
 run kind:
 
@@ -1009,11 +1014,17 @@ architecture and fails on fixable CVEs. It has no publishing path at all.
 Per image: `name`, `dockerfile`, and optionally `context`, `scan_severity`,
 `smoke_env`, `max_size_mb`.
 
-**`max_size_mb` is a size budget.** The job always reports the uncompressed size
-of each image per architecture; with a budget set it fails when the image goes
-over. It catches what a diff does not show: a cleanup step that stopped running,
-a package cache that landed in a layer, a dependency that dragged a toolchain
-in. Set it a little above today's size and raise it deliberately.
+**`max_size_mb` is a size budget.** The job always reports the size of each
+image per architecture; with a budget set it fails when the image goes over. It
+catches what a diff does not show: a cleanup step that stopped running, a
+package cache that landed in a layer, a dependency that dragged a toolchain in.
+
+**Calibrate against the job summary, never a local pull.** The number is the
+runner's `docker image inspect` size. GitHub's runners use the containerd image
+store, which counts the compressed layers as well as the unpacked ones, so it
+comes out 2-3x what Docker Desktop reports for the same image. Budgets taken
+from a local pull fail every image on the first run. Take the larger of the
+architectures from a green run, add ~15%, and raise it deliberately.
 
 **Validate every architecture you publish.** A multi-arch manifest validated on
 amd64 only is how an arm64-only break reaches a default branch behind a green
