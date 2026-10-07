@@ -21,6 +21,12 @@ jobs:
   tag:
     name: Tag Release
     uses: ./.github/workflows/shared-tag-release.yml
+    with:
+      # Lightweight, not annotated: consumers pin these tags as reusable-workflow
+      # refs, and through an annotated tag GitHub cannot resolve a *-main-pipeline's
+      # nested ./ calls on push events -- every push-triggered caller aborted at
+      # startup with zero jobs. Pull-request runs and leaf workflows were unaffected.
+      annotated: false
 
   major-alias:
     name: Move floating major tag
@@ -47,7 +53,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch --tags --force
 
-          git tag -f -a "$MAJOR" -m "Floating alias for ${VERSION_TAG}"
+          # Lightweight, for the same reason as the version tag above.
+          git tag -f "$MAJOR" "${VERSION_TAG}^{commit}"
           git push origin "refs/tags/${MAJOR}" --force
 
           echo "### ${MAJOR} now points at ${VERSION_TAG}" >> "$GITHUB_STEP_SUMMARY"
