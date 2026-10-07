@@ -28,6 +28,8 @@ on:
                              (default 'CRITICAL,HIGH')
             smoke_env        optional, KEY=VALUE lines exported before
                              smoke_command runs
+            max_size_mb      optional, uncompressed size in MB above which
+                             the job fails. Unset reports the size only.
         required: true
         type: string
       platforms:
@@ -105,6 +107,13 @@ on:
         required: false
         type: string
         default: ''
+      scanners:
+        description: >-
+          Trivy scanners, comma-separated: 'vuln', or 'vuln,secret' to also
+          fail on credentials baked into a layer. Severity applies to both.
+        required: false
+        type: string
+        default: 'vuln'
       timeout_minutes:
         description: 'Per-image-per-architecture timeout'
         required: false
@@ -213,6 +222,7 @@ jobs:
     env:
       LOCAL_IMAGE: local-build:pr-${{ matrix.image.name }}-${{ matrix.arch.arch }}
       SCAN_SEVERITY: ${{ matrix.image.scan_severity || 'CRITICAL,HIGH' }}
+      SCANNERS: ${{ inputs.scanners }}
       BUILD_CONTEXT: ${{ matrix.image.context || '.' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -261,7 +271,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ env.LOCAL_IMAGE }}
-          scanners: vuln
+          scanners: ${{ inputs.scanners }}
           vuln-type: os,library
           severity: ${{ env.SCAN_SEVERITY }}
           ignore-unfixed: true
@@ -280,7 +290,7 @@ jobs:
           {
             echo "### Vulnerability scan — ${{ matrix.image.name }} (${{ matrix.arch.arch }})"
             echo ""
-            echo "Gate: \`${SCAN_SEVERITY}\`, fixable only."
+            echo "Gate: \`${SCAN_SEVERITY}\`, fixable only. Scanners: \`${SCANNERS}\`."
             echo ""
             echo '```'
             if [ -s "${REPORT}" ]; then
@@ -295,7 +305,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ env.LOCAL_IMAGE }}
-          scanners: vuln
+          scanners: ${{ inputs.scanners }}
           vuln-type: os,library
           severity: ${{ env.SCAN_SEVERITY }}
           ignore-unfixed: true
@@ -306,12 +316,27 @@ jobs:
           timeout: '15m'
           skip-setup-trivy: true
 
-      - name: Report image size
+      # A size budget catches what a review does not see: a cleanup that stopped
+      # running, a cache that ended up in a layer, a dependency that dragged a
+      # toolchain in. Report always; fail only where the image declares a budget.
+      - name: Image size
         if: always()
+        env:
+          MAX_MB: ${{ matrix.image.max_size_mb }}
         run: |
+          set -euo pipefail
           SIZE=$(docker image inspect "${LOCAL_IMAGE}" --format '{{.Size}}')
+          MB=$((SIZE / 1000 / 1000))
           {
             echo "### Image Size — ${{ matrix.image.name }} (${{ matrix.arch.arch }}, uncompressed)"
             echo ""
-            echo "**$((SIZE / 1024 / 1024)) MB**"
+            if [ -n "${MAX_MB}" ]; then
+              echo "**${MB} MB** of a ${MAX_MB} MB budget"
+            else
+              echo "**${MB} MB** (no budget set)"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "${MAX_MB}" ] && [ "${MB}" -gt "${MAX_MB}" ]; then
+            echo "::error::${{ matrix.image.name }} (${{ matrix.arch.arch }}) is ${MB} MB, over its ${MAX_MB} MB budget."
+            exit 1
+          fi

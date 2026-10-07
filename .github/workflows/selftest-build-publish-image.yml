@@ -26,6 +26,7 @@ jobs:
       push: false
       platforms: 'linux/amd64'
       smoke_command: './.github/selftest/smoke.sh'
+      scanners: 'vuln,secret'
       images: |
         [
           {

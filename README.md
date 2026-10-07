@@ -900,6 +900,7 @@ meant the next one started from `docker buildx build --push` and got none of it.
 | `smoke_command` | Run against each built image; `IMAGE` is exported to it | none |
 | `trivyignores` | Trivy ignore file | none |
 | `ignore_policy` | Trivy Rego ignore policy | none |
+| `scanners` | Trivy scanners: `vuln`, or `vuln,secret` | `vuln` |
 | `push` | Push the manifest; `false` builds and scans only | `true` |
 | `push_rolling` | Move rolling tags off the default branch | `false` |
 
@@ -913,6 +914,13 @@ gating it on HIGH blocks every pull request on `gcc` and `git` advisories nobody
 can act on, and a gate that is always red is a gate everybody learns to click
 past. Unfixed advisories are excluded either way: without an upstream patch
 there is nothing the calling repository can do.
+
+**`scanners: vuln,secret` also fails on credentials baked into a layer** — a
+`.npmrc` with a token, a key copied in by a broad `COPY . .`, an `ENV` holding
+a password. Every image inherits whatever its build context had in it, and a
+pushed layer is public to anyone who can pull the tag. Off by default because
+turning it on can fail an image that was green yesterday; set it in all three
+image workflows together so the PR gate, the publish gate and the rescan agree.
 
 The caller must declare `packages: write` and `security-events: write`. A
 reusable workflow cannot grant itself more than its caller has, so omitting the
@@ -943,9 +951,16 @@ architecture and fails on fixable CVEs. It has no publishing path at all.
 | `shellcheck_scandir` | Directory to lint; empty skips the job | none |
 | `shellcheck_severity` | Lowest severity that fails | `warning` |
 | `trivyignores` / `ignore_policy` | As above | none |
+| `scanners` | As above | `vuln` |
 
 Per image: `name`, `dockerfile`, and optionally `context`, `scan_severity`,
-`smoke_env`.
+`smoke_env`, `max_size_mb`.
+
+**`max_size_mb` is a size budget.** The job always reports the uncompressed size
+of each image per architecture; with a budget set it fails when the image goes
+over. It catches what a diff does not show: a cleanup step that stopped running,
+a package cache that landed in a layer, a dependency that dragged a toolchain
+in. Set it a little above today's size and raise it deliberately.
 
 **Validate every architecture you publish.** A multi-arch manifest validated on
 amd64 only is how an arm64-only break reaches a default branch behind a green
@@ -985,6 +1000,7 @@ quietly wrong three weeks later and nothing in the pipeline says so.
 | `registry` | Container registry | `ghcr.io` |
 | `image_name` | Image repository | calling repo, lowercased |
 | `trivyignores` / `ignore_policy` | As above | none |
+| `scanners` | As above | `vuln` |
 
 Per image: `name`, plus `rolling_tag` and/or `tag_suffix`, and optionally
 `scan_severity`.

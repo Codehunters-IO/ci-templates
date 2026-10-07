@@ -69,6 +69,13 @@ on:
         required: false
         type: string
         default: ''
+      scanners:
+        description: >-
+          Trivy scanners, comma-separated: 'vuln', or 'vuln,secret' to also
+          fail on credentials baked into a layer. Severity applies to both.
+        required: false
+        type: string
+        default: 'vuln'
       push_rolling:
         description: >-
           Push each image's rolling_tag. Defaults to true on the default branch
@@ -234,7 +241,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ contains(inputs.platforms, 'linux/amd64') && env.LOCAL_AMD64 || env.LOCAL_ARM64 }}
-          scanners: vuln
+          scanners: ${{ inputs.scanners }}
           vuln-type: os,library
           severity: 'CRITICAL,HIGH'
           ignore-unfixed: true
@@ -259,7 +266,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ contains(inputs.platforms, 'linux/amd64') && env.LOCAL_AMD64 || env.LOCAL_ARM64 }}
-          scanners: vuln
+          scanners: ${{ inputs.scanners }}
           vuln-type: os,library
           severity: ${{ env.SCAN_SEVERITY }}
           ignore-unfixed: true
@@ -300,7 +307,7 @@ jobs:
               echo "Not pushed (push: false)."
             fi
             echo ""
-            echo "Gate: \`${SCAN_SEVERITY}\`, fixable only."
+            echo "Gate: \`${SCAN_SEVERITY}\`, fixable only. Scanners: \`${{ inputs.scanners }}\`."
             echo ""
             echo "| Tag |"
             echo "|-----|"
