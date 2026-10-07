@@ -28,7 +28,7 @@ on:
                              (default 'CRITICAL,HIGH')
             smoke_env        optional, KEY=VALUE lines exported before
                              smoke_command runs
-            max_size_mb      optional, uncompressed size in MB above which
+            max_size_mb      optional, size in MB as this job reports it, above which
                              the job fails. Unset reports the size only.
         required: true
         type: string
@@ -328,7 +328,7 @@ jobs:
           SIZE=$(docker image inspect "${LOCAL_IMAGE}" --format '{{.Size}}')
           MB=$((SIZE / 1000 / 1000))
           {
-            echo "### Image Size — ${{ matrix.image.name }} (${{ matrix.arch.arch }}, uncompressed)"
+            echo "### Image Size — ${{ matrix.image.name }} (${{ matrix.arch.arch }}, as the runner reports it)"
             echo ""
             if [ -n "${MAX_MB}" ]; then
               echo "**${MB} MB** of a ${MAX_MB} MB budget"
