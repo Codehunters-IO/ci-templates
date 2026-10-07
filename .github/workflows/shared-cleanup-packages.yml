@@ -66,6 +66,14 @@ on:
         required: false
         type: number
         default: 0
+      prune_signatures:
+        description: >-
+          Delete cosign signatures and attestations (tags `sha256-<digest>`,
+          `.sig`, `.att`) whose image is gone or about to be deleted. They are
+          tagged, so without this they outlive their image forever.
+        required: false
+        type: boolean
+        default: true
       dry_run:
         description: 'Only report what would be deleted. Default true — deletion is opt-in.'
         required: false
@@ -95,6 +103,9 @@ on:
       retired:
         description: 'Tagged versions retired by keep_releases'
         value: ${{ jobs.cleanup.outputs.retired }}
+      orphan_signatures:
+        description: 'Signature and attestation versions whose image is gone or retiring'
+        value: ${{ jobs.cleanup.outputs.orphan_signatures }}
       deletable:
         description: >-
           Retired images plus untagged, unreferenced versions beyond
@@ -116,6 +127,7 @@ jobs:
       untagged: ${{ steps.plan.outputs.untagged }}
       referenced: ${{ steps.plan.outputs.referenced }}
       retired: ${{ steps.plan.outputs.retired }}
+      orphan_signatures: ${{ steps.plan.outputs.orphan_signatures }}
       deletable: ${{ steps.plan.outputs.deletable }}
 
     steps:
@@ -140,6 +152,7 @@ jobs:
           PKG: ${{ steps.resolve.outputs.package }}
           KEEP: ${{ inputs.min_versions_to_keep }}
           KEEP_RELEASES: ${{ inputs.keep_releases }}
+          PRUNE_SIGNATURES: ${{ inputs.prune_signatures }}
         run: |
           set -euo pipefail
           python3 - <<'PY' | tee plan.log
@@ -148,6 +161,7 @@ jobs:
           owner, pkg = os.environ["OWNER"], os.environ["PKG"]
           keep = int(os.environ["KEEP"])
           keep_releases = int(os.environ["KEEP_RELEASES"])
+          prune_signatures = os.environ["PRUNE_SIGNATURES"] == "true"
           repo_path = f"{owner}/{pkg}".lower()
 
           def api(path, *args):
@@ -235,25 +249,55 @@ jobs:
               retired = [v for v in versions if v["tags"] and all(map(retirable, v["tags"]))]
           retired_names = {v["name"] for v in retired}
 
+          # Signatures and attestations. On a registry without the OCI referrers
+          # API (GHCR among them) cosign stores each one as its own version,
+          # tagged after the digest it signs: `sha256-<hex>`, or the older
+          # `.sig` / `.att` suffixes. Being tagged, they would otherwise be
+          # protected forever and outlive the image they vouch for. They are
+          # judged by their subject instead: kept while the subject is, deleted
+          # once it is not. Only versions whose every tag has this shape count.
+          ATTACHED = re.compile(r"^sha256-([0-9a-f]{64})(?:\.(?:sig|att|sbom))?$")
+          attachments = []
+          if prune_signatures:
+              attachments = [v for v in versions if v["tags"]
+                             and all(ATTACHED.match(t) for t in v["tags"])]
+          attachment_names = {v["name"] for v in attachments}
+
           # Everything reachable from a kept tag. One pass is enough in practice,
           # but the walk is transitive so a nested index cannot slip through.
-          referenced, seen = set(), set()
-          queue = [v["name"] for v in versions if v["tags"] and v["name"] not in retired_names]
-          unreadable = []
-          while queue:
-              d = queue.pop()
-              if d in seen:
-                  continue
-              seen.add(d)
-              try:
-                  m = manifest(d)
-              except (urllib.error.HTTPError, urllib.error.URLError) as e:
-                  unreadable.append((d, str(e)))
-                  continue
-              for child in m.get("manifests", []):
-                  cd = child["digest"]
-                  referenced.add(cd)
-                  queue.append(cd)
+          referenced, seen, unreadable = set(), set(), []
+
+          def walk(start):
+              queue = list(start)
+              while queue:
+                  d = queue.pop()
+                  if d in seen:
+                      continue
+                  seen.add(d)
+                  try:
+                      m = manifest(d)
+                  except (urllib.error.HTTPError, urllib.error.URLError) as e:
+                      unreadable.append((d, str(e)))
+                      continue
+                  for child in m.get("manifests", []):
+                      referenced.add(child["digest"])
+                      queue.append(child["digest"])
+
+          kept_tagged = [v["name"] for v in versions if v["tags"]
+                         and v["name"] not in retired_names
+                         and v["name"] not in attachment_names]
+          walk(kept_tagged)
+
+          # A signature stays while its subject is alive: a kept tagged image or
+          # something one of them reaches. An untagged orphan still inside the
+          # min_versions_to_keep window is not alive here: nothing can pull it
+          # by tag, so nothing will ask for its signature.
+          alive = set(kept_tagged) | referenced
+          def subjects(v):
+              return {"sha256:" + ATTACHED.match(t).group(1) for t in v["tags"]}
+          kept_attachments = [v for v in attachments if subjects(v) & alive]
+          orphan_signatures = [v for v in attachments if not subjects(v) & alive]
+          walk(v["name"] for v in kept_attachments)
 
           tagged = [v for v in versions if v["tags"]]
           untagged = [v for v in versions if not v["tags"]]
@@ -261,7 +305,8 @@ jobs:
           # A retired version a kept tag still reaches stays: a digest can be
           # shared, and the walk above is what decides.
           candidates = ([v for v in untagged if v["name"] not in referenced]
-                        + [v for v in retired if v["name"] not in referenced])
+                        + [v for v in retired if v["name"] not in referenced]
+                        + [v for v in orphan_signatures if v["name"] not in referenced])
 
           # Group the candidates back into the images they came from. An orphan
           # is rarely one version: a multi-arch image a tag has moved off leaves
@@ -298,7 +343,10 @@ jobs:
           # A retired image goes whole and is not subject to min_versions_to_keep:
           # retiring it is the point. Orphans are retained whole until at least
           # `keep` versions are held, rounding up to an image boundary.
-          retired_groups = [g for g in groups if any(m["tags"] for m in g)]
+          orphan_names = {v["name"] for v in orphan_signatures}
+          signature_groups = [g for g in groups if any(m["name"] in orphan_names for m in g)]
+          retired_groups = [g for g in groups if any(m["tags"] for m in g)
+                            and not any(m["name"] in orphan_names for m in g)]
           orphan_groups = [g for g in groups if not any(m["tags"] for m in g)]
           retained_groups, held = 0, 0
           for g in orphan_groups:
@@ -307,12 +355,14 @@ jobs:
               retained_groups += 1
               held += len(g)
           deletable = ([v for g in retired_groups for v in g]
+                       + [v for g in signature_groups for v in g]
                        + [v for g in orphan_groups[retained_groups:] for v in g])
 
           out = {
               "total": len(versions), "tagged": len(tagged), "untagged": len(untagged),
               "referenced": len(reachable_untagged),
               "retired": sum(1 for g in retired_groups for m in g if m["tags"]),
+              "orphan_signatures": sum(len(g) for g in signature_groups),
               "deletable": len(deletable),
           }
           with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
@@ -332,6 +382,9 @@ jobs:
                   shown = ", ".join(".".join(map(str, r)) for r in sorted(kept, reverse=True))
                   fh.write(f"| Releases kept (`keep_releases: {keep_releases}`) | {shown or 'none'} |\n")
                   fh.write(f"| Tagged versions retired | {out['retired']} in {len(retired_groups)} images |\n")
+              if prune_signatures:
+                  fh.write(f"| Signatures kept (subject alive) | {len(kept_attachments)} |\n")
+                  fh.write(f"| Signatures orphaned (subject gone or retiring) | {len(orphan_signatures)} |\n")
               fh.write(f"| Orphaned images (index + platforms + attestations) | {len(orphan_groups)} |\n")
               fh.write(f"| Retained by `min_versions_to_keep` | {held} in {retained_groups} images |\n")
               fh.write(f"| **Would be deleted** | **{out['deletable']}** |\n\n")

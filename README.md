@@ -1130,6 +1130,7 @@ of the registry was garbage nothing could pull.
 | `owner` | Org or user owning the package | repository owner |
 | `min_versions_to_keep` | Unreferenced untagged versions retained, newest first, rounded up to whole images | `10` |
 | `keep_releases` | Semver releases to keep; older releases and `sha-*` build tags are retired. `0` retires nothing tagged | `0` |
+| `prune_signatures` | Delete cosign signatures and attestations whose image is gone or retiring | `true` |
 | `dry_run` | Only report | `true` |
 
 **Untagged is not unreachable.** A multi-arch image is a tagged index plus
@@ -1147,6 +1148,15 @@ release shares, or a `sha-*` build tag. Anything else on it — `latest`, a
 rolling variant tag, a branch tag, a tag this does not recognise — keeps it.
 A retired image goes whole, index, platforms and attestations, and
 `min_versions_to_keep` does not apply to it.
+
+**Signatures go with their image.** On a registry without the OCI referrers
+API, GHCR among them, cosign stores each signature as its own version tagged
+after the digest it signs (`sha256-<hex>`, or `.sig` / `.att`). Those tags would
+otherwise protect the signature forever, long after its image was deleted. With
+`prune_signatures` (the default) a version whose every tag has that shape is
+judged by its subject: kept while the image is kept or reachable from a kept
+tag, deleted once it is not. A version that also carries any other tag is left
+alone.
 
 Retiring a release breaks every consumer still pinned to it, and a deleted
 version cannot be restored. Move the consumers first, then read the plan.
