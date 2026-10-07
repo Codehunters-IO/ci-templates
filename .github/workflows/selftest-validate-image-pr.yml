@@ -31,12 +31,16 @@ jobs:
       gate_command: './.github/selftest/gate.sh'
       gate_name: 'Self-test Gate'
       shellcheck_scandir: './.github/selftest'
+      # Exercise the opt-in paths: the secret scanner and a size budget the
+      # Alpine fixture (~8 MB) sits well inside.
+      scanners: 'vuln,secret'
       images: |
         [
           {
             "name": "selftest",
             "dockerfile": ".github/selftest/Dockerfile",
             "scan_severity": "CRITICAL",
-            "smoke_env": "EXPECT_MARKER=selftest"
+            "smoke_env": "EXPECT_MARKER=selftest",
+            "max_size_mb": 50
           }
         ]
