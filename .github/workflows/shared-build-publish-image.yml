@@ -296,6 +296,25 @@ jobs:
             type=gha,scope=${{ matrix.image.name }}-arm64
           cache-to: type=gha,scope=${{ matrix.image.name }}-manifest,mode=max
 
+      # One small artifact per image, holding the reference that was pushed.
+      # shared-sign-images.yml reads these. Signing cannot happen in this job:
+      # it needs id-token: write, and a reusable workflow that asked for it
+      # would fail to start for every caller that does not grant it.
+      - name: Record pushed digest
+        if: inputs.push && steps.push.outputs.digest != ''
+        env:
+          REF: ${{ inputs.registry }}/${{ steps.repo.outputs.name }}@${{ steps.push.outputs.digest }}
+        run: echo "${REF}" > "image-digest-${{ matrix.image.name }}.txt"
+
+      - name: Upload pushed digest
+        if: inputs.push && steps.push.outputs.digest != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: image-digest-${{ matrix.image.name }}
+          path: image-digest-${{ matrix.image.name }}.txt
+          retention-days: 1
+          if-no-files-found: error
+
       - name: Report
         run: |
           {
