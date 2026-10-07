@@ -5,8 +5,8 @@ name: Shared - Notifications
 #
 # Delivery: Slack bot token via chat.postMessage (secret SLACK_BOT_TOKEN, propagated
 # with `secrets: inherit`). Channel is chosen by run kind from org-level `vars`:
-#   - PR runs      -> vars.SLACK_CHANNEL_PR
-#   - deploy runs  -> vars.SLACK_CHANNEL_DEPLOY
+#   - PR runs      -> vars.SLACK_CHANNEL_PR      (failures only)
+#   - deploy runs  -> vars.SLACK_CHANNEL_DEPLOY  (every outcome)
 #   - fallback     -> vars.SLACK_CHANNEL
 on:
   workflow_call:
@@ -69,6 +69,15 @@ jobs:
             KIND="pr";     CHANNEL="${CHANNEL_PR:-$CHANNEL_DEFAULT}"; EMOJI="🔀"
           else
             KIND="deploy"; CHANNEL="${CHANNEL_DEPLOY:-$CHANNEL_DEFAULT}"; EMOJI=""
+          fi
+
+          # PR runs post only when they fail. Every push to a PR re-runs the pipeline,
+          # so a green post per push buries the one that needs attention; a cancelled
+          # run is the stale one a newer push replaced. Deploy runs post on any
+          # outcome: that channel is the record of what shipped.
+          if [ "$KIND" = pr ] && [ "$STATUS" != failure ]; then
+            echo "PR run finished with status=${STATUS}; PR runs notify on failure only."
+            exit 0
           fi
           if [ -z "$CHANNEL" ]; then
             echo "::warning::No Slack channel variable set for kind=$KIND, skipping"
