@@ -1161,6 +1161,11 @@ alone.
 Retiring a release breaks every consumer still pinned to it, and a deleted
 version cannot be restored. Move the consumers first, then read the plan.
 
+**A transient API error does not strand the run.** Each delete retries with
+backoff, a 404 counts as already gone, and an id that still fails is recorded
+while the rest go ahead; the job fails at the end listing what is left. A
+re-run recomputes the plan and picks up where the last one stopped.
+
 The plan step runs first and always. It prints the counts, the releases kept
 and the release tags retired to the step summary, so the deletion is reviewable
 before it happens. The scheduled run only ever plans; deleting means
