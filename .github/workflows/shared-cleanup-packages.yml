@@ -414,18 +414,66 @@ jobs:
           # tag can reach.
           BASE="/orgs/${OWNER}/packages/container/${PKG}/versions"
           gh api "${BASE}?per_page=1" >/dev/null 2>&1 || BASE="/users/${OWNER}/packages/container/${PKG}/versions"
-          n=0
+
+          # One transient API error used to end the run: under `set -e` the
+          # first failed DELETE killed the loop, and a 5xx with an empty body
+          # (`unexpected end of JSON input`) left 153 of 154 planned versions in
+          # place. Each DELETE now retries with backoff; a 404 means the version
+          # is already gone (a previous partial run, a concurrent cleanup) and
+          # counts as done. An id that still fails is recorded and the loop
+          # moves on, so one bad id cannot strand the rest. The step still fails
+          # at the end if anything is left, listing what.
+          attempts=4
+          backoff="${PRUNE_BACKOFF_SECONDS:-2}"
+
+          # 0 deleted, 2 already gone, 1 failed after every attempt.
+          delete_version() {
+            local id="$1" attempt err=""
+            for ((attempt = 1; attempt <= attempts; attempt++)); do
+              if err=$(gh api -X DELETE "${BASE}/${id}" --silent 2>&1); then
+                return 0
+              fi
+              case "${err}" in
+                *"HTTP 404"*) return 2 ;;
+              esac
+              if [ "${attempt}" -lt "${attempts}" ]; then
+                sleep $((backoff * (1 << (attempt - 1))))
+              fi
+            done
+            echo "::warning::version ${id} not deleted after ${attempts} attempts: ${err}"
+            return 1
+          }
+
+          deleted=0 gone=0 failed=()
           while IFS= read -r id; do
             [ -n "${id}" ] || continue
-            gh api -X DELETE "${BASE}/${id}" --silent
-            n=$((n + 1))
+            rc=0
+            delete_version "${id}" || rc=$?
+            case "${rc}" in
+              0) deleted=$((deleted + 1)) ;;
+              2) gone=$((gone + 1)) ;;
+              *) failed+=("${id}") ;;
+            esac
           done < deletable-ids.txt
-          echo "Deleted ${n} versions."
+
+          echo "Deleted ${deleted}, already gone ${gone}, failed ${#failed[@]}."
           {
             echo "### Deleted"
             echo ""
-            echo "Removed ${n} versions from \`${OWNER}/${PKG}\`: retired releases and builds, and unreferenced untagged versions."
+            echo "| | Versions |"
+            echo "|---|---:|"
+            echo "| Deleted | ${deleted} |"
+            echo "| Already gone (404) | ${gone} |"
+            echo "| Failed after ${attempts} attempts | ${#failed[@]} |"
+            if [ "${#failed[@]}" -gt 0 ]; then
+              echo ""
+              echo "Not deleted: \`${failed[*]}\`. Re-run the cleanup: the plan is recomputed, so it picks up where this one stopped."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "::error::${#failed[@]} versions could not be deleted: ${failed[*]}"
+            exit 1
+          fi
 
       - name: Report skip
         if: ${{ inputs.dry_run || steps.plan.outputs.deletable == '0' }}
