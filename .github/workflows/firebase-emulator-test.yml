@@ -1,0 +1,92 @@
+name: Firebase - Emulator Tests
+
+# Suites that run against the Firebase Emulator Suite: security rules,
+# adapter integration tests. The emulators need a JDK, which is the only thing
+# this job adds over firebase-static.yml.
+#
+# The workflow does not start the emulators itself. Each script is expected to
+# wrap its runner in `firebase emulators:exec --project demo-<id> ...`, so the
+# ports, the project id and which emulators start stay in the consumer's
+# firebase.json and package.json -- the same command a developer runs locally.
+# A `demo-` project id keeps firebase-tools from ever reaching real resources,
+# which is why this job needs no credentials and no secrets.
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      node_version_file:
+        description: 'File setup-node reads the Node.js version from'
+        required: false
+        type: string
+        default: '.nvmrc'
+      java_version:
+        description: 'Temurin JDK for the emulators (firebase-tools requires 21+ for Firestore)'
+        required: false
+        type: string
+        default: '21'
+      scripts:
+        description: 'Space-separated root package.json scripts, each wrapping firebase emulators:exec'
+        required: false
+        type: string
+        default: 'test:rules test:integration'
+      timeout_minutes:
+        description: 'Job timeout'
+        required: false
+        type: number
+        default: 20
+
+# Least privilege for what this workflow actually does. Without it the
+# job inherits whatever the calling repository's default happens to be,
+# which on older repositories is write-all.
+permissions:
+  contents: read
+
+jobs:
+  emulator:
+    name: Emulator Tests
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6.1.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version-file: ${{ inputs.node_version_file }}
+          cache: pnpm
+
+      - name: Setup Java ${{ inputs.java_version }}
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6  # v6.0.1
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java_version }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run scripts
+        env:
+          SCRIPTS: ${{ inputs.scripts }}
+        run: |
+          set -euo pipefail
+          for script in $SCRIPTS; do
+            if ! [[ "$script" =~ ^[A-Za-z0-9:_.-]+$ ]]; then
+              echo "::error::Invalid script name: $script"
+              exit 1
+            fi
+          done
+          for script in $SCRIPTS; do
+            echo "::group::pnpm run $script"
+            pnpm run "$script"
+            echo "::endgroup::"
+          done
