@@ -1,0 +1,28 @@
+# Template: Static checks on feature/bugfix branches
+# Copy to: .github/workflows/feature-build.yml
+#
+# Triggers on every push to feature/* or bugfix/* branches
+# Runs: static checks only (fast feedback, no JDK, no emulators)
+#
+# Customize:
+#   - static_scripts: root package.json scripts to run (default: lint typecheck test:unit)
+
+name: Feature/Bugfix Build
+
+on:
+  push:
+    branches:
+      - 'feature/**'
+      - 'bugfix/**'
+
+# A newer push to the same PR or branch makes this run's answer stale.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: <org>/ci-templates/.github/workflows/firebase-main-pipeline.yml@v2
+    with:
+      run_static: true
+    secrets: inherit

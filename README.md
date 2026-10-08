@@ -1,6 +1,6 @@
 # CI Templates
 
-Reusable GitHub Actions workflows for Java, KrakenD, NGINX, React and Solidity/Hardhat projects following a GitFlow branching strategy.
+Reusable GitHub Actions workflows for Java, KrakenD, NGINX, React, Firebase (pnpm) and Solidity/Hardhat projects following a GitFlow branching strategy.
 
 ## Stacks
 
@@ -11,6 +11,7 @@ Reusable GitHub Actions workflows for Java, KrakenD, NGINX, React and Solidity/H
 | NGINX (ingress) | `nginx-main-pipeline.yml` | `templates/nginx-*.yml` |
 | React | `react-main-pipeline.yml` | `templates/react-*.yml` |
 | Contracts (Hardhat/Solidity) | `contracts-main-pipeline.yml` | `templates/contracts-*.yml` |
+| Firebase (pnpm monorepo) | `firebase-main-pipeline.yml` | `templates/firebase-*.yml` |
 
 ## GitFlow
 
@@ -107,14 +108,17 @@ to be filled. A dash means no template exists for that step.
 | React | `react-feature-build` | `react-pr-develop` | `react-develop-deploy` | `react-release-deploy` | `react-main-deploy` | — |
 | NGINX | `nginx-feature-build` | `nginx-pr-develop` | `nginx-develop-deploy` | `nginx-release-deploy` | `nginx-main-deploy` | — |
 | Contracts | `contracts-feature-build` | `contracts-pr-develop` · `contracts-pr-full` | `contracts-develop-build` | `contracts-release-publish` | `contracts-main-deploy` | — |
+| Firebase | `firebase-feature-build` | `firebase-pr-develop` | — | — | — | — |
 
-Three things that table is saying out loud:
+Four things that table is saying out loud:
 
 - **Java covers feature pushes and PRs with one file.** `java-validate.yml` triggers on
   both, which is why there is no `java-feature-build.yml` or `java-pr-develop.yml` to copy.
 - **`release/*` deploys on three stacks and not on Java.** React, NGINX and Contracts push
   `release/**` to a `staging` environment. Java's release branch carries the PR to `main`
   and deploys nothing.
+- **Firebase validates but deploys nothing yet.** Its pipeline stops at tests against the
+  Emulator Suite; see [Firebase (pnpm monorepo) Stack](#firebase-pnpm-monorepo-stack).
 - **Only Java and KrakenD have a production template.** React, NGINX and Contracts treat
   `main` as production directly (see the environment table below); there is no
   approval-gated `workflow_dispatch` promotion for them.
@@ -656,6 +660,7 @@ ci-templates/
 │   ├── contracts-analysis.yml
 │   ├── krakend-main-pipeline.yml
 │   ├── react-main-pipeline.yml
+│   ├── firebase-main-pipeline.yml
 │   ├── shared-deploy-ec2.yml
 │   ├── shared-deploy-ec2-vpn.yml
 │   ├── shared-deploy-eks.yml
@@ -667,6 +672,7 @@ ci-templates/
 │   ├── nginx-*.yml
 │   ├── react-*.yml
 │   ├── contracts-*.yml
+│   ├── firebase-*.yml            #   feature-build · pr-develop
 │   └── shared-*.yml              #   build-publish-image · cleanup-packages
 ├── .github/ruleset/              # Rulesets as source files (import to GitHub) + their README
 ├── scripts/                      # clone-environments.sh · ssh-deploy-debug.sh
@@ -802,6 +808,54 @@ workflow that passes no `image_digest`, or a runner without `jq`.
 - **On-chain deploy** (Sepolia / Polygon / mainnet) is NOT executed from CI. Real-network deploys must run out-of-band via a separate, gated, `workflow_dispatch` job with GitHub Environment approvals and isolated secrets.
 - **EC2 / EKS deployment** of the dev-node container is NOT performed by this pipeline; image is published to ECR only.
 - **ABI / TypeChain publishing** to downstream consumers is not yet wired (reserved for a future input).
+
+## Firebase (pnpm monorepo) Stack
+
+For pnpm workspaces that ship to Firebase (Hosting, Cloud Functions, Firestore) and test
+against the Emulator Suite instead of a live project. Validation only:
+
+```
+feature/*              ──► static (lint, typecheck, unit — whatever static_scripts names)
+     │
+     ▼ (PR to develop)      commit-lint + trufflehog + dependency review
+                             + static + emulator suites + Playwright E2E   (in parallel)
+```
+
+Jobs behind the pipeline:
+
+| Reusable workflow | Runs |
+|---|---|
+| `firebase-static.yml` | `pnpm install --frozen-lockfile`, then each of `static_scripts` |
+| `firebase-emulator-test.yml` | Same, plus a Temurin JDK, then each of `emulator_scripts` |
+| `firebase-e2e.yml` | Same, plus `playwright install --with-deps`, then each of `e2e_scripts`; uploads the HTML report on failure |
+
+### What the consumer owns
+
+The jobs run root `package.json` scripts by name and nothing else, so the repository decides
+what each suite is:
+
+- **pnpm and Node versions** come from `packageManager` and `.nvmrc` (`node_version_file`).
+- **The emulators are started by the scripts**, not by the workflow: wrap each runner in
+  `firebase emulators:exec --project demo-<id> "..."`. Ports, project id and which emulators
+  run stay in the consumer's `firebase.json`, and CI runs the exact command developers run.
+  A `demo-` project id never reaches real resources, so none of these jobs need secrets.
+- **Script names are validated** against `^[A-Za-z0-9:_.-]+$` before anything runs.
+
+### pnpm's minimumReleaseAge
+
+pnpm refuses packages published more recently than its release-age policy, and that applies
+to `pnpm install --frozen-lockfile` in CI. A lockfile updated the day a dependency was
+published fails here until the package ages in. The pipeline deliberately has no input to
+turn the policy off. Exempt the specific packages with `minimumReleaseAgeExclude` in the
+consumer's `pnpm-workspace.yaml`, where the exemption is reviewed with the code, and remove
+it once they age in.
+
+### Out of scope (deliberate)
+
+- **Deploy.** A Firebase deploy needs Workload Identity Federation to a GCP project; it lands
+  as an opt-in job once a consumer has wired one. Until then there is no `develop`, `main` or
+  production template.
+- **Emulator binary cache.** firebase-tools downloads the emulator JARs on each run.
 
 ## Environments
 
