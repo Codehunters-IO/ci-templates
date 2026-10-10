@@ -152,7 +152,7 @@ jobs:
           python3 - <<'PY'
           import glob, re, sys, yaml
 
-          cancels_stale = re.compile(r'(java-validate|-feature-build|-pr-develop|contracts-pr-full|shared-validate-image-pr)\.yml$')
+          cancels_stale = re.compile(r'(java-validate|java-library-validate|-feature-build|-pr-develop|contracts-pr-full|shared-validate-image-pr)\.yml$')
 
           bad = []
           for f in sorted(glob.glob('templates/*.yml')):

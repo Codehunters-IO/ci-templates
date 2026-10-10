@@ -1,0 +1,139 @@
+name: Java Library - Build
+
+# Builds and tests a multi-module Gradle library repository: one where every module carries its
+# own version and is released on its own tag (see java-library-publish.yml). There is no bootable
+# JAR, no image and no deploy, so java-build.yml / java-pr-pipeline.yml do not fit: those compile
+# with `-x test`, look for a JAR under bootstrap/ and gate on a single project version.
+#
+# The repository's own `./gradlew build` is the gate: tests, coverage thresholds, Spotless and any
+# convention checks live in its build logic, not here. Each line of `gradle_commands` is one
+# `./gradlew` invocation, so a separate included build (`-p build-logic test`) can run too.
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      java_version:
+        description: 'Java version'
+        required: false
+        type: string
+        default: '21'
+      java_distribution:
+        description: 'Java distribution (temurin, corretto, zulu, etc.)'
+        required: false
+        type: string
+        default: 'temurin'
+      gradle_commands:
+        description: >-
+          Gradle invocations, one per line; each line is passed to ./gradlew as is
+          (e.g. "build" and "-p build-logic test").
+        required: false
+        type: string
+        default: 'build'
+      docker_images:
+        description: >-
+          Container images the integration tests start, one per line. Pulled before Gradle
+          runs, from Docker Hub and then from its public mirrors (mirror.gcr.io,
+          public.ecr.aws/docker). Testcontainers otherwise pulls lazily and reports a failed
+          Docker Hub pull only as ContainerFetchException after a five-minute wait.
+        required: false
+        type: string
+        default: ''
+      timeout_minutes:
+        description: 'Job timeout in minutes'
+        required: false
+        type: number
+        default: 30
+
+# Read-only: the build runs tests, containers and third-party plugins.
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup JDK ${{ inputs.java_version }}
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6  # v6.0.1
+        with:
+          distribution: ${{ inputs.java_distribution }}
+          java-version: ${{ inputs.java_version }}
+
+      # Branch and pull-request builds read the dependency cache the default branch writes.
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb  # v6.3.0
+        with:
+          cache-read-only: ${{ github.ref_name != github.event.repository.default_branch }}
+
+      - name: Pull the integration-test images
+        if: inputs.docker_images != ''
+        env:
+          IMAGES: ${{ inputs.docker_images }}
+        run: |
+          set -euo pipefail
+          mirrors=("mirror.gcr.io" "public.ecr.aws/docker")
+
+          # Docker Hub names official images without library/; the mirrors need it.
+          qualified() {
+            if [[ "$1" == */* ]]; then echo "$1"; else echo "library/$1"; fi
+          }
+
+          # A mirrored image is tagged with its Docker Hub name, the one Testcontainers looks up.
+          pull_from_mirror() {
+            local mirror mirrored
+            for mirror in "${mirrors[@]}"; do
+              mirrored="$mirror/$(qualified "$1")"
+              if docker pull --quiet "$mirrored"; then
+                docker tag "$mirrored" "$1"
+                echo "pulled $1 from $mirror"
+                return 0
+              fi
+              echo "::warning::docker pull $mirrored failed"
+            done
+            return 1
+          }
+
+          pull() {
+            local attempt
+            for attempt in 1 2; do
+              if docker pull --quiet "$1" || pull_from_mirror "$1"; then
+                return 0
+              fi
+              echo "::warning::could not pull $1 from Docker Hub or its mirrors (attempt $attempt)"
+              sleep 30
+            done
+            echo "::error::could not pull $1"
+            return 1
+          }
+
+          while read -r image; do
+            [ -n "$image" ] || continue
+            pull "$image"
+          done <<< "$IMAGES"
+
+      - name: Build
+        env:
+          COMMANDS: ${{ inputs.gradle_commands }}
+        run: |
+          set -euo pipefail
+          while read -r line; do
+            [ -n "$line" ] || continue
+            echo "::group::./gradlew $line"
+            # Word splitting is the point: each line is a list of Gradle arguments.
+            # shellcheck disable=SC2086
+            ./gradlew $line
+            echo "::endgroup::"
+          done <<< "$COMMANDS"

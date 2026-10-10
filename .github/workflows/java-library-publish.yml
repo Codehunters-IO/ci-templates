@@ -1,0 +1,212 @@
+name: Java Library - Publish
+
+# Uploads ONE module of a multi-module Gradle library repository to GitHub Packages, the one a
+# release tag names (`<module>/vX.Y.Z`). java-artifact-dependency-github.yml publishes the whole
+# project at a single version, which in a repository of independently versioned modules uploads
+# versions nobody released and fails with 409 on the ones already there.
+#
+# Before anything from the tagged tree runs, the tag must match `tag_pattern` and point at a
+# commit on the default branch: only merged code gets published. The module is then resolved with
+# the same candidates task java-library-release-drafts.yml uses, so a tag no module declares at
+# that commit fails instead of publishing something else.
+#
+# Callers queue this workflow in one concurrency group: two uploads of the same version race
+# (409), and a BOM must find the libraries it lists already uploaded.
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Release tag to publish, e.g. sdk-web/v1.0.0'
+        required: true
+        type: string
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      java_version:
+        description: 'Java version'
+        required: false
+        type: string
+        default: '21'
+      java_distribution:
+        description: 'Java distribution'
+        required: false
+        type: string
+        default: 'temurin'
+      tag_pattern:
+        description: 'Extended regex the tag must match'
+        required: false
+        type: string
+        default: '^[a-z0-9][a-z0-9-]*/v[0-9]+\.[0-9]+\.[0-9]+$'
+      candidates_task:
+        description: 'Gradle task that writes build/release-candidates/*.txt (see java-library-release-drafts.yml)'
+        required: false
+        type: string
+        default: 'releaseCandidate'
+      verify_script:
+        description: >-
+          Optional script in the calling repository, run after the module is resolved and
+          before the build. Gets TAG, GRADLE_PATH, GH_PACKAGES_USERNAME and GH_PACKAGES_TOKEN.
+          A non-zero exit stops the publish (e.g. a BOM whose libraries are not uploaded yet).
+        required: false
+        type: string
+        default: ''
+      publish_task:
+        description: 'Gradle task run on the module after its build'
+        required: false
+        type: string
+        default: 'publish'
+      docker_images:
+        description: 'Container images the integration tests start, one per line (see java-library-build.yml)'
+        required: false
+        type: string
+        default: ''
+      timeout_minutes:
+        description: 'Job timeout in minutes'
+        required: false
+        type: number
+        default: 30
+    secrets:
+      GH_PACKAGES_USERNAME:
+        description: 'GitHub Packages user; defaults to the actor'
+        required: false
+      GH_PACKAGES_TOKEN:
+        description: 'GitHub Packages token; defaults to the workflow token (needs packages: write)'
+        required: false
+    outputs:
+      gradle_path:
+        description: 'Gradle path of the published module'
+        value: ${{ jobs.publish.outputs.gradle_path }}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: Publish ${{ inputs.tag }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    env:
+      TAG: ${{ inputs.tag }}
+      GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME || github.actor }}
+      GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
+
+    outputs:
+      gradle_path: ${{ steps.module.outputs.path }}
+
+    steps:
+      # The default branch's history and every tag, to check the tag is on it.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out the tag
+        env:
+          TAG_PATTERN: ${{ inputs.tag_pattern }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ $TAG_PATTERN ]]; then
+            echo "::error::'$TAG' is not a release tag (expected $TAG_PATTERN)"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "refs/tags/$TAG" "origin/$DEFAULT_BRANCH"; then
+            echo "::error::$TAG points at a commit that is not on $DEFAULT_BRANCH: release only merged code"
+            exit 1
+          fi
+          git checkout --detach "refs/tags/$TAG"
+
+      - name: Setup JDK ${{ inputs.java_version }}
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6  # v6.0.1
+        with:
+          distribution: ${{ inputs.java_distribution }}
+          java-version: ${{ inputs.java_version }}
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb  # v6.3.0
+        with:
+          cache-read-only: true
+
+      - name: Resolve the module
+        id: module
+        env:
+          TASK: ${{ inputs.candidates_task }}
+        run: |
+          set -euo pipefail
+          ./gradlew "$TASK" --quiet > /dev/null
+          path="$(cat build/release-candidates/*.txt | awk -v tag="$TAG" '$1 == tag { print $2 }')"
+          if [ -z "$path" ]; then
+            echo "::error::no module declares the version in $TAG at the tagged commit"
+            exit 1
+          fi
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+          echo "Releasing $path from $TAG"
+
+      - name: Verify the release
+        if: inputs.verify_script != ''
+        env:
+          GRADLE_PATH: ${{ steps.module.outputs.path }}
+          SCRIPT: ${{ inputs.verify_script }}
+        run: '"./$SCRIPT"'
+
+      - name: Pull the integration-test images
+        if: inputs.docker_images != ''
+        env:
+          IMAGES: ${{ inputs.docker_images }}
+        run: |
+          set -euo pipefail
+          mirrors=("mirror.gcr.io" "public.ecr.aws/docker")
+
+          # Docker Hub names official images without library/; the mirrors need it.
+          qualified() {
+            if [[ "$1" == */* ]]; then echo "$1"; else echo "library/$1"; fi
+          }
+
+          # A mirrored image is tagged with its Docker Hub name, the one Testcontainers looks up.
+          pull_from_mirror() {
+            local mirror mirrored
+            for mirror in "${mirrors[@]}"; do
+              mirrored="$mirror/$(qualified "$1")"
+              if docker pull --quiet "$mirrored"; then
+                docker tag "$mirrored" "$1"
+                echo "pulled $1 from $mirror"
+                return 0
+              fi
+              echo "::warning::docker pull $mirrored failed"
+            done
+            return 1
+          }
+
+          pull() {
+            local attempt
+            for attempt in 1 2; do
+              if docker pull --quiet "$1" || pull_from_mirror "$1"; then
+                return 0
+              fi
+              echo "::warning::could not pull $1 from Docker Hub or its mirrors (attempt $attempt)"
+              sleep 30
+            done
+            echo "::error::could not pull $1"
+            return 1
+          }
+
+          while read -r image; do
+            [ -n "$image" ] || continue
+            pull "$image"
+          done <<< "$IMAGES"
+
+      - name: Build and publish
+        env:
+          GRADLE_PATH: ${{ steps.module.outputs.path }}
+          PUBLISH_TASK: ${{ inputs.publish_task }}
+        run: ./gradlew "$GRADLE_PATH:build" "$GRADLE_PATH:$PUBLISH_TASK"
+
+      - name: Summary
+        env:
+          GRADLE_PATH: ${{ steps.module.outputs.path }}
+        run: echo "Published \`$GRADLE_PATH\` from \`$TAG\`." >> "$GITHUB_STEP_SUMMARY"
