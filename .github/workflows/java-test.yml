@@ -151,7 +151,7 @@ jobs:
     timeout-minutes: 30
 
     outputs:
-      result: ${{ steps.test-run.outcome }}
+      result: ${{ steps.test-check.outcome }}
       coverage: ${{ steps.coverage.outputs.percentage }}
       coverage_instruction: ${{ steps.jacoco-log.outputs.instruction_pct }}
       coverage_branch: ${{ steps.jacoco-log.outputs.branch_pct }}
@@ -198,7 +198,13 @@ jobs:
         # No 'clean build': compileJava is served FROM-CACHE (produced by the build job via
         # --build-cache). Only test sources compile here, then tests + coverage run. The jar
         # is NOT re-assembled (the build job already built and uploaded it).
-        run: ./gradlew test jacocoTestReport --no-daemon --build-cache --parallel || true
+        # The exit code is recorded, not swallowed: the report steps below still run, and
+        # "Check test results" fails on it. A bare `|| true` here turned a test-compilation
+        # error, or a failing test the XML scan below did not find, into a green job.
+        run: |
+          set +e
+          ./gradlew test jacocoTestReport --no-daemon --build-cache --parallel
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
       - name: Run tests (Maven)
         id: test-run-maven
@@ -206,7 +212,10 @@ jobs:
         env:
           GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME }}
           GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
-        run: mvn clean verify -B || true
+        run: |
+          set +e
+          mvn clean verify -B
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
       # ============================================
       # SONAR ANALYSIS (optional)
@@ -381,28 +390,27 @@ jobs:
           FAILED=0
           SKIPPED=0
 
-          # Search in both Gradle and Maven output directories
-          for dir in "build/test-results" "target/surefire-reports"; do
-            if [ -d "$dir" ]; then
-              # NUL-delimited: report paths come from test class names, and a word-split
-              # `for` breaks on the first one with a space in a parameterised display name.
-              while IFS= read -r -d '' file; do
-                if [ -f "$file" ]; then
-                  FILE_TESTS=$(grep -oP 'tests="\K[0-9]+' "$file" 2>/dev/null | head -1 || echo "0")
-                  FILE_FAILURES=$(grep -oP 'failures="\K[0-9]+' "$file" 2>/dev/null | head -1 || echo "0")
-                  FILE_ERRORS=$(grep -oP 'errors="\K[0-9]+' "$file" 2>/dev/null | head -1 || echo "0")
-                  FILE_SKIPPED=$(grep -oP 'skipped="\K[0-9]+' "$file" 2>/dev/null | head -1 || echo "0")
+          # Every module's Gradle and Maven reports, not just the root project's: in a
+          # multi-module build (domain/, application/, bootstrap/...) the root has none, and
+          # scanning only ./build/test-results counted zero failures whatever happened.
+          # NUL-delimited: report paths come from test class names, and a word-split `for`
+          # breaks on the first one with a space in a parameterised display name.
+          while IFS= read -r -d '' file; do
+            if [ -f "$file" ]; then
+              FILE_TESTS=$(grep -oP 'tests="\K[0-9]+' "$file" 2>/dev/null | head -1 || echo "0")
+              FILE_FAILURES=$(grep -oP 'failures="\K[0-9]+' "$file" 2>/dev/null | head -1 || echo "0")
+              FILE_ERRORS=$(grep -oP 'errors="\K[0-9]+' "$file" 2>/dev/null | head -1 || echo "0")
+              FILE_SKIPPED=$(grep -oP 'skipped="\K[0-9]+' "$file" 2>/dev/null | head -1 || echo "0")
 
-                  TOTAL_FAILED=$((FILE_FAILURES + FILE_ERRORS))
-                  FILE_PASSED=$((FILE_TESTS - TOTAL_FAILED - FILE_SKIPPED))
+              TOTAL_FAILED=$((FILE_FAILURES + FILE_ERRORS))
+              FILE_PASSED=$((FILE_TESTS - TOTAL_FAILED - FILE_SKIPPED))
 
-                  PASSED=$((PASSED + FILE_PASSED))
-                  FAILED=$((FAILED + TOTAL_FAILED))
-                  SKIPPED=$((SKIPPED + FILE_SKIPPED))
-                fi
-              done < <(find "$dir" -name "*.xml" -print0 2>/dev/null)
+              PASSED=$((PASSED + FILE_PASSED))
+              FAILED=$((FAILED + TOTAL_FAILED))
+              SKIPPED=$((SKIPPED + FILE_SKIPPED))
             fi
-          done
+          done < <(find . -name "*.xml" \( -path "*/build/test-results/*" -o -path "*/target/surefire-reports/*" \) \
+                     -not -path "*/node_modules/*" -print0 2>/dev/null)
 
           echo "passed=$PASSED" >> $GITHUB_OUTPUT
           echo "failed=$FAILED" >> $GITHUB_OUTPUT
@@ -532,11 +540,20 @@ jobs:
           fi
 
       - name: Check test results
+        id: test-check
         if: always()
+        env:
+          FAILED: ${{ steps.test-summary.outputs.failed }}
+          EXIT_CODE: ${{ steps.test-run.outputs.exit_code || steps.test-run-maven.outputs.exit_code }}
         run: |
-          FAILED="${{ steps.test-summary.outputs.failed }}"
-          if [ "$FAILED" -gt 0 ]; then
+          if [ "${FAILED:-0}" -gt 0 ]; then
             echo "::error::$FAILED test(s) failed"
+            exit 1
+          fi
+          # Gradle/Maven failed without a failing test report: compilation, a crashed fork,
+          # a verification task. An empty code means the test step itself never ran.
+          if [ "${EXIT_CODE:-1}" != "0" ]; then
+            echo "::error::the test run exited with '${EXIT_CODE:-none}' and no test report explains it; see the test step log"
             exit 1
           fi
 
