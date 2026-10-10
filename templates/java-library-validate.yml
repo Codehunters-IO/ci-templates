@@ -1,0 +1,59 @@
+# Template: Validation of a multi-module Gradle library repository
+# Copy to: .github/workflows/validate.yml
+#
+# Triggers:
+#   - push to feature/*, fix/*, bugfix/*, hotfix/*, chore/*, docs/*, refactor/*
+#   - pull_request -> main                      -> merge-ref gate (required status check)
+#
+# Runs the repository's own ./gradlew build (tests, coverage, Spotless, convention checks),
+# a secret scan and, on pull requests, commit lint. Publishes nothing; releases go through
+# java-library-release-drafts.yml and java-library-publish.yml.
+#
+# Job id "build" -> required status check context "build / Build".
+
+name: Validation
+
+on:
+  push:
+    branches:
+      - 'feature/**'
+      - 'fix/**'
+      - 'bugfix/**'
+      - 'hotfix/**'
+      - 'chore/**'
+      - 'docs/**'
+      - 'refactor/**'
+  pull_request:
+    branches:
+      - main
+
+# A newer push to the same PR or branch makes this run's answer stale.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  build:
+    permissions:
+      contents: read
+      packages: read
+    uses: <org>/ci-templates/.github/workflows/java-library-build.yml@v2
+    with:
+      gradle_commands: |
+        build
+      # Images the integration tests start, pulled with a mirror fallback:
+      # docker_images: |
+      #   postgres:17-alpine
+
+  secrets-scan:
+    permissions:
+      contents: read
+    uses: <org>/ci-templates/.github/workflows/security-trufflehog.yml@v2
+
+  commit-lint:
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    uses: <org>/ci-templates/.github/workflows/shared-commit-lint.yml@v2

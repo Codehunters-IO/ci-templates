@@ -1,0 +1,38 @@
+# Template: Release drafts for a multi-module Gradle library repository
+# Copy to: .github/workflows/release-drafts.yml
+#
+# Trigger: push to main (every merge) or by hand.
+#
+# Merging publishes nothing. The merge is built, then one GitHub release is drafted per module
+# version that has no tag yet. A person reviews a draft and publishes it: that creates the tag
+# and runs publish.yml (java-library-publish.yml) for that module only.
+#
+# Needs a Gradle task (default `releaseCandidate`) writing build/release-candidates/*.txt with
+# `<tag> <gradle path> <project dir>` lines; see java-library-release-drafts.yml.
+
+name: Release drafts
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# Runs queue: the newer merge is the one whose commit the drafts end up pointing at.
+concurrency:
+  group: release-drafts
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  drafts:
+    permissions:
+      contents: write
+      packages: read
+    uses: <org>/ci-templates/.github/workflows/java-library-release-drafts.yml@v2
+    with:
+      maven_group: io.example
+      # tag_pattern: '^(lib-[a-z0-9-]+|bom)/v[0-9]+\.[0-9]+\.[0-9]+$'
+      # docker_images: |
+      #   postgres:17-alpine
