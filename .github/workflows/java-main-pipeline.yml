@@ -3,6 +3,21 @@ name: Java - Main Pipeline
 on:
   workflow_call:
     inputs:
+      test_tasks:
+        description: 'Gradle tasks of the test job (java-test.yml); `check` runs every verification task'
+        required: false
+        type: string
+        default: 'test jacocoTestReport'
+      extra_gradle_commands:
+        description: 'Gradle invocations after the tests, one per line (java-test.yml)'
+        required: false
+        type: string
+        default: ''
+      docker_images:
+        description: 'Images the integration tests start, pulled with a Docker Hub mirror fallback (java-test.yml)'
+        required: false
+        type: string
+        default: ''
       # Runner configuration
       runner:
         description: 'Runner type'
@@ -433,6 +448,9 @@ jobs:
       code_analysis_tool: ${{ inputs.code_analysis_tool }}
       skip_quality_gate: ${{ inputs.skip_quality_gate }}
       run_owasp: ${{ inputs.run_owasp }}
+      test_tasks: ${{ inputs.test_tasks }}
+      extra_gradle_commands: ${{ inputs.extra_gradle_commands }}
+      docker_images: ${{ inputs.docker_images }}
     secrets: inherit
 
   # ============================================

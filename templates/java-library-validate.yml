@@ -5,11 +5,12 @@
 #   - push to feature/*, fix/*, bugfix/*, hotfix/*, chore/*, docs/*, refactor/*
 #   - pull_request -> main                      -> merge-ref gate (required status check)
 #
-# Runs the repository's own ./gradlew build (tests, coverage, Spotless, convention checks),
-# a secret scan and, on pull requests, commit lint. Publishes nothing; releases go through
-# java-library-release-drafts.yml and java-library-publish.yml.
+# Runs java-pr-pipeline.yml: build (compile + Spotless, no tests), then a test job running
+# `check`, so the repository's own verification tasks (per-module coverage rules, convention
+# checks) gate the PR, plus a secret scan and commit lint. Publishes nothing; releases go
+# through java-library-release-drafts.yml and java-library-publish.yml.
 #
-# Job id "build" -> required status check context "build / Build".
+# Job id "validate" -> required status check context "validate / PR Quality Gates".
 
 name: Validation
 
@@ -35,25 +36,24 @@ concurrency:
 permissions: {}
 
 jobs:
-  build:
+  validate:
+    # java-main-pipeline.yml declares these for its deploy and release jobs; a caller must
+    # grant at least as much, even though java-pr-pipeline.yml turns those jobs off.
     permissions:
-      contents: read
-      packages: read
-    uses: <org>/ci-templates/.github/workflows/java-library-build.yml@v2
+      contents: write
+      packages: write
+      issues: write
+      id-token: write
+    uses: <org>/ci-templates/.github/workflows/java-pr-pipeline.yml@v2
     with:
-      gradle_commands: |
-        build
-      # Images the integration tests start, pulled with a mirror fallback:
+      run_commit_lint: true
+      run_trufflehog: true
+      run_test: true
+      test_tasks: check
+      # The build's own rules gate coverage per module; the pipeline's global gate stays off.
+      run_coverage: false
+      # extra_gradle_commands: |
+      #   -p build-logic test
       # docker_images: |
       #   postgres:17-alpine
-
-  secrets-scan:
-    permissions:
-      contents: read
-    uses: <org>/ci-templates/.github/workflows/security-trufflehog.yml@v2
-
-  commit-lint:
-    if: github.event_name == 'pull_request'
-    permissions:
-      contents: read
-    uses: <org>/ci-templates/.github/workflows/shared-commit-lint.yml@v2
+    secrets: inherit
