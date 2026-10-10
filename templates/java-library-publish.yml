@@ -1,0 +1,45 @@
+# Template: Publish one module of a multi-module Gradle library repository
+# Copy to: .github/workflows/publish.yml
+#
+# Triggers:
+#   - release published (a person publishes a draft from release-drafts.yml; that creates the tag)
+#   - workflow_dispatch with the tag, to retry a failed upload
+#
+# Uploads only the module the tag names (`<module>/vX.Y.Z`), and only from a commit on the
+# default branch. The Gradle publication must point at GitHub Packages and read
+# GH_PACKAGES_USERNAME / GH_PACKAGES_TOKEN; the workflow token is used when those secrets
+# are absent.
+
+name: Publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish, e.g. lib-core/v1.0.0'
+        required: true
+        type: string
+
+# One publish at a time: uploads of the same version race (409), and a BOM must find the
+# libraries it lists already uploaded. A queue holds one pending run: publish releases one
+# by one, waiting for each run, instead of several at once.
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  publish:
+    permissions:
+      contents: read
+      packages: write
+    uses: <org>/ci-templates/.github/workflows/java-library-publish.yml@v2
+    with:
+      tag: ${{ github.event.release.tag_name || inputs.tag }}
+      # tag_pattern: '^(lib-[a-z0-9-]+|bom)/v[0-9]+\.[0-9]+\.[0-9]+$'
+      # verify_script: .github/scripts/verify-release.sh
+      # docker_images: |
+      #   postgres:17-alpine

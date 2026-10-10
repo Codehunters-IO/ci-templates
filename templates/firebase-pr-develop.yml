@@ -1,0 +1,44 @@
+# Template: PR to develop validation
+# Copy to: .github/workflows/pr-develop.yml
+#
+# Triggers on pull requests targeting develop branch
+# Runs: commit-lint + secret scan + dependency review + static + emulator suites + E2E
+#
+# Requirements in the consuming repository:
+#   - package.json `packageManager: pnpm@X` and a committed pnpm-lock.yaml
+#   - .nvmrc (or set node_version_file)
+#   - Root scripts named below, each emulator/E2E script wrapping
+#     `firebase emulators:exec --project demo-<id> ...` (demo- ids need no credentials)
+#
+# No secrets are required. SLACK_BOT_TOKEN is used for failure notifications if present.
+#
+# Customize:
+#   - static_scripts / emulator_scripts / e2e_scripts: match your package.json
+#   - run_e2e: false if the repo has no Playwright suite
+
+name: PR Validation
+
+on:
+  pull_request:
+    branches:
+      - develop
+
+# A newer push to the same PR or branch makes this run's answer stale.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    uses: <org>/ci-templates/.github/workflows/firebase-main-pipeline.yml@v2
+    with:
+      run_commit_lint: true
+      run_trufflehog: true
+      run_dependency_review: true
+      run_static: true
+      static_scripts: 'lint typecheck test:unit'
+      run_emulator_tests: true
+      emulator_scripts: 'test:rules test:integration'
+      run_e2e: true
+      e2e_scripts: 'test:e2e'
+    secrets: inherit

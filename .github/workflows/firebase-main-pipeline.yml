@@ -1,0 +1,202 @@
+name: Firebase - Main Pipeline
+
+# Orchestrator for pnpm monorepos on Firebase (Hosting + Cloud Functions +
+# Firestore) tested against the Emulator Suite. Validation only: there is no
+# deploy job yet. A Firebase deploy needs Workload Identity Federation to a GCP
+# project, which no consumer has wired through this repository so far; it will
+# land as an opt-in job once one has.
+#
+# static, emulator and e2e have no `needs:` between them. They share nothing but
+# the lockfile, and running them side by side keeps a PR's feedback at the
+# length of the slowest suite rather than the sum of all three.
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      node_version_file:
+        description: 'File setup-node reads the Node.js version from'
+        required: false
+        type: string
+        default: '.nvmrc'
+      java_version:
+        description: 'Temurin JDK for the emulators'
+        required: false
+        type: string
+        default: '21'
+
+      run_commit_lint:
+        description: 'Run commit lint'
+        required: false
+        type: boolean
+        default: false
+      run_trufflehog:
+        description: 'Run TruffleHog secret scan'
+        required: false
+        type: boolean
+        default: false
+      trufflehog_only_verified:
+        description: 'Only report verified secrets'
+        required: false
+        type: boolean
+        default: true
+      trufflehog_fail_on_findings:
+        description: 'Fail the pipeline when TruffleHog finds secrets'
+        required: false
+        type: boolean
+        default: true
+      run_dependency_review:
+        description: 'Run dependency review (pull requests only)'
+        required: false
+        type: boolean
+        default: false
+      dependency_review_severity:
+        description: 'Minimum severity that fails dependency review'
+        required: false
+        type: string
+        default: 'high'
+
+      run_static:
+        description: 'Run static checks (lint, typecheck, unit tests...)'
+        required: false
+        type: boolean
+        default: true
+      static_scripts:
+        description: 'Space-separated root scripts for the static job'
+        required: false
+        type: string
+        default: 'lint typecheck test:unit'
+      run_emulator_tests:
+        description: 'Run emulator-backed suites (rules, integration)'
+        required: false
+        type: boolean
+        default: false
+      emulator_scripts:
+        description: 'Space-separated root scripts for the emulator job'
+        required: false
+        type: string
+        default: 'test:rules test:integration'
+      run_e2e:
+        description: 'Run Playwright E2E against the emulators'
+        required: false
+        type: boolean
+        default: false
+      e2e_scripts:
+        description: 'Space-separated root scripts for the E2E job'
+        required: false
+        type: string
+        default: 'test:e2e'
+      playwright_browsers:
+        description: 'Space-separated browsers for `playwright install --with-deps`'
+        required: false
+        type: string
+        default: 'chromium'
+      playwright_report_dir:
+        description: 'Playwright HTML report directory, uploaded on failure'
+        required: false
+        type: string
+        default: 'playwright-report'
+
+      environment:
+        description: 'Environment label for notifications'
+        required: false
+        type: string
+        default: 'develop'
+
+# Everything below only reads the repository. A caller's grant is the
+# ceiling for every workflow this one calls.
+permissions:
+  contents: read
+
+jobs:
+  # ============================================
+  # COMMIT LINT (parallel, no deps)
+  # ============================================
+  commit-lint:
+    name: Commit Lint
+    if: inputs.run_commit_lint
+    uses: ./.github/workflows/shared-commit-lint.yml
+    with:
+      runner: ${{ inputs.runner }}
+
+  # ============================================
+  # SECURITY - TruffleHog (parallel, no deps)
+  # ============================================
+  security:
+    name: Security Scan
+    if: inputs.run_trufflehog
+    uses: ./.github/workflows/security-trufflehog.yml
+    with:
+      runner: ${{ inputs.runner }}
+      only_verified: ${{ inputs.trufflehog_only_verified }}
+      fail_on_findings: ${{ inputs.trufflehog_fail_on_findings }}
+    secrets: inherit
+
+  # ============================================
+  # SECURITY - Dependency Review (parallel, no deps)
+  # ============================================
+  dependency-review:
+    name: Dependency Review
+    if: inputs.run_dependency_review
+    uses: ./.github/workflows/security-dependency-review.yml
+    with:
+      runner: ${{ inputs.runner }}
+      fail_on_severity: ${{ inputs.dependency_review_severity }}
+    secrets: inherit
+
+  # ============================================
+  # STATIC - lint, typecheck, architecture, unit
+  # ============================================
+  static:
+    name: Static
+    if: inputs.run_static
+    uses: ./.github/workflows/firebase-static.yml
+    with:
+      runner: ${{ inputs.runner }}
+      node_version_file: ${{ inputs.node_version_file }}
+      scripts: ${{ inputs.static_scripts }}
+
+  # ============================================
+  # EMULATOR - rules + integration
+  # ============================================
+  emulator:
+    name: Emulator
+    if: inputs.run_emulator_tests
+    uses: ./.github/workflows/firebase-emulator-test.yml
+    with:
+      runner: ${{ inputs.runner }}
+      node_version_file: ${{ inputs.node_version_file }}
+      java_version: ${{ inputs.java_version }}
+      scripts: ${{ inputs.emulator_scripts }}
+
+  # ============================================
+  # E2E - Playwright against the emulators
+  # ============================================
+  e2e:
+    name: E2E
+    if: inputs.run_e2e
+    uses: ./.github/workflows/firebase-e2e.yml
+    with:
+      runner: ${{ inputs.runner }}
+      node_version_file: ${{ inputs.node_version_file }}
+      java_version: ${{ inputs.java_version }}
+      scripts: ${{ inputs.e2e_scripts }}
+      playwright_browsers: ${{ inputs.playwright_browsers }}
+      report_dir: ${{ inputs.playwright_report_dir }}
+
+  # ============================================
+  # NOTIFY - Slack notification (final, auto-derived)
+  # ============================================
+  notify:
+    name: Notify
+    if: always()
+    needs: [commit-lint, security, dependency-review, static, emulator, e2e]
+    uses: ./.github/workflows/shared-notifications.yml
+    with:
+      status: ${{ contains(needs.*.result, 'failure') && 'failure' || contains(needs.*.result, 'cancelled') && 'cancelled' || 'success' }}
+      environment: ${{ inputs.environment }}
+    secrets: inherit

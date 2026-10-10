@@ -111,6 +111,8 @@ jobs:
       - name: Run OWASP Dependency Check (Gradle)
         id: owasp-check
         if: inputs.build_tool == 'gradle'
+        # bash: mapfile and arrays; a container image's default sh has neither.
+        shell: bash
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
           GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME }}
@@ -123,19 +125,27 @@ jobs:
             OWASP_CMD="$OWASP_CMD -DnvdApiKey=$NVD_API_KEY"
           fi
 
-          $OWASP_CMD || true
+          # A non-zero exit is expected when the project sets failBuildOnCVSS: the report
+          # below is what this job gates on. Only a missing report is fatal.
+          set +e
+          $OWASP_CMD
+          OWASP_EXIT=$?
+          set -e
 
-          # Parse the report
-          REPORT_FILE="build/reports/dependency-check-report.json"
-          VULNS=0; CRITICAL=0; HIGH=0; MEDIUM=0; LOW=0
-
-          if [ -f "$REPORT_FILE" ]; then
-            CRITICAL=$(jq '[.dependencies[]?.vulnerabilities[]? | select(.severity == "CRITICAL")] | length' "$REPORT_FILE" 2>/dev/null || echo "0")
-            HIGH=$(jq '[.dependencies[]?.vulnerabilities[]? | select(.severity == "HIGH")] | length' "$REPORT_FILE" 2>/dev/null || echo "0")
-            MEDIUM=$(jq '[.dependencies[]?.vulnerabilities[]? | select(.severity == "MEDIUM")] | length' "$REPORT_FILE" 2>/dev/null || echo "0")
-            LOW=$(jq '[.dependencies[]?.vulnerabilities[]? | select(.severity == "LOW")] | length' "$REPORT_FILE" 2>/dev/null || echo "0")
-            VULNS=$((CRITICAL + HIGH + MEDIUM + LOW))
+          # Every report, not only the root project's: without the aggregate task each
+          # module writes its own. Finding none used to count zero vulnerabilities, so an
+          # NVD download failure passed the gate as "No blocking vulnerabilities found".
+          mapfile -t REPORTS < <(find . -path "*/build/reports/dependency-check-report.json" -not -path "*/node_modules/*")
+          if [ "${#REPORTS[@]}" -eq 0 ]; then
+            echo "::error::dependency-check wrote no report (exit $OWASP_EXIT); the scan did not run, see its log above"
+            exit 1
           fi
+
+          count() {
+            jq -s --arg s "$1" '[.[].dependencies[]?.vulnerabilities[]? | select(.severity == $s)] | length' "${REPORTS[@]}"
+          }
+          CRITICAL=$(count CRITICAL); HIGH=$(count HIGH); MEDIUM=$(count MEDIUM); LOW=$(count LOW)
+          VULNS=$((CRITICAL + HIGH + MEDIUM + LOW))
 
           echo "vulnerabilities=$VULNS" >> $GITHUB_OUTPUT
           echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
@@ -155,6 +165,8 @@ jobs:
       - name: Run OWASP Dependency Check (Maven)
         id: owasp-check-maven
         if: inputs.build_tool == 'maven'
+        # bash: mapfile and arrays; a container image's default sh has neither.
+        shell: bash
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: |
@@ -165,16 +177,23 @@ jobs:
             MVN_CMD="$MVN_CMD -DnvdApiKey=$NVD_API_KEY"
           fi
 
-          $MVN_CMD || true
+          set +e
+          $MVN_CMD
+          OWASP_EXIT=$?
+          set -e
 
-          REPORT_FILE=$(find . -path "*/dependency-check-report.json" | head -1)
-          VULNS=0; CRITICAL=0; HIGH=0
-
-          if [ -n "$REPORT_FILE" ] && [ -f "$REPORT_FILE" ]; then
-            CRITICAL=$(jq '[.dependencies[]?.vulnerabilities[]? | select(.severity == "CRITICAL")] | length' "$REPORT_FILE" 2>/dev/null || echo "0")
-            HIGH=$(jq '[.dependencies[]?.vulnerabilities[]? | select(.severity == "HIGH")] | length' "$REPORT_FILE" 2>/dev/null || echo "0")
-            VULNS=$((CRITICAL + HIGH))
+          # Every module's report; none at all means the scan did not run (see the Gradle step).
+          mapfile -t REPORTS < <(find . -path "*/target/dependency-check-report.json" -not -path "*/node_modules/*")
+          if [ "${#REPORTS[@]}" -eq 0 ]; then
+            echo "::error::dependency-check wrote no report (exit $OWASP_EXIT); the scan did not run, see its log above"
+            exit 1
           fi
+
+          count() {
+            jq -s --arg s "$1" '[.[].dependencies[]?.vulnerabilities[]? | select(.severity == $s)] | length' "${REPORTS[@]}"
+          }
+          CRITICAL=$(count CRITICAL); HIGH=$(count HIGH)
+          VULNS=$((CRITICAL + HIGH))
 
           echo "vulnerabilities=$VULNS" >> $GITHUB_OUTPUT
           echo "critical=$CRITICAL" >> $GITHUB_OUTPUT

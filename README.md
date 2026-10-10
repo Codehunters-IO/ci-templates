@@ -1,16 +1,18 @@
 # CI Templates
 
-Reusable GitHub Actions workflows for Java, KrakenD, NGINX, React and Solidity/Hardhat projects following a GitFlow branching strategy.
+Reusable GitHub Actions workflows for Java, KrakenD, NGINX, React, Firebase (pnpm) and Solidity/Hardhat projects following a GitFlow branching strategy.
 
 ## Stacks
 
 | Stack | Pipelines | Templates |
 |-------|-----------|-----------|
 | Java (Spring Boot) | `java-main-pipeline.yml` · `java-pr-pipeline.yml` | `templates/java-*.yml` |
+| Java library (multi-module Gradle) | `java-library-build.yml` · `java-library-release-drafts.yml` · `java-library-publish.yml` | `templates/java-library-*.yml` |
 | Krakend | `krakend-main-pipeline.yml` | `templates/krakend-*.yml` |
 | NGINX (ingress) | `nginx-main-pipeline.yml` | `templates/nginx-*.yml` |
 | React | `react-main-pipeline.yml` | `templates/react-*.yml` |
 | Contracts (Hardhat/Solidity) | `contracts-main-pipeline.yml` | `templates/contracts-*.yml` |
+| Firebase (pnpm monorepo) | `firebase-main-pipeline.yml` | `templates/firebase-*.yml` |
 
 ## GitFlow
 
@@ -107,14 +109,17 @@ to be filled. A dash means no template exists for that step.
 | React | `react-feature-build` | `react-pr-develop` | `react-develop-deploy` | `react-release-deploy` | `react-main-deploy` | — |
 | NGINX | `nginx-feature-build` | `nginx-pr-develop` | `nginx-develop-deploy` | `nginx-release-deploy` | `nginx-main-deploy` | — |
 | Contracts | `contracts-feature-build` | `contracts-pr-develop` · `contracts-pr-full` | `contracts-develop-build` | `contracts-release-publish` | `contracts-main-deploy` | — |
+| Firebase | `firebase-feature-build` | `firebase-pr-develop` | — | — | — | — |
 
-Three things that table is saying out loud:
+Four things that table is saying out loud:
 
 - **Java covers feature pushes and PRs with one file.** `java-validate.yml` triggers on
   both, which is why there is no `java-feature-build.yml` or `java-pr-develop.yml` to copy.
 - **`release/*` deploys on three stacks and not on Java.** React, NGINX and Contracts push
   `release/**` to a `staging` environment. Java's release branch carries the PR to `main`
   and deploys nothing.
+- **Firebase validates but deploys nothing yet.** Its pipeline stops at tests against the
+  Emulator Suite; see [Firebase (pnpm monorepo) Stack](#firebase-pnpm-monorepo-stack).
 - **Only Java and KrakenD have a production template.** React, NGINX and Contracts treat
   `main` as production directly (see the environment table below); there is no
   approval-gated `workflow_dispatch` promotion for them.
@@ -656,6 +661,7 @@ ci-templates/
 │   ├── contracts-analysis.yml
 │   ├── krakend-main-pipeline.yml
 │   ├── react-main-pipeline.yml
+│   ├── firebase-main-pipeline.yml
 │   ├── shared-deploy-ec2.yml
 │   ├── shared-deploy-ec2-vpn.yml
 │   ├── shared-deploy-eks.yml
@@ -667,6 +673,8 @@ ci-templates/
 │   ├── nginx-*.yml
 │   ├── react-*.yml
 │   ├── contracts-*.yml
+│   ├── firebase-*.yml            #   feature-build · pr-develop
+│   ├── java-library-*.yml        #   validate · release-drafts · publish
 │   └── shared-*.yml              #   build-publish-image · cleanup-packages
 ├── .github/ruleset/              # Rulesets as source files (import to GitHub) + their README
 ├── scripts/                      # clone-environments.sh · ssh-deploy-debug.sh
@@ -802,6 +810,102 @@ workflow that passes no `image_digest`, or a runner without `jq`.
 - **On-chain deploy** (Sepolia / Polygon / mainnet) is NOT executed from CI. Real-network deploys must run out-of-band via a separate, gated, `workflow_dispatch` job with GitHub Environment approvals and isolated secrets.
 - **EC2 / EKS deployment** of the dev-node container is NOT performed by this pipeline; image is published to ECR only.
 - **ABI / TypeChain publishing** to downstream consumers is not yet wired (reserved for a future input).
+
+## Firebase (pnpm monorepo) Stack
+
+For pnpm workspaces that ship to Firebase (Hosting, Cloud Functions, Firestore) and test
+against the Emulator Suite instead of a live project. Validation only:
+
+```
+feature/*              ──► static (lint, typecheck, unit — whatever static_scripts names)
+     │
+     ▼ (PR to develop)      commit-lint + trufflehog + dependency review
+                             + static + emulator suites + Playwright E2E   (in parallel)
+```
+
+Jobs behind the pipeline:
+
+| Reusable workflow | Runs |
+|---|---|
+| `firebase-static.yml` | `pnpm install --frozen-lockfile`, then each of `static_scripts` |
+| `firebase-emulator-test.yml` | Same, plus a Temurin JDK, then each of `emulator_scripts` |
+| `firebase-e2e.yml` | Same, plus `playwright install --with-deps`, then each of `e2e_scripts`; uploads the HTML report on failure |
+
+### What the consumer owns
+
+The jobs run root `package.json` scripts by name and nothing else, so the repository decides
+what each suite is:
+
+- **pnpm and Node versions** come from `packageManager` and `.nvmrc` (`node_version_file`).
+- **The emulators are started by the scripts**, not by the workflow: wrap each runner in
+  `firebase emulators:exec --project demo-<id> "..."`. Ports, project id and which emulators
+  run stay in the consumer's `firebase.json`, and CI runs the exact command developers run.
+  A `demo-` project id never reaches real resources, so none of these jobs need secrets.
+- **Script names are validated** against `^[A-Za-z0-9:_.-]+$` before anything runs.
+
+### pnpm's minimumReleaseAge
+
+pnpm refuses packages published more recently than its release-age policy, and that applies
+to `pnpm install --frozen-lockfile` in CI. A lockfile updated the day a dependency was
+published fails here until the package ages in. The pipeline deliberately has no input to
+turn the policy off. Exempt the specific packages with `minimumReleaseAgeExclude` in the
+consumer's `pnpm-workspace.yaml`, where the exemption is reviewed with the code, and remove
+it once they age in.
+
+### Out of scope (deliberate)
+
+- **Deploy.** A Firebase deploy needs Workload Identity Federation to a GCP project; it lands
+  as an opt-in job once a consumer has wired one. Until then there is no `develop`, `main` or
+  production template.
+- **Emulator binary cache.** firebase-tools downloads the emulator JARs on each run.
+
+## Java Library (multi-module Gradle) Stack
+
+For a repository of Gradle libraries where every module carries its own version and is
+released on its own tag (`<module>/vX.Y.Z`): an SDK monorepo, a set of starters, a BOM.
+The Java service pipelines do not fit it. `java-build.yml` compiles with `-x test` and looks
+for a bootable JAR under `bootstrap/`; `java-artifact-dependency-github.yml` publishes the
+whole project at one version, which here uploads versions nobody released and fails with
+409 on the ones already there.
+
+| Template | Copy to | Trigger | Does |
+|---|---|---|---|
+| `java-library-validate.yml` | `validate.yml` | branch push, PR → `main` | `./gradlew build`, secret scan, commit lint |
+| `java-library-release-drafts.yml` | `release-drafts.yml` | push to `main` | builds the merge, drafts one release per untagged module version |
+| `java-library-publish.yml` | `publish.yml` | release published | uploads the one module the tag names |
+
+Nothing is published on merge. A person reviews a draft and publishes it; that creates the
+tag and runs `publish.yml` for that module only, and only if the tagged commit is on the
+default branch.
+
+### What the consumer owns
+
+- **The build is the gate.** Tests, coverage thresholds, Spotless and convention checks live
+  in the repository's build logic; `java-library-build.yml` runs `gradle_commands` (one
+  `./gradlew` invocation per line) and nothing else.
+- **A candidates task.** `releaseCandidate` by default (`candidates_task`): writes
+  `build/release-candidates/*.txt` with one `<tag> <gradle path> <project dir>` line per
+  releasable module. Both release workflows read it, so a tag that no module declares at
+  that commit fails instead of publishing something else.
+- **A CHANGELOG per module.** The draft's notes are the `## <version>` section of
+  `<project dir>/CHANGELOG.md`.
+- **The publication.** The Gradle `publish` task must target GitHub Packages and read
+  `GH_PACKAGES_USERNAME` / `GH_PACKAGES_TOKEN`. Without those secrets the workflow token
+  (`packages: write`) is used.
+- **Extra release checks**, through `verify_script`: a script run after the module is
+  resolved, with `TAG` and `GRADLE_PATH`, e.g. refusing a BOM whose libraries are not
+  uploaded yet.
+
+`docker_images` (all three workflows) pre-pulls the images the integration tests start,
+from Docker Hub and then from `mirror.gcr.io` and `public.ecr.aws/docker`. Testcontainers
+otherwise pulls lazily, and a Docker Hub token timeout surfaces only as
+`ContainerFetchException` five minutes into the test task.
+
+### Publishing several releases
+
+`publish.yml` queues in one concurrency group, and a group holds one pending run: publishing
+three drafts at once runs the first and the last and cancels the middle one. Publish one,
+wait for its run, then the next; a BOM goes last.
 
 ## Environments
 
