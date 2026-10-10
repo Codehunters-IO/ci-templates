@@ -104,6 +104,29 @@ on:
         required: false
         type: string
         default: 'gradle'
+      test_tasks:
+        description: >-
+          Gradle tasks the test step runs. `check` runs every verification task the build
+          defines (per-module coverage rules, convention checks), not only the tests.
+        required: false
+        type: string
+        default: 'test jacocoTestReport'
+      extra_gradle_commands:
+        description: >-
+          Further Gradle invocations after the tests, one per line, each passed to ./gradlew
+          as is (e.g. "-p build-logic test" for an included build). A failure fails the job.
+        required: false
+        type: string
+        default: ''
+      docker_images:
+        description: >-
+          Container images the integration tests start, one per line. Pulled before the
+          tests, from Docker Hub and then from its public mirrors (mirror.gcr.io,
+          public.ecr.aws/docker). Testcontainers otherwise pulls lazily and reports a failed
+          Docker Hub pull only as ContainerFetchException after a five-minute wait.
+        required: false
+        type: string
+        default: ''
 
     outputs:
       result:
@@ -189,6 +212,53 @@ jobs:
       # ============================================
       # RUN TESTS
       # ============================================
+      - name: Pull the integration-test images
+        if: inputs.docker_images != ''
+        shell: bash
+        env:
+          IMAGES: ${{ inputs.docker_images }}
+        run: |
+          set -euo pipefail
+          mirrors=("mirror.gcr.io" "public.ecr.aws/docker")
+
+          # Docker Hub names official images without library/; the mirrors need it.
+          qualified() {
+            if [[ "$1" == */* ]]; then echo "$1"; else echo "library/$1"; fi
+          }
+
+          # A mirrored image is tagged with its Docker Hub name, the one Testcontainers looks up.
+          pull_from_mirror() {
+            local mirror mirrored
+            for mirror in "${mirrors[@]}"; do
+              mirrored="$mirror/$(qualified "$1")"
+              if docker pull --quiet "$mirrored"; then
+                docker tag "$mirrored" "$1"
+                echo "pulled $1 from $mirror"
+                return 0
+              fi
+              echo "::warning::docker pull $mirrored failed"
+            done
+            return 1
+          }
+
+          pull() {
+            local attempt
+            for attempt in 1 2; do
+              if docker pull --quiet "$1" || pull_from_mirror "$1"; then
+                return 0
+              fi
+              echo "::warning::could not pull $1 from Docker Hub or its mirrors (attempt $attempt)"
+              sleep 30
+            done
+            echo "::error::could not pull $1"
+            return 1
+          }
+
+          while read -r image; do
+            [ -n "$image" ] || continue
+            pull "$image"
+          done <<< "$IMAGES"
+
       - name: Run tests (Gradle)
         id: test-run
         if: inputs.build_tool == 'gradle'
@@ -201,10 +271,31 @@ jobs:
         # The exit code is recorded, not swallowed: the report steps below still run, and
         # "Check test results" fails on it. A bare `|| true` here turned a test-compilation
         # error, or a failing test the XML scan below did not find, into a green job.
+          TEST_TASKS: ${{ inputs.test_tasks }}
         run: |
           set +e
-          ./gradlew test jacocoTestReport --no-daemon --build-cache --parallel
+          # Word splitting is the point: TEST_TASKS is a list of Gradle tasks.
+          # shellcheck disable=SC2086
+          ./gradlew $TEST_TASKS --no-daemon --build-cache --parallel
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Extra Gradle commands
+        if: inputs.build_tool == 'gradle' && inputs.extra_gradle_commands != ''
+        shell: bash
+        env:
+          GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME }}
+          GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
+          COMMANDS: ${{ inputs.extra_gradle_commands }}
+        run: |
+          set -euo pipefail
+          while read -r line; do
+            [ -n "$line" ] || continue
+            echo "::group::./gradlew $line"
+            # Word splitting is the point: each line is a list of Gradle arguments.
+            # shellcheck disable=SC2086
+            ./gradlew $line --no-daemon --build-cache
+            echo "::endgroup::"
+          done <<< "$COMMANDS"
 
       - name: Run tests (Maven)
         id: test-run-maven

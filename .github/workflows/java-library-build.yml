@@ -1,4 +1,8 @@
-name: Java Library - Build
+name: Java Library - Build [DEPRECATED]
+
+# DEPRECATED since v2.4.0, removed in v3. Call java-pr-pipeline.yml instead: its test job now
+# takes `test_tasks` (e.g. `check`), `extra_gradle_commands` and `docker_images`, which is
+# everything this workflow added. See the README's Deprecations section.
 
 # Builds and tests a multi-module Gradle library repository: one where every module carries its
 # own version and is released on its own tag (see java-library-publish.yml). There is no bootable
@@ -61,6 +65,11 @@ jobs:
     timeout-minutes: ${{ inputs.timeout_minutes }}
 
     steps:
+      - name: Deprecation warning
+        run: >-
+          echo "::warning::java-library-build.yml is deprecated and goes in v3. Call
+          java-pr-pipeline.yml with test_tasks, extra_gradle_commands and docker_images instead."
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:

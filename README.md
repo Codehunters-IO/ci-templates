@@ -7,7 +7,7 @@ Reusable GitHub Actions workflows for Java, KrakenD, NGINX, React, Firebase (pnp
 | Stack | Pipelines | Templates |
 |-------|-----------|-----------|
 | Java (Spring Boot) | `java-main-pipeline.yml` · `java-pr-pipeline.yml` | `templates/java-*.yml` |
-| Java library (multi-module Gradle) | `java-library-build.yml` · `java-library-release-drafts.yml` · `java-library-publish.yml` | `templates/java-library-*.yml` |
+| Java library (multi-module Gradle) | `java-pr-pipeline.yml` · `java-library-release-drafts.yml` · `java-library-publish.yml` | `templates/java-library-*.yml` |
 | Krakend | `krakend-main-pipeline.yml` | `templates/krakend-*.yml` |
 | NGINX (ingress) | `nginx-main-pipeline.yml` | `templates/nginx-*.yml` |
 | React | `react-main-pipeline.yml` | `templates/react-*.yml` |
@@ -351,6 +351,14 @@ v2 removed eleven per-language workflows and one input. They had carried
 `[DEPRECATED]` and a run-time warning through the 1.x line. `@v1` still serves
 all of them, frozen at the last 1.x release, so a caller that has not migrated
 keeps working but gets no further fixes.
+
+### Deprecated in v2, removed in v3
+
+| Workflow | Replacement |
+|---|---|
+| `java-library-build.yml` | `java-pr-pipeline.yml` with `test_tasks`, `extra_gradle_commands` and `docker_images` |
+
+It still runs, with a warning in every run, until v3.
 
 ### Removed in v2
 
@@ -870,7 +878,7 @@ whole project at one version, which here uploads versions nobody released and fa
 
 | Template | Copy to | Trigger | Does |
 |---|---|---|---|
-| `java-library-validate.yml` | `validate.yml` | branch push, PR → `main` | `./gradlew build`, secret scan, commit lint |
+| `java-library-validate.yml` | `validate.yml` | branch push, PR → `main` | `java-pr-pipeline` with `test_tasks: check`, secret scan, commit lint |
 | `java-library-release-drafts.yml` | `release-drafts.yml` | push to `main` | builds the merge, drafts one release per untagged module version |
 | `java-library-publish.yml` | `publish.yml` | release published | uploads the one module the tag names |
 
@@ -881,8 +889,9 @@ default branch.
 ### What the consumer owns
 
 - **The build is the gate.** Tests, coverage thresholds, Spotless and convention checks live
-  in the repository's build logic; `java-library-build.yml` runs `gradle_commands` (one
-  `./gradlew` invocation per line) and nothing else.
+  in the repository's build logic. Validation runs `java-pr-pipeline.yml` with
+  `test_tasks: check`, so every verification task runs, not only `test`;
+  `extra_gradle_commands` adds invocations such as `-p build-logic test`.
 - **A candidates task.** `releaseCandidate` by default (`candidates_task`): writes
   `build/release-candidates/*.txt` with one `<tag> <gradle path> <project dir>` line per
   releasable module. Both release workflows read it, so a tag that no module declares at
@@ -896,7 +905,7 @@ default branch.
   resolved, with `TAG` and `GRADLE_PATH`, e.g. refusing a BOM whose libraries are not
   uploaded yet.
 
-`docker_images` (all three workflows) pre-pulls the images the integration tests start,
+`docker_images` (`java-test` through the pipelines, and both release workflows) pre-pulls the images the integration tests start,
 from Docker Hub and then from `mirror.gcr.io` and `public.ecr.aws/docker`. Testcontainers
 otherwise pulls lazily, and a Docker Hub token timeout surfaces only as
 `ContainerFetchException` five minutes into the test task.
