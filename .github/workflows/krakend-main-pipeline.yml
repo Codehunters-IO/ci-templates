@@ -84,7 +84,9 @@ on:
         type: string
         default: 'bug,pipeline-failure'
       run_cleanup:
-        description: 'Delete merged branch after deploy'
+        description: >-
+          [DEPRECATED, IGNORED] The cleanup job runs on every push regardless (it deletes only a
+          verified-merged PR head). Kept so existing callers do not fail; removed in v3.
         required: false
         type: boolean
         default: false

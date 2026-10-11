@@ -119,7 +119,7 @@ on:
         type: boolean
         default: false
       owasp_fail_on_cvss:
-        description: 'CVSS score threshold to fail (7 = HIGH+CRITICAL, 9 = CRITICAL only)'
+        description: 'Fail on any vulnerability with a CVSS score at or above this (7 = HIGH and up, 9 = CRITICAL only, 4 = MEDIUM and up)'
         required: false
         type: number
         default: 7
@@ -274,7 +274,9 @@ on:
 
       # Cleanup & Release
       run_cleanup:
-        description: 'Delete merged branch after deploy'
+        description: >-
+          [DEPRECATED, IGNORED] The cleanup job runs on every push regardless (it deletes only a
+          verified-merged PR head). Kept so existing callers do not fail; removed in v3.
         required: false
         type: boolean
         default: false

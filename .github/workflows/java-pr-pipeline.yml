@@ -128,7 +128,7 @@ on:
         type: boolean
         default: false
       owasp_fail_on_cvss:
-        description: 'CVSS score threshold to fail (7 = HIGH+CRITICAL, 9 = CRITICAL only)'
+        description: 'Fail on any vulnerability with a CVSS score at or above this (7 = HIGH and up, 9 = CRITICAL only, 4 = MEDIUM and up)'
         required: false
         type: number
         default: 7
