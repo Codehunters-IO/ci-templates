@@ -354,11 +354,12 @@ keeps working but gets no further fixes.
 
 ### Deprecated in v2, removed in v3
 
-| Workflow | Replacement |
+| Workflow or input | Replacement |
 |---|---|
 | `java-library-build.yml` | `java-pr-pipeline.yml` with `test_tasks`, `extra_gradle_commands` and `docker_images` |
+| `run_cleanup` input of `java-main-pipeline.yml` and `krakend-main-pipeline.yml` | Nothing: it never had an effect there. Their cleanup job runs on every push and deletes only a verified-merged PR head. The NGINX, React and Contracts pipelines do honour it. |
 
-It still runs, with a warning in every run, until v3.
+`java-library-build.yml` still runs, with a warning in every run, until v3.
 
 ### Removed in v2
 

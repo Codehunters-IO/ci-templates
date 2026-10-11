@@ -30,7 +30,7 @@ on:
         type: string
         default: 'temurin'
       owasp_fail_on_cvss:
-        description: 'CVSS score threshold to fail build (7 = HIGH+CRITICAL, 9 = CRITICAL only)'
+        description: 'Fail on any vulnerability with a CVSS score at or above this (7 = HIGH and up, 9 = CRITICAL only, 4 = MEDIUM and up)'
         required: false
         type: number
         default: 7
@@ -114,6 +114,7 @@ jobs:
         # bash: mapfile and arrays; a container image's default sh has neither.
         shell: bash
         env:
+          THRESHOLD: ${{ inputs.owasp_fail_on_cvss }}
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
           GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME }}
           GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
@@ -146,10 +147,18 @@ jobs:
           }
           CRITICAL=$(count CRITICAL); HIGH=$(count HIGH); MEDIUM=$(count MEDIUM); LOW=$(count LOW)
           VULNS=$((CRITICAL + HIGH + MEDIUM + LOW))
+          # Blocking = scored at or above owasp_fail_on_cvss: the CVSS v3 base score, else v2,
+          # else the severity's lower bound (CRITICAL 9, HIGH 7, MEDIUM 4, LOW 0.1) for sources
+          # that publish no score.
+          BLOCKING=$(jq -s --argjson t "$THRESHOLD" '
+            def score: .cvssv3.baseScore // .cvssv2.score
+              // ({"CRITICAL": 9, "HIGH": 7, "MEDIUM": 4, "LOW": 0.1}[(.severity // "") | ascii_upcase] // 0);
+            [.[].dependencies[]?.vulnerabilities[]? | select(score >= $t)] | length' "${REPORTS[@]}")
 
           echo "vulnerabilities=$VULNS" >> $GITHUB_OUTPUT
           echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
           echo "high=$HIGH" >> $GITHUB_OUTPUT
+          echo "blocking=$BLOCKING" >> $GITHUB_OUTPUT
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### OWASP Dependency Check" >> $GITHUB_STEP_SUMMARY
@@ -168,6 +177,7 @@ jobs:
         # bash: mapfile and arrays; a container image's default sh has neither.
         shell: bash
         env:
+          THRESHOLD: ${{ inputs.owasp_fail_on_cvss }}
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: |
           echo "Running OWASP Dependency Check..."
@@ -194,31 +204,35 @@ jobs:
           }
           CRITICAL=$(count CRITICAL); HIGH=$(count HIGH)
           VULNS=$((CRITICAL + HIGH))
+          # Blocking = scored at or above owasp_fail_on_cvss: the CVSS v3 base score, else v2,
+          # else the severity's lower bound (CRITICAL 9, HIGH 7, MEDIUM 4, LOW 0.1) for sources
+          # that publish no score.
+          BLOCKING=$(jq -s --argjson t "$THRESHOLD" '
+            def score: .cvssv3.baseScore // .cvssv2.score
+              // ({"CRITICAL": 9, "HIGH": 7, "MEDIUM": 4, "LOW": 0.1}[(.severity // "") | ascii_upcase] // 0);
+            [.[].dependencies[]?.vulnerabilities[]? | select(score >= $t)] | length' "${REPORTS[@]}")
 
           echo "vulnerabilities=$VULNS" >> $GITHUB_OUTPUT
           echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
           echo "high=$HIGH" >> $GITHUB_OUTPUT
+          echo "blocking=$BLOCKING" >> $GITHUB_OUTPUT
 
       # ============================================
       # CHECK THRESHOLDS
       # ============================================
       - name: Check OWASP vulnerabilities
+        env:
+          BLOCKING: ${{ steps.owasp-check.outputs.blocking || steps.owasp-check-maven.outputs.blocking }}
+          THRESHOLD: ${{ inputs.owasp_fail_on_cvss }}
         run: |
-          CRITICAL="${{ steps.owasp-check.outputs.critical || steps.owasp-check-maven.outputs.critical }}"
-          HIGH="${{ steps.owasp-check.outputs.high || steps.owasp-check-maven.outputs.high }}"
-          THRESHOLD="${{ inputs.owasp_fail_on_cvss }}"
-
-          CRITICAL="${CRITICAL:-0}"
-          HIGH="${HIGH:-0}"
-
-          if [ "$CRITICAL" -gt 0 ]; then
-            echo "::error::Found $CRITICAL CRITICAL vulnerabilities"
+          # The scan steps fail on their own when no report exists, so an empty count here
+          # means the step did not run: fail rather than pass.
+          if [ -z "$BLOCKING" ]; then
+            echo "::error::no vulnerability count from the scan step"
             exit 1
           fi
-
-          if [ "$THRESHOLD" -le 7 ] && [ "$HIGH" -gt 0 ]; then
-            echo "::error::Found $HIGH HIGH vulnerabilities"
+          if [ "$BLOCKING" -gt 0 ]; then
+            echo "::error::Found $BLOCKING vulnerabilities with a CVSS score of $THRESHOLD or more"
             exit 1
           fi
-
-          echo "No blocking vulnerabilities found"
+          echo "No vulnerabilities with a CVSS score of $THRESHOLD or more"
