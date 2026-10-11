@@ -14,10 +14,14 @@ on:
         type: string
         default: '(MAJOR|BREAKING CHANGE)'
       minor_pattern:
-        description: 'Regex pattern for minor version bump'
+        description: >-
+          Extended regex, matched per line of the commit subjects and bodies, for a minor
+          bump. Anchored to a conventional `feat` type, as in shared-release.yml: the old
+          `(feat)` also matched "feature/..." or "defeat" anywhere in a body, so a tag could
+          come out a minor ahead of the release branch shared-release had cut.
         required: false
         type: string
-        default: '(feat)'
+        default: '^feat(\(|:|!)'
       annotated:
         description: >-
           Create an annotated tag. false creates a lightweight tag, which is what a

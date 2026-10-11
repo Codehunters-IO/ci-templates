@@ -272,6 +272,56 @@ jobs:
       - name: Run the image-ref rule against its cases
         run: .github/selftest/image-ref.test.sh
 
+  version-bump-rules:
+    name: Version bump rules agree
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      # The bump decision lives in three places: shared-release.yml (which names the
+      # release/vX.Y.Z branch), shared-tag-release.yml (which tags main) and
+      # shared-semver.yml. They cannot share code without one reusable workflow calling
+      # another and adding a nesting level, so they are kept as copies -- and copies drift:
+      # `(feat)` against `^feat(\(|:|!)` cut release/v2.4.1 and then tagged v2.5.0. This
+      # fails when the patterns differ, and checks the shared rule on a few commit lines.
+      - name: Same patterns, expected bumps
+        run: |
+          python3 - <<'PY'
+          import re, sys, yaml
+          wf = lambda f: yaml.safe_load(open(f'.github/workflows/{f}'))
+          defaults = {}
+          for f in ('shared-semver.yml', 'shared-tag-release.yml'):
+              inputs = wf(f)[True]['workflow_call']['inputs']
+              defaults[f] = (inputs['major_pattern']['default'], inputs['minor_pattern']['default'])
+          release = open('.github/workflows/shared-release.yml').read()
+          literals = re.findall(r"grep -qE '([^']+)'", release)
+          defaults['shared-release.yml'] = tuple(literals[:2])
+          bad = len(set(defaults.values())) != 1
+          for f, pair in defaults.items():
+              print(f"{f}: major={pair[0]!r} minor={pair[1]!r}")
+          if bad:
+              print("::error::the three workflows bump versions on different patterns")
+              sys.exit(1)
+          major, minor = next(iter(defaults.values()))
+          cases = [
+              ('feat(java): add an input', 'minor'),
+              ('feat: add an input', 'minor'),
+              ('fix(java): keep the gate closed', 'patch'),
+              ('docs: describe the feature/ branch flow', 'patch'),
+              ('fix: defeat the race', 'patch'),
+              ('BREAKING CHANGE: input renamed', 'major'),
+          ]
+          failures = 0
+          for line, want in cases:
+              got = 'major' if re.search(major, line) else 'minor' if re.search(minor, line) else 'patch'
+              if got != want:
+                  print(f"::error::{line!r} bumps {got}, expected {want}")
+                  failures += 1
+          print(f"{len(cases)} cases, {failures} wrong")
+          sys.exit(1 if failures else 0)
+          PY
+
   commit-lint:
     name: Commit messages
     # Dogfooding: this repository's own commit-lint workflow, run against this
