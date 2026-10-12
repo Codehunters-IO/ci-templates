@@ -50,6 +50,9 @@ on:
           Optional script in the calling repository, run after the module is resolved and
           before the build. Gets TAG, GRADLE_PATH, GH_PACKAGES_USERNAME and GH_PACKAGES_TOKEN.
           A non-zero exit stops the publish (e.g. a BOM whose libraries are not uploaded yet).
+          The script is taken from the default branch and run in the tagged tree, so a tag
+          cut before the script existed can still be published, and always with the
+          current checks.
         required: false
         type: string
         default: ''
@@ -109,6 +112,7 @@ jobs:
         env:
           TAG_PATTERN: ${{ inputs.tag_pattern }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          SCRIPT: ${{ inputs.verify_script }}
         run: |
           set -euo pipefail
           if [[ ! "$TAG" =~ $TAG_PATTERN ]]; then
@@ -118,6 +122,15 @@ jobs:
           if ! git merge-base --is-ancestor "refs/tags/$TAG" "origin/$DEFAULT_BRANCH"; then
             echo "::error::$TAG points at a commit that is not on $DEFAULT_BRANCH: release only merged code"
             exit 1
+          fi
+          # Taken before the tag is checked out: the default branch's copy is the reviewed,
+          # current one, and older tags may predate the script altogether.
+          if [ -n "$SCRIPT" ]; then
+            if ! git show "origin/$DEFAULT_BRANCH:$SCRIPT" > "$RUNNER_TEMP/verify-release"; then
+              echo "::error::verify_script '$SCRIPT' does not exist on $DEFAULT_BRANCH"
+              exit 1
+            fi
+            chmod +x "$RUNNER_TEMP/verify-release"
           fi
           git checkout --detach "refs/tags/$TAG"
 
@@ -151,8 +164,7 @@ jobs:
         if: inputs.verify_script != ''
         env:
           GRADLE_PATH: ${{ steps.module.outputs.path }}
-          SCRIPT: ${{ inputs.verify_script }}
-        run: '"./$SCRIPT"'
+        run: '"$RUNNER_TEMP/verify-release"'
 
       - name: Pull the integration-test images
         if: inputs.docker_images != ''

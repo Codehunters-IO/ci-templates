@@ -104,6 +104,11 @@ jobs:
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb  # v6.3.0
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' }}
+          # The NVD database (~/.gradle/dependency-check-data) is hundreds of MB of H2 files.
+          # The Gradle home cache saved a truncated copy, and every later run restored it and
+          # failed with MVStoreException before analysing anything. With an NVD_API_KEY a
+          # fresh download takes a few minutes, which a weekly scan can afford.
+          gradle-home-cache-excludes: dependency-check-data
 
       # ============================================
       # RUN OWASP DEPENDENCY CHECK
@@ -136,8 +141,12 @@ jobs:
           # Every report, not only the root project's: without the aggregate task each
           # module writes its own. Finding none used to count zero vulnerabilities, so an
           # NVD download failure passed the gate as "No blocking vulnerabilities found".
-          mapfile -t REPORTS < <(find . -path "*/build/reports/dependency-check-report.json" -not -path "*/node_modules/*")
+          # Anywhere under a build/reports/ directory: dependency-check-gradle 13 writes to
+          # build/reports/dependency-check/, earlier versions to build/reports/.
+          mapfile -t REPORTS < <(find . -name dependency-check-report.json -path "*/build/reports/*" -not -path "*/node_modules/*")
           if [ "${#REPORTS[@]}" -eq 0 ]; then
+            echo "dependency-check-report files anywhere in the workspace:"
+            find . -name 'dependency-check-report*' -not -path "*/node_modules/*" || true
             echo "::error::dependency-check wrote no report (exit $OWASP_EXIT); the scan did not run, see its log above"
             exit 1
           fi
@@ -193,8 +202,10 @@ jobs:
           set -e
 
           # Every module's report; none at all means the scan did not run (see the Gradle step).
-          mapfile -t REPORTS < <(find . -path "*/target/dependency-check-report.json" -not -path "*/node_modules/*")
+          mapfile -t REPORTS < <(find . -name dependency-check-report.json -path "*/target/*" -not -path "*/node_modules/*")
           if [ "${#REPORTS[@]}" -eq 0 ]; then
+            echo "dependency-check-report files anywhere in the workspace:"
+            find . -name 'dependency-check-report*' -not -path "*/node_modules/*" || true
             echo "::error::dependency-check wrote no report (exit $OWASP_EXIT); the scan did not run, see its log above"
             exit 1
           fi
