@@ -136,7 +136,9 @@ jobs:
           # Every report, not only the root project's: without the aggregate task each
           # module writes its own. Finding none used to count zero vulnerabilities, so an
           # NVD download failure passed the gate as "No blocking vulnerabilities found".
-          mapfile -t REPORTS < <(find . -path "*/build/reports/dependency-check-report.json" -not -path "*/node_modules/*")
+          # Anywhere under a build/reports/ directory: dependency-check-gradle 13 writes to
+          # build/reports/dependency-check/, earlier versions to build/reports/.
+          mapfile -t REPORTS < <(find . -name dependency-check-report.json -path "*/build/reports/*" -not -path "*/node_modules/*")
           if [ "${#REPORTS[@]}" -eq 0 ]; then
             echo "::error::dependency-check wrote no report (exit $OWASP_EXIT); the scan did not run, see its log above"
             exit 1
@@ -193,7 +195,7 @@ jobs:
           set -e
 
           # Every module's report; none at all means the scan did not run (see the Gradle step).
-          mapfile -t REPORTS < <(find . -path "*/target/dependency-check-report.json" -not -path "*/node_modules/*")
+          mapfile -t REPORTS < <(find . -name dependency-check-report.json -path "*/target/*" -not -path "*/node_modules/*")
           if [ "${#REPORTS[@]}" -eq 0 ]; then
             echo "::error::dependency-check wrote no report (exit $OWASP_EXIT); the scan did not run, see its log above"
             exit 1
