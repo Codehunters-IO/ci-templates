@@ -140,6 +140,8 @@ jobs:
           # build/reports/dependency-check/, earlier versions to build/reports/.
           mapfile -t REPORTS < <(find . -name dependency-check-report.json -path "*/build/reports/*" -not -path "*/node_modules/*")
           if [ "${#REPORTS[@]}" -eq 0 ]; then
+            echo "dependency-check-report files anywhere in the workspace:"
+            find . -name 'dependency-check-report*' -not -path "*/node_modules/*" || true
             echo "::error::dependency-check wrote no report (exit $OWASP_EXIT); the scan did not run, see its log above"
             exit 1
           fi
@@ -197,6 +199,8 @@ jobs:
           # Every module's report; none at all means the scan did not run (see the Gradle step).
           mapfile -t REPORTS < <(find . -name dependency-check-report.json -path "*/target/*" -not -path "*/node_modules/*")
           if [ "${#REPORTS[@]}" -eq 0 ]; then
+            echo "dependency-check-report files anywhere in the workspace:"
+            find . -name 'dependency-check-report*' -not -path "*/node_modules/*" || true
             echo "::error::dependency-check wrote no report (exit $OWASP_EXIT); the scan did not run, see its log above"
             exit 1
           fi
