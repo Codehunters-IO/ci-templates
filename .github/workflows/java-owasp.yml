@@ -104,6 +104,11 @@ jobs:
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb  # v6.3.0
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' }}
+          # The NVD database (~/.gradle/dependency-check-data) is hundreds of MB of H2 files.
+          # The Gradle home cache saved a truncated copy, and every later run restored it and
+          # failed with MVStoreException before analysing anything. With an NVD_API_KEY a
+          # fresh download takes a few minutes, which a weekly scan can afford.
+          gradle-home-cache-excludes: dependency-check-data
 
       # ============================================
       # RUN OWASP DEPENDENCY CHECK
