@@ -904,7 +904,8 @@ default branch.
   (`packages: write`) is used.
 - **Extra release checks**, through `verify_script`: a script run after the module is
   resolved, with `TAG` and `GRADLE_PATH`, e.g. refusing a BOM whose libraries are not
-  uploaded yet.
+  uploaded yet. It is read from the default branch and run in the tagged tree, so a tag
+  older than the script can still be published.
 
 `docker_images` (`java-test` through the pipelines, and both release workflows) pre-pulls the images the integration tests start,
 from Docker Hub and then from `mirror.gcr.io` and `public.ecr.aws/docker`. Testcontainers
