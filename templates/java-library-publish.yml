@@ -6,7 +6,7 @@
 #   - workflow_dispatch with the tag, to retry a failed upload
 #
 # Uploads only the module the tag names (`<module>/vX.Y.Z`), and only from a commit on the
-# default branch. The Gradle publication must point at GitHub Packages and read
+# release branch (the default branch, or `release_branch`). The Gradle publication must point at GitHub Packages and read
 # GH_PACKAGES_USERNAME / GH_PACKAGES_TOKEN; the workflow token is used when those secrets
 # are absent.
 
@@ -41,5 +41,7 @@ jobs:
       tag: ${{ github.event.release.tag_name || inputs.tag }}
       # tag_pattern: '^(lib-[a-z0-9-]+|bom)/v[0-9]+\.[0-9]+\.[0-9]+$'
       # verify_script: .github/scripts/verify-release.sh
+      # Releases cut from a branch other than the default one (e.g. default `develop`):
+      # release_branch: main
       # docker_images: |
       #   postgres:17-alpine
