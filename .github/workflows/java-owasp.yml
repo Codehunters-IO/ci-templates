@@ -29,6 +29,11 @@ on:
         required: false
         type: string
         default: 'temurin'
+      timeout_minutes:
+        description: 'Job timeout in minutes. A run without a cached NVD database downloads it all.'
+        required: false
+        type: number
+        default: 60
       owasp_fail_on_cvss:
         description: 'Fail on any vulnerability with a CVSS score at or above this (7 = HIGH and up, 9 = CRITICAL only, 4 = MEDIUM and up)'
         required: false
@@ -75,7 +80,7 @@ jobs:
     # `container:` takes an object or nothing at all, and there is no way to
     # write "no container" as a string. fromJSON('null') is how you say it.
     container: ${{ inputs.container_image != '' && fromJSON(format('{{"image":"{0}"}}', inputs.container_image)) || fromJSON('null') }}
-    timeout-minutes: 30
+    timeout-minutes: ${{ inputs.timeout_minutes }}
 
     outputs:
       vulns: ${{ steps.owasp-check.outputs.vulnerabilities }}
@@ -104,11 +109,20 @@ jobs:
         uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb  # v6.3.0
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' }}
-          # The NVD database (~/.gradle/dependency-check-data) is hundreds of MB of H2 files.
-          # The Gradle home cache saved a truncated copy, and every later run restored it and
-          # failed with MVStoreException before analysing anything. With an NVD_API_KEY a
-          # fresh download takes a few minutes, which a weekly scan can afford.
+          # The NVD database is cached by the steps below, not here: the Gradle home cache
+          # saved a truncated copy that failed every later run with MVStoreException.
           gradle-home-cache-excludes: dependency-check-data
+
+      # The NVD database (hundreds of MB of H2 files). A full download can take longer than
+      # the job; restoring the last good copy leaves only the incremental update to fetch.
+      - name: Restore the NVD database
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: |
+            ~/.gradle/dependency-check-data
+            ~/.m2/repository/org/owasp/dependency-check-data
+          key: nvd-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nvd-${{ runner.os }}-
 
       # ============================================
       # RUN OWASP DEPENDENCY CHECK
@@ -231,6 +245,18 @@ jobs:
       # ============================================
       # CHECK THRESHOLDS
       # ============================================
+      # Saved only when the scan wrote a report, i.e. the database update completed: a copy
+      # taken after a failed or interrupted update is what corrupted the Gradle home cache.
+      # Saved even when vulnerabilities fail the job, or a red scan would never be cached.
+      - name: Save the NVD database
+        if: always() && (steps.owasp-check.outputs.blocking != '' || steps.owasp-check-maven.outputs.blocking != '')
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: |
+            ~/.gradle/dependency-check-data
+            ~/.m2/repository/org/owasp/dependency-check-data
+          key: nvd-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+
       - name: Check OWASP vulnerabilities
         env:
           BLOCKING: ${{ steps.owasp-check.outputs.blocking || steps.owasp-check-maven.outputs.blocking }}
