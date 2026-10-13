@@ -885,7 +885,8 @@ whole project at one version, which here uploads versions nobody released and fa
 
 Nothing is published on merge. A person reviews a draft and publishes it; that creates the
 tag and runs `publish.yml` for that module only, and only if the tagged commit is on the
-default branch.
+release branch: the default branch, or `release_branch` when releases are cut from another one
+(`main` in a repository whose default is `develop`, since `main` is never merged back).
 
 ### What the consumer owns
 
@@ -904,7 +905,7 @@ default branch.
   (`packages: write`) is used.
 - **Extra release checks**, through `verify_script`: a script run after the module is
   resolved, with `TAG` and `GRADLE_PATH`, e.g. refusing a BOM whose libraries are not
-  uploaded yet. It is read from the default branch and run in the tagged tree, so a tag
+  uploaded yet. It is read from the release branch and run in the tagged tree, so a tag
   older than the script can still be published.
 
 `docker_images` (`java-test` through the pipelines, and both release workflows) pre-pulls the images the integration tests start,

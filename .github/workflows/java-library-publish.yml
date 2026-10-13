@@ -6,7 +6,8 @@ name: Java Library - Publish
 # versions nobody released and fails with 409 on the ones already there.
 #
 # Before anything from the tagged tree runs, the tag must match `tag_pattern` and point at a
-# commit on the default branch: only merged code gets published. The module is then resolved with
+# commit on the release branch (`release_branch`, the default branch when empty): only merged code
+# gets published. The module is then resolved with
 # the same candidates task java-library-release-drafts.yml uses, so a tag no module declares at
 # that commit fails instead of publishing something else.
 #
@@ -40,6 +41,14 @@ on:
         required: false
         type: string
         default: '^[a-z0-9][a-z0-9-]*/v[0-9]+\.[0-9]+\.[0-9]+$'
+      release_branch:
+        description: >-
+          Branch the tag must be on, and the one verify_script is read from. Empty means the
+          repository's default branch. Set it when releases are cut from a branch other than the
+          default, e.g. `main` in a repository whose default is `develop`.
+        required: false
+        type: string
+        default: ''
       candidates_task:
         description: 'Gradle task that writes build/release-candidates/*.txt (see java-library-release-drafts.yml)'
         required: false
@@ -50,7 +59,7 @@ on:
           Optional script in the calling repository, run after the module is resolved and
           before the build. Gets TAG, GRADLE_PATH, GH_PACKAGES_USERNAME and GH_PACKAGES_TOKEN.
           A non-zero exit stops the publish (e.g. a BOM whose libraries are not uploaded yet).
-          The script is taken from the default branch and run in the tagged tree, so a tag
+          The script is taken from the release branch and run in the tagged tree, so a tag
           cut before the script existed can still be published, and always with the
           current checks.
         required: false
@@ -101,7 +110,7 @@ jobs:
       gradle_path: ${{ steps.module.outputs.path }}
 
     steps:
-      # The default branch's history and every tag, to check the tag is on it.
+      # The release branch's history and every tag, to check the tag is on it.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -111,7 +120,7 @@ jobs:
       - name: Check out the tag
         env:
           TAG_PATTERN: ${{ inputs.tag_pattern }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_BRANCH: ${{ inputs.release_branch || github.event.repository.default_branch }}
           SCRIPT: ${{ inputs.verify_script }}
         run: |
           set -euo pipefail
@@ -119,15 +128,15 @@ jobs:
             echo "::error::'$TAG' is not a release tag (expected $TAG_PATTERN)"
             exit 1
           fi
-          if ! git merge-base --is-ancestor "refs/tags/$TAG" "origin/$DEFAULT_BRANCH"; then
-            echo "::error::$TAG points at a commit that is not on $DEFAULT_BRANCH: release only merged code"
+          if ! git merge-base --is-ancestor "refs/tags/$TAG" "origin/$RELEASE_BRANCH"; then
+            echo "::error::$TAG points at a commit that is not on $RELEASE_BRANCH: release only merged code"
             exit 1
           fi
-          # Taken before the tag is checked out: the default branch's copy is the reviewed,
+          # Taken before the tag is checked out: the release branch's copy is the reviewed,
           # current one, and older tags may predate the script altogether.
           if [ -n "$SCRIPT" ]; then
-            if ! git show "origin/$DEFAULT_BRANCH:$SCRIPT" > "$RUNNER_TEMP/verify-release"; then
-              echo "::error::verify_script '$SCRIPT' does not exist on $DEFAULT_BRANCH"
+            if ! git show "origin/$RELEASE_BRANCH:$SCRIPT" > "$RUNNER_TEMP/verify-release"; then
+              echo "::error::verify_script '$SCRIPT' does not exist on $RELEASE_BRANCH"
               exit 1
             fi
             chmod +x "$RUNNER_TEMP/verify-release"
