@@ -213,12 +213,24 @@ cp templates/react-main-deploy.yml     .github/workflows/main-deploy.yml      # 
 | `package_manager` | `npm`, `yarn` or `pnpm`. An unrecognised value fails the job instead of falling through to `npm ci` | `'yarn'` |
 | `node_version` | Node.js version, ignored when `node_version_file` is set | `'24'` |
 | `node_version_file` | Read the version from `.nvmrc` / `.node-version` instead, so the pin lives in one place | `''` |
-| `build_output_dir` | Output path(s) to upload, one per line; a glob such as `apps/*/dist` for a monorepo. Matching nothing now fails the job | `'build'` |
+| `build_output_dir` | Output path(s) to upload, one per line. Matching nothing now fails the job. A glob such as `apps/*/dist` works for **build-only** pipelines — the deploy jobs take this same value as a literal directory and cannot expand it | `'build'` |
+| `build_command` | Build **script name** only, validated against `^[A-Za-z0-9:_.-]+$`. Flags go in `build_args` | `'build'` |
+| `build_args` | Extra arguments appended to the build script | `''` |
 | `run_lint` / `run_type_check` | Run the `lint` / `type-check` script during build | `true` / `false` |
-| `test_args` | Extra arguments appended to the test script, e.g. `--coverage --ci`. Empty by default: a monorepo task runner rejects flags it does not know | `''` |
-| `run_coverage` | Parse a coverage summary and enforce the threshold. Was hardcoded on, which left a repository with no coverage tooling unable to pass | `true` |
-| `coverage_summary_path` | Path to the istanbul `json-summary` report | `'coverage/coverage-summary.json'` |
-| `coverage_line_threshold` | Minimum line coverage; `0` disables. Was hardcoded at 80 | `80` |
+| `test_args` | Extra arguments appended to the test script. Defaults to the flags this workflow used to inject on its own, so an existing caller keeps the command it had. Set to `''` on a monorepo task runner, which rejects flags it does not know | `'--coverage --ci'` |
+| `run_coverage` | Parse a coverage summary and enforce the threshold. Does **not** modify the test command — pass the flag your runner needs via `test_args` | `true` |
+| `coverage_summary_path` | Path to the istanbul `json-summary` report. Its directory is what `upload_reports` publishes | `'coverage/coverage-summary.json'` |
+| `coverage_line_threshold` | Minimum line coverage; `0` disables. A per-repository ratchet rather than a global hardcode — same default as the java stack | `0` |
+
+`test_command` and `build_command` are script names, not command lines. Both are
+validated and reach the shell through `env:` rather than being interpolated into
+the script body, so a caller that derives one from event data cannot turn it
+into two commands.
+
+On `package_manager: npm` the workflows insert the `--` separator themselves.
+Without it npm parses `--coverage` as its own option and the script receives an
+empty argv, so flags belong in `test_args` / `build_args` and never in the
+command name.
 
 With `package_manager: pnpm` the version comes from the repository's own
 `packageManager` field in `package.json` — `pnpm/action-setup` reads it and
@@ -227,7 +239,14 @@ fails loudly if neither that field nor a version is present.
 **The test verdict is the runner's exit code.** The parsed pass/fail counts are
 a summary and a second check, not the gate: a reporter whose wording is not
 Jest's still fails the job when it fails. Monorepo tallies are summed, so a
-repository with six packages reports all of them and not just the last.
+repository with six packages reports all of them and not just the last. The
+counts can read `unknown` when no tally line is recognised — the exit code
+still decides, so `unknown` never turns a red run green.
+
+Output is stripped of ANSI escapes before it is parsed. GitHub sets `CI=true`,
+and runners that colour through picocolors (rstest, vitest) emit escape codes on
+that alone with no TTY check — against the raw bytes every count read `unknown`
+and the failed-count check measured nothing.
 
 ### Deploying through a VPN
 

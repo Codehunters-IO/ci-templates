@@ -28,10 +28,17 @@ on:
         type: string
         default: 'yarn'
       build_command:
-        description: 'Build script name'
+        description: >-
+          Build script name -- a script name only, not a command line. It is
+          validated against ^[A-Za-z0-9:_.-]+$; pass flags via build_args.
         required: false
         type: string
         default: 'build'
+      build_args:
+        description: 'Extra arguments appended to the build script'
+        required: false
+        type: string
+        default: ''
       build_output_dir:
         description: >-
           Build output path(s) to upload, one per line. 'build' for CRA, 'dist'
@@ -87,6 +94,14 @@ jobs:
             *)    echo "::error::Unsupported package_manager '$PM' (expected npm, yarn or pnpm)"; exit 1 ;;
           esac
           echo "run=$PM run" >> "$GITHUB_OUTPUT"
+          # npm parses flags after the script name as its own and passes
+          # nothing to the script. It needs the `--` separator; yarn and pnpm
+          # forward positionally and must not get one.
+          if [ "$PM" = "npm" ]; then
+            echo "args_sep=--" >> "$GITHUB_OUTPUT"
+          else
+            echo "args_sep=" >> "$GITHUB_OUTPUT"
+          fi
 
       # Must precede setup-node: `cache: pnpm` resolves the store path by
       # running pnpm, so the binary has to exist first.
@@ -119,8 +134,26 @@ jobs:
         if: inputs.run_type_check
         run: ${{ steps.pm.outputs.run }} type-check
 
+      # build_command reaches a shell, so it goes through env: and is validated
+      # rather than interpolated into the script body -- the same treatment
+      # test_command gets in react-test.yml. Interpolated, a caller that
+      # derives it from event data (a workflow_dispatch input, a branch name)
+      # turns `build && touch /tmp/x` into two commands.
       - name: Build
-        run: ${{ steps.pm.outputs.run }} ${{ inputs.build_command }}
+        env:
+          PM_RUN: ${{ steps.pm.outputs.run }}
+          ARGS_SEP: ${{ steps.pm.outputs.args_sep }}
+          BUILD_COMMAND: ${{ inputs.build_command }}
+          BUILD_ARGS: ${{ inputs.build_args }}
+        run: |
+          set -uo pipefail
+          if ! [[ "$BUILD_COMMAND" =~ ^[A-Za-z0-9:_.-]+$ ]]; then
+            echo "::error::Invalid build_command: $BUILD_COMMAND"
+            exit 1
+          fi
+          set -f
+          # Word-split on purpose: these are flags for the bundler.
+          $PM_RUN "$BUILD_COMMAND" $ARGS_SEP $BUILD_ARGS
 
       # An artifact that matched nothing used to upload empty with a warning,
       # and the deploy job downstream would then deploy nothing successfully.

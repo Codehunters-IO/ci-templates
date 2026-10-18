@@ -119,10 +119,17 @@ on:
 
       # Build options
       build_command:
-        description: 'Build script name'
+        description: >-
+          Build script name -- a script name only, not a command line. It is
+          validated against ^[A-Za-z0-9:_.-]+$; pass flags via build_args.
         required: false
         type: string
         default: 'build'
+      build_args:
+        description: 'Extra arguments appended to the build script'
+        required: false
+        type: string
+        default: ''
       build_output_dir:
         description: >-
           Build output path(s) to upload, one per line. 'build' for CRA, 'dist'
@@ -149,12 +156,13 @@ on:
         default: 'test'
       test_args:
         description: >-
-          Extra arguments appended to the test script (e.g. '--coverage --ci').
-          Empty by default -- a monorepo task runner rejects flags it does not
-          know, and a runner that is not Jest does not take Jest's.
+          Extra arguments appended to the test script. Defaults to the flags
+          the test workflow used to inject on its own, so an existing caller
+          keeps the command it had. Set it to '' on a monorepo task runner or
+          any runner that rejects Jest's flags.
         required: false
         type: string
-        default: ''
+        default: '--coverage --ci'
       run_coverage:
         description: >-
           Parse a coverage summary and enforce coverage_line_threshold. Was
@@ -168,11 +176,19 @@ on:
         required: false
         type: string
         default: 'coverage/coverage-summary.json'
+      upload_reports:
+        description: 'Upload the coverage report directory as an artifact'
+        required: false
+        type: boolean
+        default: false
       coverage_line_threshold:
-        description: 'Minimum line coverage percentage (0-100). Set to 0 to disable'
+        description: >-
+          Minimum line coverage percentage (0-100). 0 disables the gate, which
+          is the default so the threshold is a per-repository ratchet rather
+          than a global hardcode -- matching java-main-pipeline.yml.
         required: false
         type: number
-        default: 80
+        default: 0
 
       # Deploy options
       environment:
@@ -285,6 +301,7 @@ jobs:
       node_version_file: ${{ inputs.node_version_file }}
       package_manager: ${{ inputs.package_manager }}
       build_command: ${{ inputs.build_command }}
+      build_args: ${{ inputs.build_args }}
       build_output_dir: ${{ inputs.build_output_dir }}
       run_lint: ${{ inputs.run_lint }}
       run_type_check: ${{ inputs.run_type_check }}
@@ -308,6 +325,7 @@ jobs:
       coverage_line_threshold: ${{ inputs.coverage_line_threshold }}
       test_command: ${{ inputs.test_command }}
       test_args: ${{ inputs.test_args }}
+      upload_reports: ${{ inputs.upload_reports }}
       run_code_analysis: ${{ inputs.run_code_analysis }}
       code_analysis_tool: ${{ inputs.code_analysis_tool }}
       skip_quality_gate: ${{ inputs.skip_quality_gate }}

@@ -40,22 +40,26 @@ on:
         default: 'test'
       test_args:
         description: >-
-          Extra arguments appended to the test script (e.g. '--coverage --ci').
-          Left empty by default: a monorepo task runner rejects flags it does
-          not know, and a runner that is not Jest does not take Jest's.
+          Extra arguments appended to the test script. Defaults to the flags
+          this workflow used to inject on its own, so an existing caller keeps
+          the command it had. Set it to '' on a monorepo task runner or any
+          runner that rejects Jest's flags.
         required: false
         type: string
-        default: ''
+        default: '--coverage --ci'
       coverage_summary_path:
         description: 'Path to the istanbul json-summary report'
         required: false
         type: string
         default: 'coverage/coverage-summary.json'
       coverage_line_threshold:
-        description: 'Minimum line coverage percentage (0-100). Set to 0 to disable'
+        description: >-
+          Minimum line coverage percentage (0-100). 0 disables the gate, which
+          is the default so the threshold is a per-repository ratchet rather
+          than a global hardcode -- matching java-test.yml.
         required: false
         type: number
-        default: 80
+        default: 0
       upload_reports:
         description: 'Upload coverage reports as artifact'
         required: false
@@ -134,6 +138,15 @@ jobs:
             *)    echo "::error::Unsupported package_manager '$PM' (expected npm, yarn or pnpm)"; exit 1 ;;
           esac
           echo "run=$PM run" >> "$GITHUB_OUTPUT"
+          # npm parses flags after the script name as its own and passes
+          # nothing to the script -- `npm run test --coverage` reaches the
+          # runner with an empty argv. It needs the `--` separator; yarn and
+          # pnpm forward positionally and must not get one.
+          if [ "$PM" = "npm" ]; then
+            echo "args_sep=--" >> "$GITHUB_OUTPUT"
+          else
+            echo "args_sep=" >> "$GITHUB_OUTPUT"
+          fi
 
       # Must precede setup-node: `cache: pnpm` resolves the store path by
       # running pnpm, so the binary has to exist first.
@@ -198,6 +211,7 @@ jobs:
         id: test-run
         env:
           PM_RUN: ${{ steps.pm.outputs.run }}
+          ARGS_SEP: ${{ steps.pm.outputs.args_sep }}
           TEST_COMMAND: ${{ inputs.test_command }}
           TEST_ARGS: ${{ inputs.test_args }}
         run: |
@@ -206,9 +220,20 @@ jobs:
             echo "::error::Invalid test_command: $TEST_COMMAND"
             exit 1
           fi
+          # The default shell is `bash -e {0}`, and `set -uo pipefail` does not
+          # clear that -e: without the `set +e` a failing runner aborts this
+          # script at the pipeline, `status` is never written, and the gate
+          # below reports an ordinary test failure as "did not report an exit
+          # code". Verdict was still correct, message was not.
+          # `set -f` stops the deliberate word-split from also glob-expanding:
+          # test_args='*' would otherwise reach the runner as a file list.
+          set +e
+          set -f
           # Word-split on purpose: these are flags for the runner.
-          $PM_RUN "$TEST_COMMAND" $TEST_ARGS 2>&1 | tee test-output.log
+          $PM_RUN "$TEST_COMMAND" $ARGS_SEP $TEST_ARGS 2>&1 | tee test-output.log
           status=${PIPESTATUS[0]}
+          set +f
+          set -e
           echo "status=$status" >> "$GITHUB_OUTPUT"
           echo "Test command exited with $status"
 
@@ -222,24 +247,42 @@ jobs:
           FAILED=unknown
 
           if [ -f "test-output.log" ]; then
+            # Strip SGR escapes before reading anything. GitHub sets CI=true,
+            # and picocolors -- which rstest and vitest colour through --
+            # enables escapes on that alone, with no TTY check, so the real
+            # line on a runner is $'\033[1mTests:\033[22m \033[32m5 passed'.
+            # Against the raw bytes the tally match fails twice over (a
+            # lowercase 'm' lands before the word, and no whitespace follows
+            # it), every count reads as `unknown`, and the failed-count gate
+            # silently measures nothing -- the very defect this file fixes.
+            sed -E $'s/\033\\[[0-9;]*[A-Za-z]//g' test-output.log > test-output.clean.log
+
             # Reporters disagree on wording and on order: Jest prints
             # "Tests: 2 failed, 3 passed", vitest "Tests  2 failed | 150 passed",
             # rstest "Tests 152 passed". Find the tally lines -- not "Test
             # Files", which counts something else -- then read each number out
             # of them wherever it sits.
             #
+            # Anchored to the start of the line, allowing one task-runner
+            # prefix such as `shell:test:`. Unanchored, a passing test whose
+            # name contains both "tests" and a digit before "failed" --
+            # describe('retry tests') / it('gives up after 3 failed attempts')
+            # -- was counted as 3 real failures and failed a green run.
+            #
             # Every tally line is summed, not just the last: a monorepo task
             # runner prints one per package, and taking the last reported one
             # package's count as the whole repository's.
-            TALLY=$(grep -iE '(^|[^a-z])tests:?[[:space:]]' test-output.log \
-              | grep -iE '[0-9]+[[:space:]]+(passed|failed)' || true)
+            TALLY=$(grep -iE '^[[:space:]]*([A-Za-z0-9_@/.:-]+:)?[[:space:]]*tests:?[[:space:]]' test-output.clean.log \
+              | grep -iE '[0-9][0-9,]*[[:space:]]+(passed|failed)' || true)
             # The `|| true` covers the whole pipeline, not just the first
             # grep: a run with no failures gives the second grep empty input
             # and it too exits 1, which under pipefail would fail the step on
             # a green test run. awk's END prints the 0 either way.
+            # `tr -d ,` so a reporter that prints 1,234 is not read as 234.
             sum_of() {
-              { grep -oiE "[0-9]+[[:space:]]+$1" <<<"$TALLY" \
-                | grep -oE '[0-9]+' \
+              { grep -oiE "[0-9][0-9,]*[[:space:]]+$1" <<<"$TALLY" \
+                | grep -oE '[0-9][0-9,]*' \
+                | tr -d ',' \
                 | awk '{total += $1} END {print total + 0}'; } || true
             }
             if [ -n "$TALLY" ]; then
@@ -256,7 +299,7 @@ jobs:
 
           echo "### Test Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Passed | $PASSED |" >> $GITHUB_STEP_SUMMARY
           echo "| Failed | $FAILED |" >> $GITHUB_STEP_SUMMARY
@@ -283,6 +326,9 @@ jobs:
           fi
 
           echo "percentage=$COVERAGE" >> $GITHUB_OUTPUT
+          # The directory the upload step publishes. Expressions have no
+          # dirname, so it is computed here where the path already lives.
+          echo "dir=$(dirname "$SUMMARY_PATH")" >> $GITHUB_OUTPUT
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Code Coverage" >> $GITHUB_STEP_SUMMARY
@@ -295,6 +341,16 @@ jobs:
           THRESHOLD: ${{ inputs.coverage_line_threshold }}
         run: |
           set -euo pipefail
+          # Validate before comparing. `bc` prints nothing on a non-numeric
+          # operand, `[ "" -eq 1 ]` then errors, and a failing condition
+          # inside `if` is exempt from -e -- so a malformed threshold or
+          # percentage used to pass the gate instead of failing it.
+          for pair in "COVERAGE=$COVERAGE" "THRESHOLD=$THRESHOLD"; do
+            if ! [[ "${pair#*=}" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+              echo "::error::${pair%%=*} is not a number: '${pair#*=}'"
+              exit 1
+            fi
+          done
           if [ "$(echo "$COVERAGE < $THRESHOLD" | bc -l)" -eq 1 ]; then
             echo "::error::Coverage ${COVERAGE}% is below threshold of ${THRESHOLD}%"
             exit 1
@@ -325,10 +381,15 @@ jobs:
       # ============================================
       # UPLOAD REPORTS
       # ============================================
+      # Uploads the directory that holds coverage_summary_path, not a hardcoded
+      # `coverage/`: a caller pointing the summary at apps/shell/coverage/
+      # otherwise uploaded a path that does not exist. No `if-no-files-found:
+      # error` here on purpose -- a missing report should not fail a green test
+      # run, unlike a missing build artifact, which deploys nothing.
       - name: Upload coverage reports
         if: inputs.upload_reports && inputs.run_coverage && always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: coverage-reports-${{ github.run_id }}
-          path: coverage/
+          path: ${{ steps.coverage.outputs.dir }}
           retention-days: 7
