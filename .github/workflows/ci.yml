@@ -267,6 +267,13 @@ jobs:
       - name: Run the coverage gate against its case table
         run: .github/selftest/coverage-gate.test.sh
 
+      # react-test's verdict used to come from grepping Jest's wording out of
+      # the log with the runner's exit code discarded, so any other reporter
+      # passed the gate having counted nothing. Same reason as above: the bug
+      # was silent.
+      - name: Run the react test verdict against its cases
+        run: .github/selftest/react-test-verdict.test.sh
+
       # The digest-or-tag rule is copied into three deploy workflows. This keeps
       # the copies identical and pins what the rule does with and without a digest.
       - name: Run the image-ref rule against its cases
