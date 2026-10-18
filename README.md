@@ -206,6 +206,29 @@ cp templates/react-release-deploy.yml  .github/workflows/release-deploy.yml   # 
 cp templates/react-main-deploy.yml     .github/workflows/main-deploy.yml      # → production
 ```
 
+### React-specific inputs
+
+| Input | Description | Default |
+|-------|-------------|---------|
+| `package_manager` | `npm`, `yarn` or `pnpm`. An unrecognised value fails the job instead of falling through to `npm ci` | `'yarn'` |
+| `node_version` | Node.js version, ignored when `node_version_file` is set | `'24'` |
+| `node_version_file` | Read the version from `.nvmrc` / `.node-version` instead, so the pin lives in one place | `''` |
+| `build_output_dir` | Output path(s) to upload, one per line; a glob such as `apps/*/dist` for a monorepo. Matching nothing now fails the job | `'build'` |
+| `run_lint` / `run_type_check` | Run the `lint` / `type-check` script during build | `true` / `false` |
+| `test_args` | Extra arguments appended to the test script, e.g. `--coverage --ci`. Empty by default: a monorepo task runner rejects flags it does not know | `''` |
+| `run_coverage` | Parse a coverage summary and enforce the threshold. Was hardcoded on, which left a repository with no coverage tooling unable to pass | `true` |
+| `coverage_summary_path` | Path to the istanbul `json-summary` report | `'coverage/coverage-summary.json'` |
+| `coverage_line_threshold` | Minimum line coverage; `0` disables. Was hardcoded at 80 | `80` |
+
+With `package_manager: pnpm` the version comes from the repository's own
+`packageManager` field in `package.json` — `pnpm/action-setup` reads it and
+fails loudly if neither that field nor a version is present.
+
+**The test verdict is the runner's exit code.** The parsed pass/fail counts are
+a summary and a second check, not the gate: a reporter whose wording is not
+Jest's still fails the job when it fails. Monorepo tallies are summed, so a
+repository with six packages reports all of them and not just the last.
+
 ### Deploying through a VPN
 
 `ec2-vpn` is for an EC2 whose private IP is only reachable over WireGuard. The runner

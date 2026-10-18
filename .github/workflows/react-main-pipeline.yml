@@ -12,12 +12,20 @@ on:
 
       # Node configuration
       node_version:
-        description: 'Node.js version'
+        description: 'Node.js version. Ignored when node_version_file is set'
         required: false
         type: string
         default: '24'
+      node_version_file:
+        description: >-
+          Read the Node version from this file (e.g. .nvmrc, .node-version)
+          instead of the node_version input. Preferred when the repository
+          already pins a version.
+        required: false
+        type: string
+        default: ''
       package_manager:
-        description: 'Package manager (npm or yarn)'
+        description: 'Package manager: npm, yarn or pnpm'
         required: false
         type: string
         default: 'yarn'
@@ -111,32 +119,60 @@ on:
 
       # Build options
       build_command:
-        description: 'Build script name (yarn <command>)'
+        description: 'Build script name'
         required: false
         type: string
         default: 'build'
       build_output_dir:
-        description: 'Build output directory (build for CRA, dist for Vite)'
+        description: >-
+          Build output path(s) to upload, one per line. 'build' for CRA, 'dist'
+          for Vite/Rsbuild, a glob such as 'apps/*/dist' for a monorepo.
         required: false
         type: string
         default: 'build'
       run_lint:
-        description: 'Run yarn lint during build'
+        description: 'Run the lint script during build'
         required: false
         type: boolean
         default: true
       run_type_check:
-        description: 'Run yarn type-check during build (TypeScript projects)'
+        description: 'Run the type-check script during build (TypeScript projects)'
         required: false
         type: boolean
         default: false
 
       # Test options
       test_command:
-        description: 'Test script name (yarn <command>)'
+        description: 'Test script name'
         required: false
         type: string
         default: 'test'
+      test_args:
+        description: >-
+          Extra arguments appended to the test script (e.g. '--coverage --ci').
+          Empty by default -- a monorepo task runner rejects flags it does not
+          know, and a runner that is not Jest does not take Jest's.
+        required: false
+        type: string
+        default: ''
+      run_coverage:
+        description: >-
+          Parse a coverage summary and enforce coverage_line_threshold. Was
+          hardcoded to true, which left a repository with no coverage tooling
+          no way to pass the test job.
+        required: false
+        type: boolean
+        default: true
+      coverage_summary_path:
+        description: 'Path to the istanbul json-summary report'
+        required: false
+        type: string
+        default: 'coverage/coverage-summary.json'
+      coverage_line_threshold:
+        description: 'Minimum line coverage percentage (0-100). Set to 0 to disable'
+        required: false
+        type: number
+        default: 80
 
       # Deploy options
       environment:
@@ -246,6 +282,7 @@ jobs:
     with:
       runner: ${{ inputs.runner }}
       node_version: ${{ inputs.node_version }}
+      node_version_file: ${{ inputs.node_version_file }}
       package_manager: ${{ inputs.package_manager }}
       build_command: ${{ inputs.build_command }}
       build_output_dir: ${{ inputs.build_output_dir }}
@@ -264,9 +301,13 @@ jobs:
     with:
       runner: ${{ inputs.runner }}
       node_version: ${{ inputs.node_version }}
+      node_version_file: ${{ inputs.node_version_file }}
       package_manager: ${{ inputs.package_manager }}
-      run_coverage: true
+      run_coverage: ${{ inputs.run_coverage }}
+      coverage_summary_path: ${{ inputs.coverage_summary_path }}
+      coverage_line_threshold: ${{ inputs.coverage_line_threshold }}
       test_command: ${{ inputs.test_command }}
+      test_args: ${{ inputs.test_args }}
       run_code_analysis: ${{ inputs.run_code_analysis }}
       code_analysis_tool: ${{ inputs.code_analysis_tool }}
       skip_quality_gate: ${{ inputs.skip_quality_gate }}
