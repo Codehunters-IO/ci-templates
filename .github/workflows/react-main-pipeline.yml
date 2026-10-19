@@ -12,12 +12,20 @@ on:
 
       # Node configuration
       node_version:
-        description: 'Node.js version'
+        description: 'Node.js version. Ignored when node_version_file is set'
         required: false
         type: string
         default: '24'
+      node_version_file:
+        description: >-
+          Read the Node version from this file (e.g. .nvmrc, .node-version)
+          instead of the node_version input. Preferred when the repository
+          already pins a version.
+        required: false
+        type: string
+        default: ''
       package_manager:
-        description: 'Package manager (npm or yarn)'
+        description: 'Package manager: npm, yarn or pnpm'
         required: false
         type: string
         default: 'yarn'
@@ -111,32 +119,76 @@ on:
 
       # Build options
       build_command:
-        description: 'Build script name (yarn <command>)'
+        description: >-
+          Build script name -- a script name only, not a command line. It is
+          validated against ^[A-Za-z0-9:_.-]+$; pass flags via build_args.
         required: false
         type: string
         default: 'build'
+      build_args:
+        description: 'Extra arguments appended to the build script'
+        required: false
+        type: string
+        default: ''
       build_output_dir:
-        description: 'Build output directory (build for CRA, dist for Vite)'
+        description: >-
+          Build output path(s) to upload, one per line. 'build' for CRA, 'dist'
+          for Vite/Rsbuild, a glob such as 'apps/*/dist' for a monorepo.
         required: false
         type: string
         default: 'build'
       run_lint:
-        description: 'Run yarn lint during build'
+        description: 'Run the lint script during build'
         required: false
         type: boolean
         default: true
       run_type_check:
-        description: 'Run yarn type-check during build (TypeScript projects)'
+        description: 'Run the type-check script during build (TypeScript projects)'
         required: false
         type: boolean
         default: false
 
       # Test options
       test_command:
-        description: 'Test script name (yarn <command>)'
+        description: 'Test script name'
         required: false
         type: string
         default: 'test'
+      test_args:
+        description: >-
+          Extra arguments appended to the test script. Defaults to the flags
+          the test workflow used to inject on its own, so an existing caller
+          keeps the command it had. Set it to '' on a monorepo task runner or
+          any runner that rejects Jest's flags.
+        required: false
+        type: string
+        default: '--coverage --ci'
+      run_coverage:
+        description: >-
+          Parse a coverage summary and enforce coverage_line_threshold. Was
+          hardcoded to true, which left a repository with no coverage tooling
+          no way to pass the test job.
+        required: false
+        type: boolean
+        default: true
+      coverage_summary_path:
+        description: 'Path to the istanbul json-summary report'
+        required: false
+        type: string
+        default: 'coverage/coverage-summary.json'
+      upload_reports:
+        description: 'Upload the coverage report directory as an artifact'
+        required: false
+        type: boolean
+        default: false
+      coverage_line_threshold:
+        description: >-
+          Minimum line coverage percentage (0-100). 0 disables the gate, which
+          is the default so the threshold is a per-repository ratchet rather
+          than a global hardcode -- matching java-main-pipeline.yml.
+        required: false
+        type: number
+        default: 0
 
       # Deploy options
       environment:
@@ -246,8 +298,10 @@ jobs:
     with:
       runner: ${{ inputs.runner }}
       node_version: ${{ inputs.node_version }}
+      node_version_file: ${{ inputs.node_version_file }}
       package_manager: ${{ inputs.package_manager }}
       build_command: ${{ inputs.build_command }}
+      build_args: ${{ inputs.build_args }}
       build_output_dir: ${{ inputs.build_output_dir }}
       run_lint: ${{ inputs.run_lint }}
       run_type_check: ${{ inputs.run_type_check }}
@@ -264,9 +318,14 @@ jobs:
     with:
       runner: ${{ inputs.runner }}
       node_version: ${{ inputs.node_version }}
+      node_version_file: ${{ inputs.node_version_file }}
       package_manager: ${{ inputs.package_manager }}
-      run_coverage: true
+      run_coverage: ${{ inputs.run_coverage }}
+      coverage_summary_path: ${{ inputs.coverage_summary_path }}
+      coverage_line_threshold: ${{ inputs.coverage_line_threshold }}
       test_command: ${{ inputs.test_command }}
+      test_args: ${{ inputs.test_args }}
+      upload_reports: ${{ inputs.upload_reports }}
       run_code_analysis: ${{ inputs.run_code_analysis }}
       code_analysis_tool: ${{ inputs.code_analysis_tool }}
       skip_quality_gate: ${{ inputs.skip_quality_gate }}
