@@ -10,7 +10,7 @@ Reusable GitHub Actions workflows for Java, KrakenD, NGINX, React, Firebase (pnp
 | Java library (multi-module Gradle) | `java-pr-pipeline.yml` · `java-library-release-drafts.yml` · `java-library-publish.yml` | `templates/java-library-*.yml` |
 | Krakend | `krakend-main-pipeline.yml` | `templates/krakend-*.yml` |
 | NGINX (ingress) | `nginx-main-pipeline.yml` | `templates/nginx-*.yml` |
-| React | `react-main-pipeline.yml` | `templates/react-*.yml` |
+| React | `react-main-pipeline.yml` · `react-pr-pipeline.yml` | `templates/react-*.yml` |
 | Contracts (Hardhat/Solidity) | `contracts-main-pipeline.yml` | `templates/contracts-*.yml` |
 | Firebase (pnpm monorepo) | `firebase-main-pipeline.yml` | `templates/firebase-*.yml` |
 
@@ -205,6 +205,10 @@ cp templates/react-develop-deploy.yml  .github/workflows/develop-deploy.yml
 cp templates/react-release-deploy.yml  .github/workflows/release-deploy.yml   # → staging
 cp templates/react-main-deploy.yml     .github/workflows/main-deploy.yml      # → production
 ```
+
+`feature-build` and `pr-develop` call `react-pr-pipeline.yml`, which has no
+deploy, release or issue job and needs only `contents: read`. The three deploy
+templates call `react-main-pipeline.yml`.
 
 ### React-specific inputs
 
@@ -528,12 +532,22 @@ template:
 | `shared-release`, `shared-semver`, `shared-tag-release`, `*-delete-branch` | `contents: write` | They push a branch, a tag, or delete a ref |
 | `shared-create-issue-on-failure` | `+ issues: write` | It opens an issue |
 | `*-main-pipeline`, `java-pr-pipeline` | union of the above | A caller's grant is the ceiling for everything beneath it |
+| `react-pr-pipeline` | `contents: read` | It calls the leaves directly instead of wrapping `react-main-pipeline` |
 
-That last row is the one to understand. A reusable workflow can only *narrow*
+The union row is the one to understand. A reusable workflow can only *narrow*
 what its caller granted, never widen it. An orchestrator that calls
 `shared-tag-release` therefore has to hold `contents: write` itself, even
 though it pushes nothing directly — and the narrow declarations on the leaves
 are what keep that grant from reaching the jobs that have no business with it.
+
+The check is static: GitHub compares grants when the run starts, before any
+`if:` is evaluated, and a shortfall fails the run with zero jobs and no
+annotation. So a caller that only builds a PR still owes the orchestrator's
+full union, for stages that never run. `react-pr-pipeline.yml` avoids that by
+calling the leaves itself rather than wrapping `react-main-pipeline.yml`, and
+the React `feature-build` and `pr-develop` templates grant only
+`contents: read`. `java-pr-pipeline.yml` still wraps its orchestrator and
+carries the union.
 
 ## AWS authentication
 
@@ -712,6 +726,7 @@ ci-templates/
 │   ├── contracts-analysis.yml
 │   ├── krakend-main-pipeline.yml
 │   ├── react-main-pipeline.yml
+│   ├── react-pr-pipeline.yml
 │   ├── firebase-main-pipeline.yml
 │   ├── shared-deploy-ec2.yml
 │   ├── shared-deploy-ec2-vpn.yml
