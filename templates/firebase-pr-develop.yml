@@ -28,6 +28,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# firebase-main-pipeline.yml declares contents: read and nothing more. Keep
+# the block: without it the run inherits the repository's default, which on
+# older repositories is write-all.
+permissions:
+  contents: read
+
 jobs:
   validate:
     uses: <org>/ci-templates/.github/workflows/firebase-main-pipeline.yml@v2
