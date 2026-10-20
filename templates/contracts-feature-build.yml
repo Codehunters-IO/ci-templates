@@ -17,9 +17,17 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# contracts-pr-pipeline.yml runs no deploy, release or issue job: read, plus
+# packages: read for the container pulled from GHCR. Keep the block: without it
+# the run inherits the repository's default, which on older repositories is
+# write-all.
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   build:
-    uses: Codehunters-IO/ci-templates/.github/workflows/contracts-main-pipeline.yml@v2
+    uses: Codehunters-IO/ci-templates/.github/workflows/contracts-pr-pipeline.yml@v2
     with:
       # Node comes from the image, not from a per-run download. The tag pins
       # the version a repository declares in `engines` / `.nvmrc`.

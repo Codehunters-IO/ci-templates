@@ -17,9 +17,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# nginx-pr-pipeline.yml runs no deploy, release or issue job, so read is all
+# it needs. Keep the block: without it the run inherits the repository's
+# default, which on older repositories is write-all.
+permissions:
+  contents: read
+
 jobs:
   build:
-    uses: <org>/ci-templates/.github/workflows/nginx-main-pipeline.yml@v2
+    uses: <org>/ci-templates/.github/workflows/nginx-pr-pipeline.yml@v2
     with:
       run_build: true
     secrets: inherit

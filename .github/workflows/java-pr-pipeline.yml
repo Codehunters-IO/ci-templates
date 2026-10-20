@@ -140,8 +140,8 @@ on:
 
       aws_role_to_assume:
         description: >-
-          IAM role ARN to assume via GitHub OIDC, threaded down to the AWS jobs
-          below. Empty keeps the static-key path.
+          Ignored. Kept so existing callers do not break; no job on a PR
+          talks to AWS.
         required: false
         type: string
         default: ''
@@ -166,39 +166,33 @@ on:
         description: 'Architecture test result'
         value: ${{ jobs.pipeline.outputs.arch_test_result }}
 
-# Least privilege for what this workflow actually does. Without it the
-# job inherits whatever the calling repository's default happens to be,
-# which on older repositories is write-all.
+# java-pr-gates.yml calls the leaves directly, so this is all it needs. Before
+# v2.7.0 this wrapped java-main-pipeline.yml and declared its whole union.
 permissions:
-  contents: write
-  packages: write
-  issues: write
-  # For the OIDC path in the AWS workflows below; a caller's grant is the
-  # ceiling for everything beneath it.
-  id-token: write
+  contents: read
+  packages: read
 
 jobs:
+  # One job with this name keeps the check names callers already require
+  # ("validate / PR Quality Gates / ...") where they were.
   pipeline:
     name: PR Quality Gates
-    uses: ./.github/workflows/java-main-pipeline.yml
+    uses: ./.github/workflows/java-pr-gates.yml
     with:
-      aws_role_to_assume: ${{ inputs.aws_role_to_assume }}
+      test_tasks: ${{ inputs.test_tasks }}
+      extra_gradle_commands: ${{ inputs.extra_gradle_commands }}
+      docker_images: ${{ inputs.docker_images }}
       runner: ${{ inputs.runner }}
       container_image: ${{ inputs.container_image }}
       java_version: ${{ inputs.java_version }}
       java_distribution: ${{ inputs.java_distribution }}
       build_tool: ${{ inputs.build_tool }}
-
-      # Security
       run_commit_lint: ${{ inputs.run_commit_lint }}
       run_trufflehog: ${{ inputs.run_trufflehog }}
       trufflehog_only_verified: ${{ inputs.trufflehog_only_verified }}
       trufflehog_fail_on_findings: ${{ inputs.trufflehog_fail_on_findings }}
       run_dependency_review: ${{ inputs.run_dependency_review }}
       dependency_review_severity: ${{ inputs.dependency_review_severity }}
-
-      # Quality gates
-      run_build: true
       run_test: ${{ inputs.run_test }}
       run_coverage: ${{ inputs.run_coverage }}
       coverage_instruction_threshold: ${{ inputs.coverage_instruction_threshold }}
@@ -210,13 +204,4 @@ jobs:
       run_owasp: ${{ inputs.run_owasp }}
       owasp_fail_on_cvss: ${{ inputs.owasp_fail_on_cvss }}
       run_architecture: ${{ inputs.run_architecture }}
-      test_tasks: ${{ inputs.test_tasks }}
-      extra_gradle_commands: ${{ inputs.extra_gradle_commands }}
-      docker_images: ${{ inputs.docker_images }}
-
-      # Disabled for PRs
-      run_artifact: false
-      run_deploy: false
-      run_cleanup: false
-      run_release: false   # deprecated, kept for clarity
     secrets: inherit
