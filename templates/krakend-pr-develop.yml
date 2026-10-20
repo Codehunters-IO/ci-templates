@@ -16,9 +16,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# krakend-pr-pipeline.yml runs no deploy, release or issue job, so read is all
+# it needs. Keep the block: without it the run inherits the repository's
+# default, which on older repositories is write-all.
+permissions:
+  contents: read
+
 jobs:
   validate:
-    uses: <org>/ci-templates/.github/workflows/krakend-main-pipeline.yml@v2
+    uses: <org>/ci-templates/.github/workflows/krakend-pr-pipeline.yml@v2
     with:
       run_commit_lint: true
       run_build: true

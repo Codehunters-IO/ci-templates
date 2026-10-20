@@ -8,10 +8,10 @@ Reusable GitHub Actions workflows for Java, KrakenD, NGINX, React, Firebase (pnp
 |-------|-----------|-----------|
 | Java (Spring Boot) | `java-main-pipeline.yml` · `java-pr-pipeline.yml` | `templates/java-*.yml` |
 | Java library (multi-module Gradle) | `java-pr-pipeline.yml` · `java-library-release-drafts.yml` · `java-library-publish.yml` | `templates/java-library-*.yml` |
-| Krakend | `krakend-main-pipeline.yml` | `templates/krakend-*.yml` |
-| NGINX (ingress) | `nginx-main-pipeline.yml` | `templates/nginx-*.yml` |
+| Krakend | `krakend-main-pipeline.yml` · `krakend-pr-pipeline.yml` | `templates/krakend-*.yml` |
+| NGINX (ingress) | `nginx-main-pipeline.yml` · `nginx-pr-pipeline.yml` | `templates/nginx-*.yml` |
 | React | `react-main-pipeline.yml` · `react-pr-pipeline.yml` | `templates/react-*.yml` |
-| Contracts (Hardhat/Solidity) | `contracts-main-pipeline.yml` | `templates/contracts-*.yml` |
+| Contracts (Hardhat/Solidity) | `contracts-main-pipeline.yml` · `contracts-pr-pipeline.yml` | `templates/contracts-*.yml` |
 | Firebase (pnpm monorepo) | `firebase-main-pipeline.yml` | `templates/firebase-*.yml` |
 
 ## GitFlow
@@ -536,7 +536,8 @@ template:
 | `shared-release`, `shared-semver`, `shared-tag-release`, `*-delete-branch` | `contents: write` | They push a branch, a tag, or delete a ref |
 | `shared-create-issue-on-failure` | `+ issues: write` | It opens an issue |
 | `*-main-pipeline` | union of the above | A caller's grant is the ceiling for everything beneath it |
-| `react-pr-pipeline` | `contents: read` | It calls the leaves directly instead of wrapping `react-main-pipeline` |
+| `react-pr-pipeline`, `krakend-pr-pipeline`, `nginx-pr-pipeline` | `contents: read` | They call the leaves directly instead of wrapping their `*-main-pipeline` |
+| `contracts-pr-pipeline` | `contents: read`, `packages: read` | Same; its jobs pull their container from GHCR |
 | `java-pr-pipeline`, `java-pr-gates` | `contents: read`, `packages: read` | Same, for `java-main-pipeline`; the JDK jobs pull their container from GHCR |
 
 The union row is the one to understand. A reusable workflow can only *narrow*
@@ -549,13 +550,22 @@ The check is static: GitHub compares grants when the run starts, before any
 `if:` is evaluated, and a shortfall fails the run with zero jobs and no
 annotation. So a caller that only builds a PR still owes the orchestrator's
 full union, for stages that never run. The PR pipelines avoid that by calling
-the leaves themselves rather than wrapping their orchestrator:
-`react-pr-pipeline.yml` directly, `java-pr-pipeline.yml` through
-`java-pr-gates.yml`, which exists only so the check names callers require
-(`validate / PR Quality Gates / ...`) stay where they were. The React
-`feature-build` and `pr-develop` templates grant only `contents: read`; the
-Java `validate` templates add `packages: read`. CI fails if anything a
-`*-pr-pipeline.yml` reaches, or a template calling one, grants more than read.
+the leaves themselves rather than wrapping their orchestrator. The React,
+KrakenD, NGINX and Contracts ones do it directly, with the same job ids,
+conditions and inputs as the main pipeline, so a caller switches by changing
+the file name. `java-pr-pipeline.yml` goes through `java-pr-gates.yml`, which
+exists only so the check names callers require (`validate / PR Quality Gates /
+...`) stay where they were. Every `feature-build`, `pr-develop` and `validate`
+template now declares read-only permissions: `contents: read`, plus
+`packages: read` for Java and Contracts. Firebase has no PR pipeline because
+`firebase-main-pipeline.yml` already needs only `contents: read`. CI fails if
+anything a `*-pr-pipeline.yml` reaches, or a template calling one, grants more
+than read.
+
+**Migrating a copied template.** Point `uses:` at the stack's
+`*-pr-pipeline.yml` and replace the `permissions:` block (or add one) with the
+read-only grant above. Callers left on the main pipeline keep working, with the
+broad grant they have today.
 
 ## AWS authentication
 
@@ -730,10 +740,14 @@ ci-templates/
 │   ├── java-pr-pipeline.yml
 │   ├── java-pr-gates.yml
 │   ├── contracts-main-pipeline.yml
+│   ├── contracts-pr-pipeline.yml
 │   ├── contracts-sdk-test.yml
 │   ├── contracts-e2e.yml
 │   ├── contracts-analysis.yml
 │   ├── krakend-main-pipeline.yml
+│   ├── krakend-pr-pipeline.yml
+│   ├── nginx-main-pipeline.yml
+│   ├── nginx-pr-pipeline.yml
 │   ├── react-main-pipeline.yml
 │   ├── react-pr-pipeline.yml
 │   ├── firebase-main-pipeline.yml
