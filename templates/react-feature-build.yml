@@ -17,19 +17,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-# Required, not optional. A reusable workflow cannot exceed what its caller
-# grants, and react-main-pipeline.yml requests the union of every stage it can
-# run. On a repository whose default workflow permission is read-only, omitting
-# this block makes the run fail at startup with zero jobs and no annotation
-# saying why.
+# react-pr-pipeline.yml runs no deploy, release or issue job, so read is all
+# it needs. Keep the block: without it the run inherits the repository's
+# default, which on older repositories is write-all.
 permissions:
-  contents: write
-  issues: write
-  id-token: write
+  contents: read
 
 jobs:
   build:
-    uses: <org>/ci-templates/.github/workflows/react-main-pipeline.yml@v2
+    uses: <org>/ci-templates/.github/workflows/react-pr-pipeline.yml@v2
     with:
-      run_build: true
+      run_test: false
     secrets: inherit
