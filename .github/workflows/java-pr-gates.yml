@@ -1,0 +1,287 @@
+name: Java - Pull Request Gates
+
+# The stages java-pr-pipeline.yml runs, calling the leaves directly. Not meant
+# to be called on its own: java-pr-pipeline.yml wraps it so the check names
+# callers already require ("validate / PR Quality Gates / ...") do not move.
+#
+# This does not wrap java-main-pipeline.yml, and that is the point. GitHub
+# checks a reusable workflow's permissions statically, before any `if:` is
+# evaluated, so wrapping the orchestrator forced every PR caller to grant the
+# union of every stage it can run -- `contents: write`, `packages: write`,
+# `issues: write`, `id-token: write` -- for deploy, release and issue jobs that
+# never execute on a PR. Calling the leaves keeps the ceiling at what they
+# need: `contents: read` and `packages: read`.
+
+on:
+  workflow_call:
+    inputs:
+      test_tasks:
+        description: 'Gradle tasks of the test job (java-test.yml); `check` runs every verification task'
+        required: false
+        type: string
+        default: 'test jacocoTestReport'
+      extra_gradle_commands:
+        description: 'Gradle invocations after the tests, one per line (java-test.yml)'
+        required: false
+        type: string
+        default: ''
+      docker_images:
+        description: 'Images the integration tests start, pulled with a Docker Hub mirror fallback (java-test.yml)'
+        required: false
+        type: string
+        default: ''
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      container_image:
+        description: >-
+          Run the JDK jobs inside this image (e.g.
+          ghcr.io/codehunters-io/ci-base-images:1.0.0). Empty = plain runner
+          with actions/setup-java. Applies to build, test, owasp, architecture
+          and the GitHub-registry dependency publish; the Docker artifact and
+          deploy jobs stay on the runner because they drive the daemon.
+        required: false
+        type: string
+        default: ''
+      java_version:
+        description: 'Java version'
+        required: false
+        type: string
+        default: '21'
+      java_distribution:
+        description: 'Java distribution'
+        required: false
+        type: string
+        default: 'temurin'
+      build_tool:
+        description: 'Build tool: gradle or maven'
+        required: false
+        type: string
+        default: 'gradle'
+
+      # Security
+      run_commit_lint:
+        description: 'Run commit message validation'
+        required: false
+        type: boolean
+        default: false
+      run_trufflehog:
+        description: 'Run TruffleHog secret scanning'
+        required: false
+        type: boolean
+        default: false
+      trufflehog_only_verified:
+        description: 'Only report verified secrets'
+        required: false
+        type: boolean
+        default: true
+      trufflehog_fail_on_findings:
+        description: 'Fail the workflow if secrets are found'
+        required: false
+        type: boolean
+        default: true
+      run_dependency_review:
+        description: 'Run dependency review'
+        required: false
+        type: boolean
+        default: false
+      dependency_review_severity:
+        description: 'Minimum severity to fail: low, moderate, high, critical'
+        required: false
+        type: string
+        default: 'high'
+
+      # Quality gates
+      run_test:
+        description: 'Run test job'
+        required: false
+        type: boolean
+        default: true
+      run_coverage:
+        description: 'Run JaCoCo coverage report'
+        required: false
+        type: boolean
+        default: true
+      coverage_instruction_threshold:
+        description: 'Minimum instruction coverage percentage (0-100)'
+        required: false
+        type: number
+        default: 0
+      coverage_branch_threshold:
+        description: 'Minimum branch coverage percentage (0-100)'
+        required: false
+        type: number
+        default: 0
+      coverage_line_threshold:
+        description: 'Minimum line coverage percentage (0-100). Set to 0 to disable.'
+        required: false
+        type: number
+        default: 0
+      run_code_analysis:
+        description: 'Run code analysis'
+        required: false
+        type: boolean
+        default: false
+      code_analysis_tool:
+        description: 'Code analysis tool: sonar or qodana'
+        required: false
+        type: string
+        default: 'sonar'
+      skip_quality_gate:
+        description: 'Skip Quality Gate check'
+        required: false
+        type: boolean
+        default: false
+      run_owasp:
+        description: 'Run OWASP Dependency Check'
+        required: false
+        type: boolean
+        default: false
+      owasp_fail_on_cvss:
+        description: 'Fail on any vulnerability with a CVSS score at or above this (7 = HIGH and up, 9 = CRITICAL only, 4 = MEDIUM and up)'
+        required: false
+        type: number
+        default: 7
+      run_architecture:
+        description: 'Run architecture validation (ArchUnit + diagrams)'
+        required: false
+        type: boolean
+        default: false
+
+    outputs:
+      coverage:
+        description: 'Code coverage percentage (line)'
+        value: ${{ jobs.test.outputs.coverage_percentage }}
+      coverage_instruction:
+        description: 'Instruction coverage percentage'
+        value: ${{ jobs.test.outputs.coverage_instruction }}
+      coverage_branch:
+        description: 'Branch coverage percentage'
+        value: ${{ jobs.test.outputs.coverage_branch }}
+      quality_gate:
+        description: 'SonarQube Quality Gate status'
+        value: ${{ jobs.test.outputs.quality_gate_status }}
+      owasp_vulnerabilities:
+        description: 'Number of OWASP vulnerabilities found'
+        value: ${{ jobs.owasp.outputs.vulnerabilities }}
+      arch_test_result:
+        description: 'Architecture test result'
+        value: ${{ jobs.architecture.outputs.arch_test_result }}
+
+# Every job below calls a leaf that declares at most `contents: read` and
+# `packages: read` (the JDK jobs pull their container from GHCR). Keep it that
+# way: a leaf that needs more raises the ceiling for every PR caller, which is
+# the problem this workflow exists to avoid. ci.yml asserts it.
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  commit-lint:
+    name: Commit Lint
+    if: inputs.run_commit_lint
+    uses: ./.github/workflows/shared-commit-lint.yml
+    with:
+      runner: ${{ inputs.runner }}
+
+  security:
+    name: Security Scan
+    if: inputs.run_trufflehog
+    uses: ./.github/workflows/security-trufflehog.yml
+    with:
+      runner: ${{ inputs.runner }}
+      only_verified: ${{ inputs.trufflehog_only_verified }}
+      fail_on_findings: ${{ inputs.trufflehog_fail_on_findings }}
+    secrets: inherit
+
+  dependency-review:
+    name: Dependency Review
+    # dependency-review-action only works on pull_request events; auto-skip on push.
+    if: inputs.run_dependency_review && github.event_name == 'pull_request'
+    uses: ./.github/workflows/security-dependency-review.yml
+    with:
+      runner: ${{ inputs.runner }}
+      fail_on_severity: ${{ inputs.dependency_review_severity }}
+    secrets: inherit
+
+  build:
+    name: Build
+    uses: ./.github/workflows/java-build.yml
+    with:
+      runner: ${{ inputs.runner }}
+      container_image: ${{ inputs.container_image }}
+      java_version: ${{ inputs.java_version }}
+      java_distribution: ${{ inputs.java_distribution }}
+      build_tool: ${{ inputs.build_tool }}
+      # No artifact or deploy job consumes the JAR on a PR.
+      upload_artifact: false
+    secrets: inherit
+
+  test:
+    name: Test
+    if: inputs.run_test
+    needs: build
+    uses: ./.github/workflows/java-test.yml
+    with:
+      runner: ${{ inputs.runner }}
+      container_image: ${{ inputs.container_image }}
+      java_version: ${{ inputs.java_version }}
+      java_distribution: ${{ inputs.java_distribution }}
+      run_coverage: ${{ inputs.run_coverage }}
+      coverage_instruction_threshold: ${{ inputs.coverage_instruction_threshold }}
+      coverage_branch_threshold: ${{ inputs.coverage_branch_threshold }}
+      coverage_line_threshold: ${{ inputs.coverage_line_threshold }}
+      run_code_analysis: ${{ inputs.run_code_analysis }}
+      code_analysis_tool: ${{ inputs.code_analysis_tool }}
+      skip_quality_gate: ${{ inputs.skip_quality_gate }}
+      run_owasp: ${{ inputs.run_owasp }}
+      test_tasks: ${{ inputs.test_tasks }}
+      extra_gradle_commands: ${{ inputs.extra_gradle_commands }}
+      docker_images: ${{ inputs.docker_images }}
+    secrets: inherit
+
+  qodana:
+    name: Qodana
+    if: inputs.run_code_analysis && inputs.code_analysis_tool == 'qodana'
+    needs: build
+    uses: ./.github/workflows/java-qodana.yml
+    with:
+      runner: ${{ inputs.runner }}
+    secrets: inherit
+
+  owasp:
+    name: OWASP
+    if: inputs.run_owasp
+    needs: build
+    uses: ./.github/workflows/java-owasp.yml
+    with:
+      runner: ${{ inputs.runner }}
+      container_image: ${{ inputs.container_image }}
+      java_version: ${{ inputs.java_version }}
+      java_distribution: ${{ inputs.java_distribution }}
+      owasp_fail_on_cvss: ${{ inputs.owasp_fail_on_cvss }}
+      build_tool: ${{ inputs.build_tool }}
+    secrets: inherit
+
+  architecture:
+    name: Architecture
+    if: inputs.run_architecture
+    needs: build
+    uses: ./.github/workflows/java-architecture.yml
+    with:
+      runner: ${{ inputs.runner }}
+      container_image: ${{ inputs.container_image }}
+      java_version: ${{ inputs.java_version }}
+      java_distribution: ${{ inputs.java_distribution }}
+    secrets: inherit
+
+  notify:
+    name: Notify
+    if: always()
+    needs: [commit-lint, security, dependency-review, build, test, qodana, owasp, architecture]
+    uses: ./.github/workflows/shared-notifications.yml
+    with:
+      status: ${{ contains(needs.*.result, 'failure') && 'failure' || contains(needs.*.result, 'cancelled') && 'cancelled' || 'success' }}
+    secrets: inherit

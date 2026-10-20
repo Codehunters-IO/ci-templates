@@ -149,6 +149,10 @@ on:
   pull_request:
     branches: [develop]
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   validate:
     uses: <org>/ci-templates/.github/workflows/java-pr-pipeline.yml@v2
@@ -531,8 +535,9 @@ template:
 | `java-artifact-docker-github`, `java-artifact-dependency-github` | `+ packages: write` | They publish to GitHub Packages |
 | `shared-release`, `shared-semver`, `shared-tag-release`, `*-delete-branch` | `contents: write` | They push a branch, a tag, or delete a ref |
 | `shared-create-issue-on-failure` | `+ issues: write` | It opens an issue |
-| `*-main-pipeline`, `java-pr-pipeline` | union of the above | A caller's grant is the ceiling for everything beneath it |
+| `*-main-pipeline` | union of the above | A caller's grant is the ceiling for everything beneath it |
 | `react-pr-pipeline` | `contents: read` | It calls the leaves directly instead of wrapping `react-main-pipeline` |
+| `java-pr-pipeline`, `java-pr-gates` | `contents: read`, `packages: read` | Same, for `java-main-pipeline`; the JDK jobs pull their container from GHCR |
 
 The union row is the one to understand. A reusable workflow can only *narrow*
 what its caller granted, never widen it. An orchestrator that calls
@@ -543,11 +548,14 @@ are what keep that grant from reaching the jobs that have no business with it.
 The check is static: GitHub compares grants when the run starts, before any
 `if:` is evaluated, and a shortfall fails the run with zero jobs and no
 annotation. So a caller that only builds a PR still owes the orchestrator's
-full union, for stages that never run. `react-pr-pipeline.yml` avoids that by
-calling the leaves itself rather than wrapping `react-main-pipeline.yml`, and
-the React `feature-build` and `pr-develop` templates grant only
-`contents: read`. `java-pr-pipeline.yml` still wraps its orchestrator and
-carries the union.
+full union, for stages that never run. The PR pipelines avoid that by calling
+the leaves themselves rather than wrapping their orchestrator:
+`react-pr-pipeline.yml` directly, `java-pr-pipeline.yml` through
+`java-pr-gates.yml`, which exists only so the check names callers require
+(`validate / PR Quality Gates / ...`) stay where they were. The React
+`feature-build` and `pr-develop` templates grant only `contents: read`; the
+Java `validate` templates add `packages: read`. CI fails if anything a
+`*-pr-pipeline.yml` reaches, or a template calling one, grants more than read.
 
 ## AWS authentication
 
@@ -720,6 +728,7 @@ ci-templates/
 ├── .github/workflows/            # Reusable workflows
 │   ├── java-main-pipeline.yml
 │   ├── java-pr-pipeline.yml
+│   ├── java-pr-gates.yml
 │   ├── contracts-main-pipeline.yml
 │   ├── contracts-sdk-test.yml
 │   ├── contracts-e2e.yml

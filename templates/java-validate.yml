@@ -33,6 +33,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# java-pr-pipeline.yml runs no deploy, release or issue job: read, plus
+# packages: read for the JDK container pulled from GHCR. Keep the block:
+# without it the run inherits the repository's default, which on older
+# repositories is write-all.
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   validate:
     uses: <org>/ci-templates/.github/workflows/java-pr-pipeline.yml@v2
