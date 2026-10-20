@@ -347,6 +347,12 @@ jobs:
       - name: Run the image-ref rule against its cases
         run: .github/selftest/image-ref.test.sh
 
+      # The graph and scaffold scripts lean on layout conventions nothing else
+      # enforces: jobs at two spaces, `uses:` at four, a `# Copy to:` header per
+      # template. Breaking one gives wrong output, not an error.
+      - name: Run the terminal tools against the real workflows
+        run: .github/selftest/terminal-tools.test.sh
+
   version-bump-rules:
     name: Version bump rules agree
     runs-on: ubuntu-latest
