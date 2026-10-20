@@ -17,5 +17,10 @@ module.exports = {
     // and impossible to reword. Warn, like the body rule.
     'footer-max-line-length': [1, 'always', 200],
     'scope-case': [2, 'always', 'lower-case'],
+    // Squash merges take the PR title as the subject, and a title that opens
+    // with an acronym ("PR pipelines ...", "CI ...") reads as sentence-case.
+    // Once merged it cannot be reworded, and as an error it fails every release
+    // PR whose range contains it, as it did v2.7.0. Warn instead.
+    'subject-case': [1, 'never', ['sentence-case', 'start-case', 'pascal-case', 'upper-case']],
   },
 };
