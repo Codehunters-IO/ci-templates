@@ -254,6 +254,74 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
+  pr-permissions:
+    name: PR pipelines stay read-only
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      # GitHub checks permissions statically: a PR pipeline that reaches a
+      # workflow declaring `contents: write` forces every PR caller to grant
+      # it, for jobs that never run. That is how java-pr-pipeline, by wrapping
+      # java-main-pipeline, made every validation run hold write, packages,
+      # issues and id-token. So this walks everything a *-pr-pipeline reaches
+      # and fails on any grant other than read, and checks the templates that
+      # call one do not grant more than that either.
+      - name: Check
+        run: |
+          python3 - <<'PY'
+          import glob, os, re, sys, yaml
+
+          ALLOWED = {'read', 'none', 'read-all'}
+          WF = '.github/workflows'
+
+          def grants(perms):
+              if perms is None:
+                  return []
+              if isinstance(perms, str):
+                  return [('*', perms)]
+              return list(perms.items())
+
+          def walk(path, seen):
+              if path in seen:
+                  return
+              seen.add(path)
+              doc = yaml.safe_load(open(path)) or {}
+              yield path, '(workflow)', doc.get('permissions')
+              for name, job in (doc.get('jobs') or {}).items():
+                  yield path, name, job.get('permissions')
+                  uses = job.get('uses', '')
+                  if uses.startswith('./'):
+                      yield from walk(os.path.normpath(uses), seen)
+
+          bad = []
+          for root in sorted(glob.glob(f'{WF}/*-pr-pipeline.yml')):
+              reached = set()
+              for f, job, perms in walk(root, reached):
+                  for scope, level in grants(perms):
+                      if level not in ALLOWED:
+                          bad.append(f"::error file={f}::{scope}: {level} on '{job}', reached from {root}")
+              print(f"{root}: {len(reached)} workflows reached")
+
+          calls_pr = re.compile(r'uses:.*/[a-z]+-pr-pipeline\.yml@')
+          for f in sorted(glob.glob('templates/*.yml')):
+              if not calls_pr.search(open(f).read()):
+                  continue
+              doc = yaml.safe_load(open(f)) or {}
+              where = [('(workflow)', doc.get('permissions'))] + \
+                      [(n, j.get('permissions')) for n, j in (doc.get('jobs') or {}).items()]
+              for job, perms in where:
+                  for scope, level in grants(perms):
+                      if level not in ALLOWED:
+                          bad.append(f"::error file={f}::{scope}: {level} on '{job}'; a PR pipeline needs read only")
+
+          for line in bad:
+              print(line)
+          print(f"{len(bad)} grants above read")
+          sys.exit(1 if bad else 0)
+          PY
+
   selftest-scripts:
     name: Script self-tests
     runs-on: ubuntu-latest
