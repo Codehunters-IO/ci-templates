@@ -46,6 +46,30 @@ jobs:
           # Revisit once that backlog is down.
           ./actionlint -shellcheck= -oneline .github/workflows/*.yml
 
+  # actionlint checks that a workflow is valid; zizmor checks that it is safe:
+  # template injection, credentials left in .git/config, broad permissions.
+  # Medium and up fails. What .github/zizmor.yml turns off says why.
+  zizmor:
+    name: Audit workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run zizmor
+        env:
+          # Pinned for the same reason as actionlint: a new audit in a new release
+          # should land in a PR that bumps this, not in somebody else's.
+          ZIZMOR_VERSION: '1.31.1'
+        run: |
+          set -euo pipefail
+          curl -fsSL -o zizmor.tar.gz \
+            "https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/zizmor-x86_64-unknown-linux-gnu.tar.gz"
+          tar -xzf zizmor.tar.gz zizmor
+          ./zizmor --offline --min-severity medium .github/workflows/
+
   job-timeouts:
     name: Every runnable job has a timeout
     runs-on: ubuntu-latest
