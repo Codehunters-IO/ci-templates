@@ -97,6 +97,48 @@ feature/* ──► build
    `PR Validation`, so installing both cancels each other's runs via that
    shared group key — install one, or give one a different `name:`.
 
+### From the terminal
+
+Steps 1 and 2 in one command, from a clone of this repository:
+
+```bash
+just stacks                                   # stacks and the templates each ships
+just new java ../my-service                   # copy + rename + replace <org>
+just new java ../my-service validate main-deploy   # only some roles
+just new shared ../my-service cleanup-packages     # shared templates always name a role
+```
+
+It never overwrites a workflow the target already has, leaves `contracts-pr-full`
+out unless asked for by name, and defaults `<org>` to `Codehunters-IO`
+(`python3 scripts/new-pipeline.py ... --org other-org` to change it).
+
+Working on this repository itself, without an editor:
+
+| Recipe | Does |
+|---|---|
+| `just lint` | actionlint with the flags CI uses |
+| `just audit` | zizmor security audit (needs `brew install zizmor`) |
+| `just graph [workflow]` | Tree of which reusable workflow calls which |
+| `just mermaid` | Same graph, templates included, as a Mermaid flowchart |
+| `just jobs <workflow>` | Jobs and `needs` inside one workflow, via `act -g` |
+| `just selftest` | Every `.github/selftest/*.test.sh` (two need PyYAML) |
+| `just install-hooks` | pre-commit that runs lint, and zizmor when installed |
+
+```text
+$ just graph java-pr-pipeline.yml
+java-pr-pipeline.yml
+└── pipeline → java-pr-gates.yml
+    ├── commit-lint → shared-commit-lint.yml
+    ├── security → security-trufflehog.yml
+    ├── build → java-build.yml
+    ├── test → java-test.yml
+    ...
+```
+
+`act` runs these workflows locally only as far as build and test. OIDC to AWS, the
+deploy targets and GitHub's cache are not reproduced, so artifact and deploy jobs
+still need a real run.
+
 ## Templates by stack
 
 Not every stack ships the same set, and the gaps are real rather than oversights waiting
@@ -767,6 +809,8 @@ ci-templates/
 │   └── shared-*.yml              #   build-publish-image · cleanup-packages
 ├── .github/ruleset/              # Rulesets as source files (import to GitHub) + their README
 ├── scripts/                      # clone-environments.sh · ssh-deploy-debug.sh
+│                                 #   workflow-graph.py · new-pipeline.py (see "From the terminal")
+├── justfile                      # Terminal entry points: lint, graph, new, selftest
 ├── commitlint.config.js          # This repository's own commit linting
 └── README.md
 ```
