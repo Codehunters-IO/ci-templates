@@ -33,7 +33,7 @@ D=sha256:$(printf 'a%.0s' {1..64})
 # Helm must keep deploying by tag: ${IMAGE_URI%:*} on a digest ref is garbage.
 # grep -F, not rg: ripgrep is not on every runner image, and fixed strings
 # spare the escaping.
-grep -qF -- '--set image.repository=${IMAGE_URI%:*}' .github/workflows/shared-deploy-eks.yml \
+grep -qF -- '--set "image.repository=${IMAGE_URI%:*}"' .github/workflows/shared-deploy-eks.yml \
   && ! grep -qF 'IMAGE_URI: ${{ steps.setup.outputs.image_ref' .github/workflows/shared-deploy-eks.yml \
   && echo 'ok   helm keeps tag' || { echo 'FAIL helm keeps tag'; fails=$((fails+1)); }
 

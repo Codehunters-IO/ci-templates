@@ -34,17 +34,22 @@ jobs:
     steps:
       - name: Get source branch
         id: branch
+        env:
+          TARGET: ${{ inputs.target_branch }}
         run: |
           SOURCE_BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}"
           echo "source=$SOURCE_BRANCH" >> "$GITHUB_OUTPUT"
           echo "Source branch: $SOURCE_BRANCH"
-          echo "Target branch: ${{ inputs.target_branch }}"
+          echo "Target branch: $TARGET"
 
+      # The source is the PR's head branch, a name whoever opens the PR picks.
+      # Interpolated into the script it ran as shell; through env it is data.
       - name: Validate branch naming convention
+        env:
+          SOURCE: ${{ steps.branch.outputs.source }}
+          TARGET: ${{ inputs.target_branch }}
+          CUSTOM_PREFIXES: ${{ inputs.allowed_prefixes }}
         run: |
-          SOURCE="${{ steps.branch.outputs.source }}"
-          TARGET="${{ inputs.target_branch }}"
-          CUSTOM_PREFIXES="${{ inputs.allowed_prefixes }}"
 
           if [ "$TARGET" = "main" ] || [ "$TARGET" = "master" ]; then
             ALLOWED_PATTERN="^(develop|release\/|hotfix\/)"

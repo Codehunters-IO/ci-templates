@@ -73,6 +73,11 @@ on:
 permissions:
   contents: read
 
+# Inputs reach scripts through env, never spliced into them: an
+# interpolated value is parsed as shell, an env var is only data.
+env:
+  PACKAGE_MANAGER: ${{ inputs.package_manager }}
+
 jobs:
   solhint:
     name: Solhint
@@ -101,7 +106,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          case "${{ inputs.package_manager }}" in
+          case "$PACKAGE_MANAGER" in
             pnpm) pnpm install --frozen-lockfile ;;
             yarn) yarn install --frozen-lockfile ;;
             *)    npm ci ;;
@@ -118,7 +123,7 @@ jobs:
             exit $?
           fi
 
-          case "${{ inputs.package_manager }}" in
+          case "$PACKAGE_MANAGER" in
             pnpm) pnpm solhint 'contracts/**/*.sol' 2>&1 | tee solhint-output.log ;;
             yarn) yarn solhint 'contracts/**/*.sol' 2>&1 | tee solhint-output.log ;;
             *)    npx solhint 'contracts/**/*.sol' 2>&1 | tee solhint-output.log ;;
@@ -169,9 +174,12 @@ jobs:
 
       - name: Summarize
         if: always()
+        env:
+          OUTCOME: ${{ steps.analysis.outcome }}
+          FAIL_ON: ${{ inputs.slither_fail_on }}
         run: |
           {
             echo "### Slither"
             echo ""
-            echo "**Result:** ${{ steps.analysis.outcome }} (fail-on: ${{ inputs.slither_fail_on }})"
+            echo "**Result:** ${OUTCOME} (fail-on: ${FAIL_ON})"
           } >> "$GITHUB_STEP_SUMMARY"

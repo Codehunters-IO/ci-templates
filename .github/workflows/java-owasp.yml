@@ -73,6 +73,11 @@ permissions:
   contents: read
   packages: read
 
+# Inputs reach scripts through env, never spliced into them: an
+# interpolated value is parsed as shell, an env var is only data.
+env:
+  CONTAINER_IMAGE: ${{ inputs.container_image }}
+
 jobs:
   owasp:
     name: OWASP Dependency Check
@@ -103,7 +108,7 @@ jobs:
       - name: Report toolchain (container)
         if: inputs.container_image != ''
         run: |
-          echo "Container: ${{ inputs.container_image }}"
+          echo "Container: $CONTAINER_IMAGE"
           java -version
 
       - name: Setup Gradle

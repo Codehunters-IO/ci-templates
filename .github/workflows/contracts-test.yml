@@ -96,6 +96,12 @@ permissions:
   contents: read
   packages: read
 
+# Inputs reach scripts through env, never spliced into them: an
+# interpolated value is parsed as shell, an env var is only data.
+env:
+  PACKAGE_MANAGER: ${{ inputs.package_manager }}
+  CONTAINER_IMAGE: ${{ inputs.container_image }}
+
 jobs:
   test:
     name: Test & Coverage
@@ -131,13 +137,13 @@ jobs:
       - name: Report toolchain (container)
         if: inputs.container_image != ''
         run: |
-          echo "Container: ${{ inputs.container_image }}"
+          echo "Container: $CONTAINER_IMAGE"
           node --version
           npm --version
 
       - name: Install dependencies
         run: |
-          case "${{ inputs.package_manager }}" in
+          case "$PACKAGE_MANAGER" in
             pnpm) pnpm install --frozen-lockfile ;;
             yarn) yarn install --frozen-lockfile ;;
             *)    npm ci ;;
@@ -164,7 +170,7 @@ jobs:
             exit 0
           fi
 
-          case "${{ inputs.package_manager }}" in
+          case "$PACKAGE_MANAGER" in
             pnpm) pnpm hardhat test 2>&1 | tee test-output.log || true ;;
             yarn) yarn hardhat test 2>&1 | tee test-output.log || true ;;
             *)    npx hardhat test 2>&1 | tee test-output.log || true ;;
@@ -215,7 +221,7 @@ jobs:
             exit $?
           fi
 
-          case "${{ inputs.package_manager }}" in
+          case "$PACKAGE_MANAGER" in
             pnpm) pnpm hardhat coverage 2>&1 | tee coverage-output.log || true ;;
             yarn) yarn hardhat coverage 2>&1 | tee coverage-output.log || true ;;
             *)    npx hardhat coverage 2>&1 | tee coverage-output.log || true ;;

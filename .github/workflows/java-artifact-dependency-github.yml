@@ -53,6 +53,12 @@ permissions:
   contents: read
   packages: write
 
+# Inputs reach scripts through env, never spliced into them: an
+# interpolated value is parsed as shell, an env var is only data.
+env:
+  PUBLISH_TASK: ${{ inputs.publish_task }}
+  CONTAINER_IMAGE: ${{ inputs.container_image }}
+
 jobs:
   publish:
     name: Publish to GitHub Packages
@@ -83,7 +89,7 @@ jobs:
       - name: Report toolchain (container)
         if: inputs.container_image != ''
         run: |
-          echo "Container: ${{ inputs.container_image }}"
+          echo "Container: $CONTAINER_IMAGE"
           java -version
 
       - name: Setup Gradle
@@ -111,7 +117,7 @@ jobs:
         env:
           GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME }}
           GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
-        run: ./gradlew ${{ inputs.publish_task }} --no-daemon --build-cache
+        run: ./gradlew $PUBLISH_TASK --no-daemon --build-cache
 
       - name: Summary
         env:

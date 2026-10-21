@@ -20,6 +20,11 @@ on:
 permissions:
   contents: read
 
+# Inputs reach scripts through env, never spliced into them: an
+# interpolated value is parsed as shell, an env var is only data.
+env:
+  DOCKERFILE_PATH: ${{ inputs.dockerfile_path }}
+
 jobs:
   build:
     name: Build & Validate
@@ -34,7 +39,7 @@ jobs:
 
       - name: Build & Validate KrakenD config
         run: |
-          docker build -t krakend-app:ci ${{ inputs.dockerfile_path }}
+          docker build -t krakend-app:ci "$DOCKERFILE_PATH"
 
           echo "### KrakenD Build & Validation" >> $GITHUB_STEP_SUMMARY
           echo "**Status:** Passed" >> $GITHUB_STEP_SUMMARY

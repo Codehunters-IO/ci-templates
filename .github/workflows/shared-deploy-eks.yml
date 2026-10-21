@@ -191,16 +191,15 @@ jobs:
           AWS_ECR_URL: ${{ secrets.AWS_ECR_URL }}
           IMAGE_DIGEST: ${{ inputs.image_digest }}
           IMAGE_TAG: ${{ inputs.image_tag }}
+          DEPLOY_NAME: ${{ inputs.deployment_name }}
+          CTR_NAME: ${{ inputs.container_name }}
         run: |
-          REPO_NAME="${{ github.repository }}"
-          REPO_NAME="${REPO_NAME##*/}"
+          REPO_NAME="${GITHUB_REPOSITORY##*/}"
 
-          DEPLOY_NAME="${{ inputs.deployment_name }}"
           if [ -z "$DEPLOY_NAME" ]; then
             DEPLOY_NAME="$REPO_NAME"
           fi
 
-          CTR_NAME="${{ inputs.container_name }}"
           if [ -z "$CTR_NAME" ]; then
             CTR_NAME="$REPO_NAME"
           fi
@@ -219,10 +218,13 @@ jobs:
           echo "image_ref=$IMAGE_REF" >> "$GITHUB_OUTPUT"
 
       - name: Update kubeconfig
+        env:
+          CLUSTER_NAME: ${{ inputs.cluster_name }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
           aws eks update-kubeconfig \
-            --name ${{ inputs.cluster_name }} \
-            --region ${{ secrets.AWS_REGION }}
+            --name "$CLUSTER_NAME" \
+            --region "$AWS_REGION"
 
       # ============================================
       # HELM DEPLOYMENT
@@ -233,27 +235,36 @@ jobs:
         env:
           DEPLOY_NAME: ${{ steps.setup.outputs.deploy_name }}
           IMAGE_URI: ${{ steps.setup.outputs.image_uri }}
+          CHART_PATH: ${{ inputs.helm_chart_path }}
+          NAMESPACE: ${{ inputs.namespace }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          REPLICAS: ${{ inputs.replicas }}
+          ROLLOUT_TIMEOUT: ${{ inputs.rollout_timeout }}
+          VALUES_FILE: ${{ inputs.helm_values_file }}
+          SET_VALUES: ${{ inputs.helm_set_values }}
+        # An argument array, not a string through eval: each value reaches helm
+        # as one argument and is never re-read as shell.
         run: |
-          HELM_CMD="helm upgrade --install $DEPLOY_NAME ${{ inputs.helm_chart_path }}"
-          HELM_CMD="$HELM_CMD --namespace ${{ inputs.namespace }} --create-namespace"
-          HELM_CMD="$HELM_CMD --set image.repository=${IMAGE_URI%:*}"
-          HELM_CMD="$HELM_CMD --set image.tag=${{ inputs.image_tag }}"
-          HELM_CMD="$HELM_CMD --set replicaCount=${{ inputs.replicas }}"
-          HELM_CMD="$HELM_CMD --wait --timeout ${{ inputs.rollout_timeout }}"
+          ARGS=(upgrade --install "$DEPLOY_NAME" "$CHART_PATH"
+            --namespace "$NAMESPACE" --create-namespace
+            --set "image.repository=${IMAGE_URI%:*}"
+            --set "image.tag=${IMAGE_TAG}"
+            --set "replicaCount=${REPLICAS}"
+            --wait --timeout "$ROLLOUT_TIMEOUT")
 
-          if [ -n "${{ inputs.helm_values_file }}" ]; then
-            HELM_CMD="$HELM_CMD -f ${{ inputs.helm_values_file }}"
+          if [ -n "$VALUES_FILE" ]; then
+            ARGS+=(-f "$VALUES_FILE")
           fi
 
-          if [ -n "${{ inputs.helm_set_values }}" ]; then
-            IFS=',' read -ra SETS <<< "${{ inputs.helm_set_values }}"
+          if [ -n "$SET_VALUES" ]; then
+            IFS=',' read -ra SETS <<< "$SET_VALUES"
             for s in "${SETS[@]}"; do
-              HELM_CMD="$HELM_CMD --set $s"
+              ARGS+=(--set "$s")
             done
           fi
 
-          echo "Running: $HELM_CMD"
-          eval $HELM_CMD
+          echo "Running: helm ${ARGS[*]}"
+          helm "${ARGS[@]}"
 
       # ============================================
       # KUBECTL DEPLOYMENT
@@ -261,9 +272,12 @@ jobs:
       - name: Check if deployment exists
         if: "!inputs.use_helm"
         id: check-deploy
+        env:
+          DEPLOY_NAME: ${{ steps.setup.outputs.deploy_name }}
+          NAMESPACE: ${{ inputs.namespace }}
         run: |
-          if kubectl get deployment ${{ steps.setup.outputs.deploy_name }} \
-            -n ${{ inputs.namespace }} >/dev/null 2>&1; then
+          if kubectl get deployment "$DEPLOY_NAME" \
+            -n "$NAMESPACE" >/dev/null 2>&1; then
             echo "exists=true" >> $GITHUB_OUTPUT
           else
             echo "exists=false" >> $GITHUB_OUTPUT
@@ -271,10 +285,15 @@ jobs:
 
       - name: Update existing deployment
         if: "!inputs.use_helm && steps.check-deploy.outputs.exists == 'true'"
+        env:
+          DEPLOY_NAME: ${{ steps.setup.outputs.deploy_name }}
+          CTR_NAME: ${{ steps.setup.outputs.container_name }}
+          IMAGE_REF: ${{ steps.setup.outputs.image_ref }}
+          NAMESPACE: ${{ inputs.namespace }}
         run: |
-          kubectl set image deployment/${{ steps.setup.outputs.deploy_name }} \
-            ${{ steps.setup.outputs.container_name }}=${{ steps.setup.outputs.image_ref }} \
-            -n ${{ inputs.namespace }}
+          kubectl set image "deployment/${DEPLOY_NAME}" \
+            "${CTR_NAME}=${IMAGE_REF}" \
+            -n "$NAMESPACE"
 
       - name: Create new deployment
         if: "!inputs.use_helm && steps.check-deploy.outputs.exists == 'false'"
@@ -284,6 +303,13 @@ jobs:
           IMAGE_REF: ${{ steps.setup.outputs.image_ref }}
           NAMESPACE: ${{ inputs.namespace }}
           CONTAINER_ENV_VARS: ${{ inputs.container_env_vars }}
+          REPLICAS: ${{ inputs.replicas }}
+          CONTAINER_PORT: ${{ inputs.container_port }}
+          MEMORY_REQUEST: ${{ inputs.memory_request }}
+          CPU_REQUEST: ${{ inputs.cpu_request }}
+          MEMORY_LIMIT: ${{ inputs.memory_limit }}
+          CPU_LIMIT: ${{ inputs.cpu_limit }}
+          HEALTH_CHECK_PATH: ${{ inputs.health_check_path }}
         run: |
           # Build env vars YAML block
           ENV_YAML=""
@@ -309,7 +335,7 @@ jobs:
             labels:
               app: ${DEPLOY_NAME}
           spec:
-            replicas: ${{ inputs.replicas }}
+            replicas: ${REPLICAS}
             selector:
               matchLabels:
                 app: ${DEPLOY_NAME}
@@ -322,24 +348,24 @@ jobs:
                   - name: ${CTR_NAME}
                     image: ${IMAGE_REF}
                     ports:
-                      - containerPort: ${{ inputs.container_port }}
+                      - containerPort: ${CONTAINER_PORT}
                     resources:
                       requests:
-                        memory: "${{ inputs.memory_request }}"
-                        cpu: "${{ inputs.cpu_request }}"
+                        memory: "${MEMORY_REQUEST}"
+                        cpu: "${CPU_REQUEST}"
                       limits:
-                        memory: "${{ inputs.memory_limit }}"
-                        cpu: "${{ inputs.cpu_limit }}"
+                        memory: "${MEMORY_LIMIT}"
+                        cpu: "${CPU_LIMIT}"
                     readinessProbe:
                       httpGet:
-                        path: ${{ inputs.health_check_path }}
-                        port: ${{ inputs.container_port }}
+                        path: ${HEALTH_CHECK_PATH}
+                        port: ${CONTAINER_PORT}
                       initialDelaySeconds: 30
                       periodSeconds: 10
                     livenessProbe:
                       httpGet:
-                        path: ${{ inputs.health_check_path }}
-                        port: ${{ inputs.container_port }}
+                        path: ${HEALTH_CHECK_PATH}
+                        port: ${CONTAINER_PORT}
                       initialDelaySeconds: 60
                       periodSeconds: 30
           ${ENV_YAML}
@@ -354,7 +380,7 @@ jobs:
               app: ${DEPLOY_NAME}
             ports:
               - port: 80
-                targetPort: ${{ inputs.container_port }}
+                targetPort: ${CONTAINER_PORT}
             type: ClusterIP
           MANIFEST
 
@@ -362,10 +388,14 @@ jobs:
 
       - name: Wait for rollout
         if: "!inputs.use_helm"
+        env:
+          DEPLOY_NAME: ${{ steps.setup.outputs.deploy_name }}
+          NAMESPACE: ${{ inputs.namespace }}
+          ROLLOUT_TIMEOUT: ${{ inputs.rollout_timeout }}
         run: |
-          kubectl rollout status deployment/${{ steps.setup.outputs.deploy_name }} \
-            -n ${{ inputs.namespace }} \
-            --timeout=${{ inputs.rollout_timeout }}
+          kubectl rollout status "deployment/${DEPLOY_NAME}" \
+            -n "$NAMESPACE" \
+            --timeout="$ROLLOUT_TIMEOUT"
 
       # ============================================
       # STATUS & SUMMARY
@@ -375,9 +405,15 @@ jobs:
         if: always()
         env:
           IMAGE_DIGEST: ${{ inputs.image_digest }}
+          DEPLOY_NAME: ${{ steps.setup.outputs.deploy_name }}
+          IMAGE_URI: ${{ steps.setup.outputs.image_uri }}
+          NAMESPACE: ${{ inputs.namespace }}
+          CLUSTER_NAME: ${{ inputs.cluster_name }}
+          REPLICAS: ${{ inputs.replicas }}
+          ENVIRONMENT: ${{ inputs.environment }}
         run: |
-          if kubectl get deployment ${{ steps.setup.outputs.deploy_name }} \
-            -n ${{ inputs.namespace }} -o jsonpath='{.status.readyReplicas}' 2>/dev/null | grep -q "[1-9]"; then
+          if kubectl get deployment "$DEPLOY_NAME" \
+            -n "$NAMESPACE" -o jsonpath='{.status.readyReplicas}' 2>/dev/null | grep -q "[1-9]"; then
             echo "status=success" >> $GITHUB_OUTPUT
           else
             echo "status=failure" >> $GITHUB_OUTPUT
@@ -387,10 +423,10 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| **Cluster** | ${{ inputs.cluster_name }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Namespace** | ${{ inputs.namespace }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Deployment** | ${{ steps.setup.outputs.deploy_name }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Image** | ${{ steps.setup.outputs.image_uri }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Cluster** | ${CLUSTER_NAME} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Namespace** | ${NAMESPACE} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Deployment** | ${DEPLOY_NAME} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Image** | ${IMAGE_URI} |" >> $GITHUB_STEP_SUMMARY
           echo "| **Digest** | ${IMAGE_DIGEST:-none (deployed by tag)} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| **Replicas** | ${{ inputs.replicas }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Environment** | ${{ inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Replicas** | ${REPLICAS} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Environment** | ${ENVIRONMENT} |" >> $GITHUB_STEP_SUMMARY

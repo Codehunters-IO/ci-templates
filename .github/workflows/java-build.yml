@@ -67,6 +67,12 @@ permissions:
   contents: read
   packages: read
 
+# Inputs reach scripts through env, never spliced into them: an
+# interpolated value is parsed as shell, an env var is only data.
+env:
+  JAR_PATH: ${{ inputs.jar_path }}
+  CONTAINER_IMAGE: ${{ inputs.container_image }}
+
 jobs:
   build:
     name: Build
@@ -95,7 +101,7 @@ jobs:
       - name: Report toolchain (container)
         if: inputs.container_image != ''
         run: |
-          echo "Container: ${{ inputs.container_image }}"
+          echo "Container: $CONTAINER_IMAGE"
           java -version
 
       - name: Setup Gradle
@@ -131,12 +137,12 @@ jobs:
         id: jar-info
         if: inputs.upload_artifact
         run: |
-          JAR_FILE="$(find "${{ inputs.jar_path }}" -name '*.jar' -not -name '*-plain.jar' | head -1)"
+          JAR_FILE="$(find "$JAR_PATH" -name '*.jar' -not -name '*-plain.jar' | head -1)"
           if [ -z "$JAR_FILE" ]; then
-            echo "::error::No bootable JAR found under '${{ inputs.jar_path }}'."
+            echo "::error::No bootable JAR found under '${JAR_PATH}'."
             exit 1
           fi
-          echo "name=build-artifact-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+          echo "name=build-artifact-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
           echo "file=$JAR_FILE" >> "$GITHUB_OUTPUT"
           echo "Bootable JAR: $JAR_FILE"
 

@@ -20,6 +20,11 @@ on:
 permissions:
   contents: read
 
+# Inputs reach scripts through env, never spliced into them: an
+# interpolated value is parsed as shell, an env var is only data.
+env:
+  DOCKERFILE_PATH: ${{ inputs.dockerfile_path }}
+
 jobs:
   build:
     name: Build & Validate
@@ -34,7 +39,7 @@ jobs:
 
       - name: Build Docker image
         run: |
-          docker build -t nginx-app:ci ${{ inputs.dockerfile_path }}
+          docker build -t nginx-app:ci "$DOCKERFILE_PATH"
 
           echo "### NGINX Build" >> $GITHUB_STEP_SUMMARY
           echo "**Status:** Image built" >> $GITHUB_STEP_SUMMARY

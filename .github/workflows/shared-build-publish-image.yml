@@ -320,15 +320,15 @@ jobs:
       - name: Report
         run: |
           {
-            echo "### ${{ matrix.image.name }}"
+            echo "### ${IMAGE_NAME}"
             echo ""
-            if [ -n "${{ steps.push.outputs.digest }}" ]; then
-              echo "Digest: \`${{ steps.push.outputs.digest }}\`"
+            if [ -n "${DIGEST}" ]; then
+              echo "Digest: \`${DIGEST}\`"
             else
               echo "Not pushed (push: false)."
             fi
             echo ""
-            echo "Gate: \`${SCAN_SEVERITY}\`, fixable only. Scanners: \`${{ inputs.scanners }}\`."
+            echo "Gate: \`${SCAN_SEVERITY}\`, fixable only. Scanners: \`${SCANNERS}\`."
             echo ""
             echo "| Tag |"
             echo "|-----|"
@@ -338,3 +338,6 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
         env:
           TAGS: ${{ steps.meta.outputs.tags }}
+          IMAGE_NAME: ${{ matrix.image.name }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+          SCANNERS: ${{ inputs.scanners }}

@@ -55,6 +55,12 @@ permissions:
   # exceed its own declaration, so the OIDC path needs it declared here.
   id-token: write
 
+# Inputs reach scripts through env, never spliced into them: an
+# interpolated value is parsed as shell, an env var is only data.
+env:
+  BUILD_OUTPUT_DIR: ${{ inputs.build_output_dir }}
+  ENVIRONMENT: ${{ inputs.environment }}
+
 jobs:
   deploy:
     name: Deploy to Amplify
@@ -95,7 +101,7 @@ jobs:
           echo "Deploying to Amplify app: $AMPLIFY_APP_ID (branch: $AMPLIFY_BRANCH)"
 
           # Create zip of build output
-          cd ${{ inputs.build_output_dir }}
+          cd "$BUILD_OUTPUT_DIR"
           zip -r ../build-output.zip .
           cd ..
 
@@ -153,7 +159,7 @@ jobs:
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| **App ID** | $AMPLIFY_APP_ID |" >> $GITHUB_STEP_SUMMARY
           echo "| **Branch** | $AMPLIFY_BRANCH |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Environment** | ${{ inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Environment** | ${ENVIRONMENT} |" >> $GITHUB_STEP_SUMMARY
           echo "| **Job ID** | $JOB_ID |" >> $GITHUB_STEP_SUMMARY
           echo "| **Status** | $JOB_STATUS |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Source** | ${{ inputs.build_output_dir }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Source** | ${BUILD_OUTPUT_DIR} |" >> $GITHUB_STEP_SUMMARY

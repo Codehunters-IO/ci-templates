@@ -67,6 +67,11 @@ permissions:
   contents: read
   packages: read
 
+# Inputs reach scripts through env, never spliced into them: an
+# interpolated value is parsed as shell, an env var is only data.
+env:
+  PACKAGE_MANAGER: ${{ inputs.package_manager }}
+
 jobs:
   sdk:
     name: SDK Build & Test
@@ -96,7 +101,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          case "${{ inputs.package_manager }}" in
+          case "$PACKAGE_MANAGER" in
             pnpm) pnpm install --frozen-lockfile ;;
             yarn) yarn install --frozen-lockfile ;;
             *)    npm ci ;;
