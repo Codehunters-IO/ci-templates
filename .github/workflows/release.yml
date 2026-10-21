@@ -14,13 +14,15 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
-permissions:
-  contents: write
+# Nothing by default; each job names the write it needs.
+permissions: {}
 
 jobs:
   tag:
     name: Tag Release
     uses: ./.github/workflows/shared-tag-release.yml
+    permissions:
+      contents: write
     with:
       # Lightweight, not annotated: consumers pin these tags as reusable-workflow
       # refs, and through an annotated tag GitHub cannot resolve a *-main-pipeline's
