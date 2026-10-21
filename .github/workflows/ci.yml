@@ -28,6 +28,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Run actionlint
         env:
@@ -50,6 +52,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       # A job without timeout-minutes holds a runner for six hours when a step
       # hangs, and in a reusable workflow it does so in every consumer at once.
@@ -95,6 +99,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Every workflow and template must parse
         run: |
@@ -117,6 +123,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: No template may track a moving ref
         run: |
@@ -141,6 +149,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       # A deploy template without a group lets two merges deploy at once, and
       # the older one can finish last. A group alone doesn't say which runs may
@@ -179,6 +189,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: No action may be pinned at two different SHAs
         run: |
@@ -228,6 +240,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Every inputs.X referenced must be declared in the same workflow
         run: |
@@ -260,6 +274,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       # GitHub checks permissions statically: a PR pipeline that reaches a
       # workflow declaring `contents: write` forces every PR caller to grant
@@ -328,6 +344,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       # java-test's threshold check is the one script here whose bug was silent:
       # a wrong comparison skipped the gate and the job stayed green. Run it
@@ -359,6 +377,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       # The bump decision lives in three places: shared-release.yml (which names the
       # release/vX.Y.Z branch), shared-tag-release.yml (which tags main) and
