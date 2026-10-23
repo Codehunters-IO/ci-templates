@@ -229,6 +229,8 @@ jobs:
           VERSION: ${{ steps.semver.outputs.version }}
           RELEASE_BRANCH: ${{ steps.branch.outputs.release_branch }}
           PR_URL: ${{ steps.pr.outputs.pr_url }}
+          INPUTS_BASE_BRANCH: ${{ inputs.base_branch }}
+          INPUTS_TARGET_BRANCH: ${{ inputs.target_branch }}
         run: |
           {
             echo "### Release branch"
@@ -237,7 +239,7 @@ jobs:
             echo "|----------|-------|"
             echo "| Version | v${VERSION} |"
             echo "| Branch | ${RELEASE_BRANCH} |"
-            echo "| From | ${{ inputs.base_branch }} |"
-            echo "| Target | ${{ inputs.target_branch }} |"
+            echo "| From | ${INPUTS_BASE_BRANCH} |"
+            echo "| Target | ${INPUTS_TARGET_BRANCH} |"
             echo "| PR | ${PR_URL} |"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -30,6 +30,12 @@ on:
 permissions:
   contents: read
 
+# Inputs reach scripts through env, never spliced into them: an
+# interpolated value is parsed as shell, an env var is only data.
+env:
+  DOCKERFILE_PATH: ${{ inputs.dockerfile_path }}
+  HEALTH_PATH: ${{ inputs.health_path }}
+
 jobs:
   test:
     name: Smoke Test
@@ -42,9 +48,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Build Docker image
-        run: docker build -t nginx-app:ci ${{ inputs.dockerfile_path }}
+        run: docker build -t nginx-app:ci "$DOCKERFILE_PATH"
 
       - name: Start container
         run: |
@@ -65,12 +73,12 @@ jobs:
         run: |
           set -uo pipefail
           for i in $(seq 1 30); do
-            CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:18080${{ inputs.health_path }}" || true)
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:18080${HEALTH_PATH}" || true)
             if [ "$CODE" = "200" ]; then
               echo "Health OK on attempt $i"
               echo "result=success" >> $GITHUB_OUTPUT
               echo "### NGINX Smoke Test" >> $GITHUB_STEP_SUMMARY
-              echo "**Status:** Passed (200 on ${{ inputs.health_path }})" >> $GITHUB_STEP_SUMMARY
+              echo "**Status:** Passed (200 on ${HEALTH_PATH})" >> $GITHUB_STEP_SUMMARY
               exit 0
             fi
             sleep 1
