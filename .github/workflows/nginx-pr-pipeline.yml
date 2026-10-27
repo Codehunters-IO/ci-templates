@@ -86,9 +86,6 @@ on:
         type: string
         default: '/__health'
 
-    outputs:
-
-
 # Every job below calls a leaf that declares read access and nothing more.
 # Keep it that way: a leaf that needs more raises the ceiling for every PR
 # caller, which is the problem this workflow exists to avoid. ci.yml asserts it.
