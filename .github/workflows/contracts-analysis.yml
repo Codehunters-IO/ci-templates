@@ -73,6 +73,11 @@ on:
 permissions:
   contents: read
 
+# Inputs reach scripts through env, never spliced into them: an
+# interpolated value is parsed as shell, an env var is only data.
+env:
+  PACKAGE_MANAGER: ${{ inputs.package_manager }}
+
 jobs:
   solhint:
     name: Solhint
@@ -86,6 +91,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup pnpm
         if: inputs.package_manager == 'pnpm'
@@ -99,7 +106,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          case "${{ inputs.package_manager }}" in
+          case "$PACKAGE_MANAGER" in
             pnpm) pnpm install --frozen-lockfile ;;
             yarn) yarn install --frozen-lockfile ;;
             *)    npm ci ;;
@@ -116,7 +123,7 @@ jobs:
             exit $?
           fi
 
-          case "${{ inputs.package_manager }}" in
+          case "$PACKAGE_MANAGER" in
             pnpm) pnpm solhint 'contracts/**/*.sol' 2>&1 | tee solhint-output.log ;;
             yarn) yarn solhint 'contracts/**/*.sol' 2>&1 | tee solhint-output.log ;;
             *)    npx solhint 'contracts/**/*.sol' 2>&1 | tee solhint-output.log ;;
@@ -151,6 +158,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       # No container: for this job. slither-action brings its own image with
       # python, solc and crytic-compile already matched to each other.
@@ -165,9 +174,12 @@ jobs:
 
       - name: Summarize
         if: always()
+        env:
+          OUTCOME: ${{ steps.analysis.outcome }}
+          FAIL_ON: ${{ inputs.slither_fail_on }}
         run: |
           {
             echo "### Slither"
             echo ""
-            echo "**Result:** ${{ steps.analysis.outcome }} (fail-on: ${{ inputs.slither_fail_on }})"
+            echo "**Result:** ${OUTCOME} (fail-on: ${FAIL_ON})"
           } >> "$GITHUB_STEP_SUMMARY"

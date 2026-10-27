@@ -56,6 +56,12 @@ permissions:
   contents: read
   packages: read
 
+# Inputs reach scripts through env, never spliced into them: an
+# interpolated value is parsed as shell, an env var is only data.
+env:
+  PACKAGE_MANAGER: ${{ inputs.package_manager }}
+  CONTAINER_IMAGE: ${{ inputs.container_image }}
+
 jobs:
   build:
     name: Build & Compile
@@ -71,6 +77,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup pnpm
         if: inputs.package_manager == 'pnpm' && inputs.container_image == ''
@@ -86,13 +94,13 @@ jobs:
       - name: Report toolchain (container)
         if: inputs.container_image != ''
         run: |
-          echo "Container: ${{ inputs.container_image }}"
+          echo "Container: $CONTAINER_IMAGE"
           node --version
           npm --version
 
       - name: Install dependencies
         run: |
-          case "${{ inputs.package_manager }}" in
+          case "$PACKAGE_MANAGER" in
             pnpm) pnpm install --frozen-lockfile ;;
             yarn) yarn install --frozen-lockfile ;;
             *)    npm ci ;;
@@ -100,7 +108,7 @@ jobs:
 
       - name: Compile contracts
         run: |
-          case "${{ inputs.package_manager }}" in
+          case "$PACKAGE_MANAGER" in
             pnpm) pnpm hardhat compile ;;
             yarn) yarn hardhat compile ;;
             *)    npx hardhat compile ;;
@@ -112,7 +120,7 @@ jobs:
       - name: Contract size check
         if: inputs.run_size_check
         run: |
-          case "${{ inputs.package_manager }}" in
+          case "$PACKAGE_MANAGER" in
             pnpm) pnpm hardhat size-contracts ;;
             yarn) yarn hardhat size-contracts ;;
             *)    npx hardhat size-contracts ;;

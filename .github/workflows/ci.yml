@@ -28,6 +28,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Run actionlint
         env:
@@ -44,12 +46,38 @@ jobs:
           # Revisit once that backlog is down.
           ./actionlint -shellcheck= -oneline .github/workflows/*.yml
 
+  # actionlint checks that a workflow is valid; zizmor checks that it is safe:
+  # template injection, credentials left in .git/config, broad permissions.
+  # Medium and up fails. What .github/zizmor.yml turns off says why.
+  zizmor:
+    name: Audit workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run zizmor
+        env:
+          # Pinned for the same reason as actionlint: a new audit in a new release
+          # should land in a PR that bumps this, not in somebody else's.
+          ZIZMOR_VERSION: '1.31.1'
+        run: |
+          set -euo pipefail
+          curl -fsSL -o zizmor.tar.gz \
+            "https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/zizmor-x86_64-unknown-linux-gnu.tar.gz"
+          tar -xzf zizmor.tar.gz zizmor
+          ./zizmor --offline --min-severity medium .github/workflows/
+
   job-timeouts:
     name: Every runnable job has a timeout
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       # A job without timeout-minutes holds a runner for six hours when a step
       # hangs, and in a reusable workflow it does so in every consumer at once.
@@ -95,6 +123,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Every workflow and template must parse
         run: |
@@ -117,6 +147,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: No template may track a moving ref
         run: |
@@ -141,6 +173,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       # A deploy template without a group lets two merges deploy at once, and
       # the older one can finish last. A group alone doesn't say which runs may
@@ -179,6 +213,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: No action may be pinned at two different SHAs
         run: |
@@ -228,6 +264,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Every inputs.X referenced must be declared in the same workflow
         run: |
@@ -260,6 +298,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       # GitHub checks permissions statically: a PR pipeline that reaches a
       # workflow declaring `contents: write` forces every PR caller to grant
@@ -328,6 +368,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       # java-test's threshold check is the one script here whose bug was silent:
       # a wrong comparison skipped the gate and the job stayed green. Run it
@@ -347,12 +389,20 @@ jobs:
       - name: Run the image-ref rule against its cases
         run: .github/selftest/image-ref.test.sh
 
+      # The graph and scaffold scripts lean on layout conventions nothing else
+      # enforces: jobs at two spaces, `uses:` at four, a `# Copy to:` header per
+      # template. Breaking one gives wrong output, not an error.
+      - name: Run the terminal tools against the real workflows
+        run: .github/selftest/terminal-tools.test.sh
+
   version-bump-rules:
     name: Version bump rules agree
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       # The bump decision lives in three places: shared-release.yml (which names the
       # release/vX.Y.Z branch), shared-tag-release.yml (which tags main) and

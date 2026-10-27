@@ -58,6 +58,12 @@ permissions:
   # exceed its own declaration, so the OIDC path needs it declared here.
   id-token: write
 
+# Inputs reach scripts through env, never spliced into them: an
+# interpolated value is parsed as shell, an env var is only data.
+env:
+  BUILD_OUTPUT_DIR: ${{ inputs.build_output_dir }}
+  ENVIRONMENT: ${{ inputs.environment }}
+
 jobs:
   deploy:
     name: Deploy to S3
@@ -99,7 +105,7 @@ jobs:
           echo "Deploying to S3 bucket: $S3_BUCKET"
 
           # Sync build output to S3 (delete stale files)
-          aws s3 sync ${{ inputs.build_output_dir }} "s3://${S3_BUCKET}" --delete
+          aws s3 sync "$BUILD_OUTPUT_DIR" "s3://${S3_BUCKET}" --delete
 
           echo "bucket=$S3_BUCKET" >> $GITHUB_OUTPUT
 
@@ -125,9 +131,9 @@ jobs:
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| **S3 Bucket** | $S3_BUCKET |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Environment** | ${{ inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Environment** | ${ENVIRONMENT} |" >> $GITHUB_STEP_SUMMARY
           if [ -n "$CLOUDFRONT_DISTRIBUTION_ID" ]; then
             echo "| **CloudFront** | $CLOUDFRONT_DISTRIBUTION_ID |" >> $GITHUB_STEP_SUMMARY
             echo "| **Invalidation** | $INVALIDATION_ID |" >> $GITHUB_STEP_SUMMARY
           fi
-          echo "| **Source** | ${{ inputs.build_output_dir }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Source** | ${BUILD_OUTPUT_DIR} |" >> $GITHUB_STEP_SUMMARY

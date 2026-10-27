@@ -1,0 +1,27 @@
+# zizmor configuration. Every rule turned off here is a decision about this
+# repository's design, not a finding nobody looked at: the reason sits next to it.
+rules:
+  # Templates call the stack pipelines with `secrets: inherit` on purpose: the
+  # caller owns its secrets and the pipeline picks the ones its jobs use. Listing
+  # them per caller would mean every new optional secret is a breaking change in
+  # every consumer. Documented in README > Required Secrets.
+  secrets-inherit:
+    disable: true
+
+  # The only container images are `container_image`, which the caller supplies
+  # (README > Running the JVM jobs inside a prebuilt image). zizmor cannot read
+  # an expression, so it flags the input itself. Pinning is the caller's call.
+  unpinned-images:
+    disable: true
+
+  # Suggests replacing `uses: ./...` with a `$/...` form. Every nested call here
+  # uses `./`, consumers resolve it today, and the replacement is not something
+  # to adopt from a linter hint across 117 calls without testing it on a caller.
+  self-repository:
+    disable: true
+
+  dangerous-triggers:
+    ignore:
+      # issue_comment and friends, gated on OWNER/MEMBER/COLLABORATOR in the
+      # job's `if:`. The comment above that gate says why both checks exist.
+      - claude-agent.yml
