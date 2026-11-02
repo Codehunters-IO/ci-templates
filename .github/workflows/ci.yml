@@ -395,6 +395,13 @@ jobs:
       - name: Run the terminal tools against the real workflows
         run: .github/selftest/terminal-tools.test.sh
 
+      # An on-by-default switch a pipeline forgets to forward is unreachable, and
+      # nothing reports it: the input is simply absent. `run_spotless` sat that way
+      # long enough to fail Build in a consumer repository that has no Spotless
+      # plugin, taking test, qodana, owasp and architecture down with it.
+      - name: Check every on-by-default switch is reachable from the caller
+        run: .github/selftest/reachable-switches.test.sh
+
   version-bump-rules:
     name: Version bump rules agree
     runs-on: ubuntu-latest
