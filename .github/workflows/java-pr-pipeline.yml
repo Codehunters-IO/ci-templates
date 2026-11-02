@@ -48,6 +48,15 @@ on:
         required: false
         type: string
         default: 'gradle'
+      run_spotless:
+        description: 'Run the Spotless formatting check inside the build job'
+        required: false
+        type: boolean
+        # Passthrough only; the behaviour and the reason live in java-build.yml and
+        # java-pr-gates.yml. Declared here because a reusable workflow forwards nothing
+        # it has not declared, and without this hop java-build.yml's default was the
+        # only reachable value.
+        default: true
 
       # Security
       run_commit_lint:
@@ -187,6 +196,7 @@ jobs:
       java_version: ${{ inputs.java_version }}
       java_distribution: ${{ inputs.java_distribution }}
       build_tool: ${{ inputs.build_tool }}
+      run_spotless: ${{ inputs.run_spotless }}
       run_commit_lint: ${{ inputs.run_commit_lint }}
       run_trufflehog: ${{ inputs.run_trufflehog }}
       trufflehog_only_verified: ${{ inputs.trufflehog_only_verified }}

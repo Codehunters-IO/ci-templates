@@ -60,6 +60,17 @@ on:
         required: false
         type: string
         default: 'gradle'
+      run_spotless:
+        description: 'Run the Spotless formatting check inside the build job'
+        required: false
+        type: boolean
+        # Mirrors java-build.yml's own default, so declaring this input changes nothing
+        # for an existing caller. It exists because that default was unreachable: a
+        # caller whose project has no Spotless plugin had no way to switch the step off,
+        # and `./gradlew spotlessCheck` then fails the whole Build job on
+        # "Task 'spotlessCheck' not found". `test`, `qodana`, `owasp` and `architecture`
+        # all `needs: build`, so a missing formatter cost four gates, not one.
+        default: true
 
       # Security
       run_commit_lint:
@@ -215,6 +226,7 @@ jobs:
       java_version: ${{ inputs.java_version }}
       java_distribution: ${{ inputs.java_distribution }}
       build_tool: ${{ inputs.build_tool }}
+      run_spotless: ${{ inputs.run_spotless }}
       # No artifact or deploy job consumes the JAR on a PR.
       upload_artifact: false
     secrets: inherit
