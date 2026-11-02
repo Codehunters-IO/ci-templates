@@ -61,7 +61,7 @@ jobs:
       - name: TruffleHog Scan
         id: scan
         # Pinned to v3.95.3 SHA — trufflehog has no floating @v3 tag, only semver tags.
-        uses: trufflesecurity/trufflehog@e76dff8a7e57d6df0c60ad8cbf5d5cba505a8fc9  # v3.99.2
+        uses: trufflesecurity/trufflehog@31ce31ee1abbcc7dc8eee5764c17121c3044c8b2  # v3.99.7
         continue-on-error: ${{ !inputs.fail_on_findings }}
         with:
           extra_args: >-
