@@ -5,11 +5,13 @@
 # Runs: build + deploy (PRODUCTION environment)
 #
 # For S3 deployment:
-#   Required secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, AWS_S3_BUCKET
+#   Required secrets: AWS_REGION, AWS_S3_BUCKET
 #   Optional secrets: AWS_CLOUDFRONT_DISTRIBUTION_ID
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY only without aws_role_to_assume (OIDC, preferred)
 #
 # For Amplify deployment:
-#   Required secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, AWS_AMPLIFY_APP_ID, AWS_AMPLIFY_BRANCH
+#   Required secrets: AWS_REGION, AWS_AMPLIFY_APP_ID, AWS_AMPLIFY_BRANCH
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY only without aws_role_to_assume (OIDC, preferred)
 #
 # Note: Tests should have passed in release branch, only build and deploy here
 

@@ -18,6 +18,25 @@ on:
         required: false
         type: string
         default: 'build'
+      immutable_paths:
+        description: >-
+          Prefixes inside build_output_dir whose files carry a content hash in
+          their name (CRA static/, Vite assets/), one per line or comma-separated.
+          Cached for a year and kept for asset_retention_days after a build
+          stops using them. Empty treats every file as an entry point.
+        required: false
+        type: string
+        default: 'static/,assets/'
+      asset_retention_days:
+        description: 'Days a hashed asset outlives the last build that used it, for tabs still open on it'
+        required: false
+        type: number
+        default: 7
+      wait_for_invalidation:
+        description: 'Wait for the CloudFront invalidation to complete before reporting success'
+        required: false
+        type: boolean
+        default: true
 
       aws_role_to_assume:
         description: >-
@@ -30,10 +49,11 @@ on:
         default: ''
 
     secrets:
+      # Not read when aws_role_to_assume is set.
       AWS_ACCESS_KEY_ID:
-        required: true
+        required: false
       AWS_SECRET_ACCESS_KEY:
-        required: true
+        required: false
       AWS_REGION:
         required: true
       AWS_S3_BUCKET:
@@ -69,7 +89,8 @@ jobs:
     name: Deploy to S3
     runs-on: ${{ inputs.runner }}
     environment: ${{ inputs.environment }}
-    timeout-minutes: 15
+    # Room for the CloudFront wait, which alone can take several minutes.
+    timeout-minutes: 25
 
     outputs:
       status: ${{ steps.deploy.outputs.status }}
@@ -96,20 +117,72 @@ jobs:
           aws-secret-access-key: ${{ inputs.aws_role_to_assume == '' && secrets.AWS_SECRET_ACCESS_KEY || '' }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      # One `sync --delete` used to replace the site in place: no cache headers,
+      # and the previous build's chunks deleted while browsers still had pages
+      # that load them (ChunkLoadError in every open tab), with index.html
+      # possibly uploaded before the assets it names. Now three passes:
+      #   1. hashed assets (immutable_paths), cached for a year, nothing deleted;
+      #   2. everything else, index.html included, revalidated on every load,
+      #      --delete limited to these keys -- the HTML lands after its assets;
+      #   3. hashed assets that are not in this build and are older than
+      #      asset_retention_days are pruned, so old tabs keep working for that
+      #      long and the bucket does not grow without bound.
       - name: Deploy to S3
         id: deploy
         env:
           S3_BUCKET: ${{ secrets.AWS_S3_BUCKET }}
           CLOUDFRONT_DISTRIBUTION_ID: ${{ secrets.AWS_CLOUDFRONT_DISTRIBUTION_ID }}
+          IMMUTABLE_PATHS: ${{ inputs.immutable_paths }}
+          ASSET_RETENTION_DAYS: ${{ inputs.asset_retention_days }}
+          WAIT_FOR_INVALIDATION: ${{ inputs.wait_for_invalidation }}
         run: |
           echo "Deploying to S3 bucket: $S3_BUCKET"
+          set -o pipefail
 
-          # Sync build output to S3 (delete stale files)
-          aws s3 sync "$BUILD_OUTPUT_DIR" "s3://${S3_BUCKET}" --delete
+          # Prefixes such as static/ or assets/, one per line or comma-separated.
+          PREFIXES=()
+          while IFS= read -r p; do
+            p="${p#"${p%%[![:space:]]*}"}"; p="${p%"${p##*[![:space:]]}"}"; p="${p#/}"
+            [ -n "$p" ] && PREFIXES+=("${p%/}/")
+          done < <(printf '%s\n' "$IMMUTABLE_PATHS" | tr ',' '\n')
+
+          ONLY_ASSETS=(--exclude '*')
+          NOT_ASSETS=()
+          for p in "${PREFIXES[@]}"; do
+            ONLY_ASSETS+=(--include "${p}*")
+            NOT_ASSETS+=(--exclude "${p}*")
+          done
+
+          if [ "${#PREFIXES[@]}" -gt 0 ]; then
+            echo "Pass 1: hashed assets under ${PREFIXES[*]} (immutable)"
+            aws s3 sync "$BUILD_OUTPUT_DIR" "s3://${S3_BUCKET}" "${ONLY_ASSETS[@]}" \
+              --cache-control 'public, max-age=31536000, immutable'
+          fi
+
+          echo "Pass 2: entry points and the rest (revalidated)"
+          aws s3 sync "$BUILD_OUTPUT_DIR" "s3://${S3_BUCKET}" "${NOT_ASSETS[@]}" \
+            --cache-control 'no-cache' --delete
 
           echo "bucket=$S3_BUCKET" >> $GITHUB_OUTPUT
 
-          # CloudFront cache invalidation (optional)
+          PRUNED=0
+          if [ "${#PREFIXES[@]}" -gt 0 ]; then
+            CUTOFF=$(python3 -c 'import datetime,sys; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=int(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%S"))' "$ASSET_RETENTION_DAYS")
+            echo "Pass 3: pruning assets absent from this build and older than ${ASSET_RETENTION_DAYS} days (${CUTOFF})"
+            for p in "${PREFIXES[@]}"; do
+              while IFS= read -r key; do
+                [ -z "$key" ] && continue
+                [ -e "${BUILD_OUTPUT_DIR}/${key}" ] && continue
+                aws s3 rm "s3://${S3_BUCKET}/${key}" --only-show-errors
+                PRUNED=$((PRUNED + 1))
+              done < <(aws s3api list-objects-v2 --bucket "$S3_BUCKET" --prefix "$p" \
+                         --query "Contents[?LastModified<'${CUTOFF}'].Key" --output json | jq -r '.[]?')
+            done
+            echo "Pruned ${PRUNED} old asset(s)"
+          fi
+
+          # CloudFront cache invalidation (optional). Waited for by default, so a
+          # green job means the edge serves the new build, not that it will.
           if [ -n "$CLOUDFRONT_DISTRIBUTION_ID" ]; then
             echo "Invalidating CloudFront distribution: $CLOUDFRONT_DISTRIBUTION_ID"
             INVALIDATION_ID=$(aws cloudfront create-invalidation \
@@ -119,6 +192,11 @@ jobs:
               --output text)
             echo "Invalidation created: $INVALIDATION_ID"
             echo "invalidation_id=$INVALIDATION_ID" >> $GITHUB_OUTPUT
+            if [ "$WAIT_FOR_INVALIDATION" = "true" ]; then
+              echo "Waiting for the invalidation to complete..."
+              aws cloudfront wait invalidation-completed \
+                --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" --id "$INVALIDATION_ID"
+            fi
           else
             echo "No CloudFront distribution ID provided, skipping invalidation"
           fi
@@ -136,4 +214,5 @@ jobs:
             echo "| **CloudFront** | $CLOUDFRONT_DISTRIBUTION_ID |" >> $GITHUB_STEP_SUMMARY
             echo "| **Invalidation** | $INVALIDATION_ID |" >> $GITHUB_STEP_SUMMARY
           fi
+          echo "| **Old assets pruned** | $PRUNED |" >> $GITHUB_STEP_SUMMARY
           echo "| **Source** | ${BUILD_OUTPUT_DIR} |" >> $GITHUB_STEP_SUMMARY
