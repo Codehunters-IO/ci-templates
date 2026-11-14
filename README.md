@@ -428,11 +428,14 @@ Releases are cut automatically: every push to `main` runs `release.yml`, which
 derives the version from the commits since the last tag, creates `vX.Y.Z` plus a
 GitHub Release, and re-points the floating alias of that major.
 
-| Commit contains | Bump |
+| A commit line starts with | Bump |
 |---|---|
-| `MAJOR` or `BREAKING CHANGE` | major — `v2.0.0`, and `v1` stops moving |
-| `feat` | minor |
+| `BREAKING CHANGE:` / `BREAKING-CHANGE:` footer, or a `type!:` / `type(scope)!:` subject | major — `v2.0.0`, and `v1` stops moving |
+| `feat:` / `feat(scope):` | minor |
 | anything else | patch |
+
+The rules are anchored to the start of a line. "MAJOR" or "breaking change" in
+running prose bumps nothing; only the Conventional Commits markers do.
 
 A major bump freezes the previous alias at its last release, so consumers
 pinned to it keep working until they choose to move. That is how `v1` stopped

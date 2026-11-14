@@ -46,6 +46,18 @@
           },
           {
             "context": "Script self-tests"
+          },
+          {
+            "context": "Audit workflows"
+          },
+          {
+            "context": "PR pipelines stay read-only"
+          },
+          {
+            "context": "Templates grant what their pipeline needs"
+          },
+          {
+            "context": "Version bump rules agree"
           }
         ]
       }

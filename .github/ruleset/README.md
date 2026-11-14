@@ -139,7 +139,7 @@ opposite ways. `shared-tag-release` **creates** `vX.Y.Z` once and never touches 
 `release.yml` then **force-moves** the `vX` alias on every single release:
 
 ```bash
-git tag -f -a "$MAJOR" -m "Floating alias for ${VERSION_TAG}"
+git tag -f "$MAJOR" "${VERSION_TAG}^{commit}"
 git push origin "refs/tags/${MAJOR}" --force
 ```
 
@@ -158,6 +158,13 @@ risk is that someone can still hand-cut a tag, and `shared-tag-release` derives 
 version from `git tag -l --sort=-v:refname | head -n1`, so a bogus `v9.9.9` would poison
 the following release. Nothing here prevents that; it is the price of keeping the release
 able to tag at all.
+
+The same limit leaves the alias open to `update` by any token holding `contents: write` in
+this repository. That set is kept to `release.yml` on `main` and the single admin: the
+`@claude` agent, which reads issue and pull-request text written by others, runs with
+`contents: read` and its own `github.token` rather than an app token, so a prompt cannot
+make it repoint `v2` under every consumer. Sealing the alias outright needs a dedicated
+GitHub App holding the bypass and `release.yml` pushing with that app's token.
 
 Verified by probe rather than by reading the JSON, with `bypass_actors` temporarily
 emptied so the admin escape hatch could not mask the result:
@@ -215,11 +222,13 @@ files.
 do not, on purpose. It is incompatible with the merge commits the release flow produces on
 `main` — `16d4a51` and `cd6b2ac` are two.
 
-**Required checks must have run at least once.** The nine contexts are jobs in
-`.github/workflows/ci.yml`, and they live in the hardening ruleset. Three of them were
+**Required checks must have run at least once.** The thirteen contexts are jobs in
+`.github/workflows/ci.yml`, and they live in the hardening ruleset. Seven of them were
 added after the jobs had run on `develop`: `Every runnable job has a timeout`, `Templates
-declare concurrency` and `Script self-tests`. Until then they were advisory, so a pull
-request could merge with a job missing its timeout or a deploy template set to cancel. Applying a ruleset
+declare concurrency` and `Script self-tests`, then `Audit workflows`, `PR pipelines stay
+read-only`, `Templates grant what their pipeline needs` and `Version bump rules agree`.
+Until then they were advisory, so a pull request could merge with a job missing its
+timeout, a zizmor finding, or a deploy template its pipeline would reject at start. Applying a ruleset
 before that workflow has ever run leaves every pull request blocked on checks GitHub has
 never seen.
 
