@@ -535,12 +535,13 @@ jobs:
     if: |
       inputs.run_artifact &&
       always() &&
+      (needs.security.result == 'success' || needs.security.result == 'skipped') &&
       (needs.build.result == 'success' || needs.build.result == 'skipped') &&
       (needs.test.result == 'success' || needs.test.result == 'skipped') &&
       (needs.sdk.result == 'success' || needs.sdk.result == 'skipped') &&
       (needs.e2e.result == 'success' || needs.e2e.result == 'skipped') &&
       (needs.analysis.result == 'success' || needs.analysis.result == 'skipped')
-    needs: [build, test, sdk, e2e, analysis]
+    needs: [build, test, sdk, e2e, analysis, security]
     uses: ./.github/workflows/shared-artifact-docker-ecr.yml
     with:
       aws_role_to_assume: ${{ inputs.aws_role_to_assume }}
@@ -614,7 +615,7 @@ jobs:
     if: |
       inputs.run_release &&
       always() &&
-      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.artifact.result == 'success')
+      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || (!inputs.run_deploy && needs.artifact.result == 'success'))
     needs: [artifact, deploy-ec2, deploy-ec2-vpn]
     uses: ./.github/workflows/shared-release.yml
     with:
@@ -631,7 +632,7 @@ jobs:
     if: |
       inputs.run_cleanup &&
       always() &&
-      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.artifact.result == 'success') &&
+      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || (!inputs.run_deploy && needs.artifact.result == 'success')) &&
       (needs.release.result == 'success' || needs.release.result == 'skipped')
     needs: [artifact, deploy-ec2, deploy-ec2-vpn, release]
     uses: ./.github/workflows/shared-delete-branch.yml
@@ -645,7 +646,7 @@ jobs:
     if: |
       inputs.run_tag &&
       always() &&
-      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.artifact.result == 'success')
+      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || (!inputs.run_deploy && needs.artifact.result == 'success'))
     needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, cleanup, release]
     uses: ./.github/workflows/shared-tag-release.yml
     secrets: inherit
@@ -656,7 +657,7 @@ jobs:
   notify:
     name: Notify
     if: always()
-    needs: [commit-lint, security, dependency-review, build, test, artifact, deploy-ec2, deploy-ec2-vpn, release, cleanup, tag]
+    needs: [commit-lint, security, dependency-review, build, test, sdk, e2e, analysis, artifact, deploy-ec2, deploy-ec2-vpn, release, cleanup, tag]
     uses: ./.github/workflows/shared-notifications.yml
     with:
       status: ${{ contains(needs.*.result, 'failure') && 'failure' || contains(needs.*.result, 'cancelled') && 'cancelled' || 'success' }}
@@ -671,10 +672,10 @@ jobs:
     if: |
       inputs.run_create_issue_on_failure &&
       always()
-    needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, cleanup, release, tag]
+    needs: [commit-lint, security, dependency-review, build, test, sdk, e2e, analysis, artifact, deploy-ec2, deploy-ec2-vpn, release, cleanup, tag]
     uses: ./.github/workflows/shared-create-issue-on-failure.yml
     with:
-      status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.artifact.result == 'failure' || needs.deploy-ec2.result == 'failure' || needs.deploy-ec2-vpn.result == 'failure') && 'failure' || 'success' }}
+      status: ${{ contains(needs.*.result, 'failure') && 'failure' || 'success' }}
       environment: ${{ inputs.environment }}
       version: ${{ needs.release.outputs.version }}
       changelog: ${{ needs.release.outputs.changelog }}

@@ -327,9 +327,10 @@ jobs:
     if: |
       inputs.run_artifact &&
       always() &&
+      (needs.security.result == 'success' || needs.security.result == 'skipped') &&
       needs.build.result == 'success' &&
       (needs.test.result == 'success' || needs.test.result == 'skipped')
-    needs: [build, test]
+    needs: [build, test, security]
     uses: ./.github/workflows/shared-artifact-docker-ecr.yml
     with:
       aws_role_to_assume: ${{ inputs.aws_role_to_assume }}
@@ -490,10 +491,10 @@ jobs:
     if: |
       inputs.run_create_issue_on_failure &&
       always()
-    needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release, tag]
+    needs: [commit-lint, security, dependency-review, build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, release, cleanup, tag]
     uses: ./.github/workflows/shared-create-issue-on-failure.yml
     with:
-      status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.artifact.result == 'failure' || needs.deploy-ec2.result == 'failure' || needs.deploy-ec2-vpn.result == 'failure' || needs.deploy-eks.result == 'failure') && 'failure' || 'success' }}
+      status: ${{ contains(needs.*.result, 'failure') && 'failure' || 'success' }}
       environment: ${{ inputs.environment }}
       version: ${{ needs.release.outputs.version }}
       changelog: ${{ needs.release.outputs.changelog }}

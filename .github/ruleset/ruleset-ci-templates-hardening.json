@@ -58,6 +58,9 @@
           },
           {
             "context": "Version bump rules agree"
+          },
+          {
+            "context": "Gates see every job"
           }
         ]
       }

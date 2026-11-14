@@ -148,13 +148,24 @@ jobs:
       - name: Deploy to the local chain
         env:
           DEPLOY_COMMAND: ${{ inputs.deploy_command }}
-        run: eval "${DEPLOY_COMMAND}"
+        run: |
+          if [ -z "${DEPLOY_COMMAND}" ]; then
+            echo "::error::deploy_command is empty: the suite would run against an empty chain"
+            exit 1
+          fi
+          eval "${DEPLOY_COMMAND}"
 
       - name: Run end-to-end suite
         id: e2e-run
         env:
           E2E_COMMAND: ${{ inputs.e2e_command }}
         run: |
+          # Required, but a caller forwarding its own empty default reaches here with
+          # "", and `eval ""` exits 0: a green job that ran nothing.
+          if [ -z "${E2E_COMMAND}" ]; then
+            echo "::error::e2e_command is empty: set the end-to-end command or turn run_e2e off"
+            exit 1
+          fi
           set -o pipefail
           eval "${E2E_COMMAND}" 2>&1 | tee e2e-output.log
 

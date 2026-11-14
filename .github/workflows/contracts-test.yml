@@ -164,17 +164,27 @@ jobs:
         env:
           REPORT_GAS: ${{ inputs.run_gas_reporter }}
           TEST_COMMAND: ${{ inputs.test_command }}
+        # The runner's exit code is the verdict, recorded for "Check test
+        # results". It used to be dropped with `|| true` and the verdict read
+        # from Mocha's "N failing" line, so a compile error, a crash, or a
+        # test_command that is not Mocha (forge, vitest) counted zero failures
+        # and passed. `set +e` because the default shell is `bash -e`, which
+        # would end the script at the pipeline before `status` is written.
         run: |
+          set +e -o pipefail
           if [ -n "${TEST_COMMAND}" ]; then
-            eval "${TEST_COMMAND}" 2>&1 | tee test-output.log || true
-            exit 0
+            eval "${TEST_COMMAND}" 2>&1 | tee test-output.log
+          else
+            case "$PACKAGE_MANAGER" in
+              pnpm) pnpm hardhat test 2>&1 | tee test-output.log ;;
+              yarn) yarn hardhat test 2>&1 | tee test-output.log ;;
+              *)    npx hardhat test 2>&1 | tee test-output.log ;;
+            esac
           fi
-
-          case "$PACKAGE_MANAGER" in
-            pnpm) pnpm hardhat test 2>&1 | tee test-output.log || true ;;
-            yarn) yarn hardhat test 2>&1 | tee test-output.log || true ;;
-            *)    npx hardhat test 2>&1 | tee test-output.log || true ;;
-          esac
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "Test command exited with $status"
 
       - name: Parse test results
         id: test-summary
@@ -265,9 +275,20 @@ jobs:
       # ============================================
       - name: Check test results
         if: always()
+        env:
+          STATUS: ${{ steps.test-run.outputs.status }}
+          FAILED: ${{ steps.test-summary.outputs.failed }}
         run: |
-          FAILED="${{ steps.test-summary.outputs.failed }}"
-          if [ -n "$FAILED" ] && [ "$FAILED" -gt 0 ]; then
+          set -uo pipefail
+          if [ -z "${STATUS:-}" ]; then
+            echo "::error::The test step did not report an exit code -- treating as failure"
+            exit 1
+          fi
+          if [ "$STATUS" != "0" ]; then
+            echo "::error::Test command exited with $STATUS"
+            exit 1
+          fi
+          if [ -n "$FAILED" ] && [ "$FAILED" -gt 0 ] 2>/dev/null; then
             echo "::error::$FAILED test(s) failed"
             exit 1
           fi

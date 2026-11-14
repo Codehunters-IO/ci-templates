@@ -118,6 +118,12 @@ jobs:
         env:
           TEST_COMMAND: ${{ inputs.test_command }}
         run: |
+          # Required, but a caller forwarding its own empty default reaches here with
+          # "", and `eval ""` exits 0: a green job that ran nothing.
+          if [ -z "${TEST_COMMAND}" ]; then
+            echo "::error::test_command is empty: set the SDK test command or turn run_sdk off"
+            exit 1
+          fi
           set -o pipefail
           eval "${TEST_COMMAND}" 2>&1 | tee sdk-test-output.log
 

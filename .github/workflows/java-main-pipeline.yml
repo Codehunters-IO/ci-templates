@@ -527,12 +527,13 @@ jobs:
       inputs.run_artifact &&
       inputs.artifact_registry == 'ecr' &&
       always() &&
+      (needs.security.result == 'success' || needs.security.result == 'skipped') &&
       needs.build.result == 'success' &&
       (needs.test.result == 'success' || needs.test.result == 'skipped') &&
       (needs.qodana.result == 'success' || needs.qodana.result == 'skipped') &&
       (needs.owasp.result == 'success' || needs.owasp.result == 'skipped') &&
       (needs.architecture.result == 'success' || needs.architecture.result == 'skipped')
-    needs: [build, test, qodana, owasp, architecture]
+    needs: [build, test, qodana, owasp, architecture, security]
     uses: ./.github/workflows/shared-artifact-docker-ecr.yml
     with:
       aws_role_to_assume: ${{ inputs.aws_role_to_assume }}
@@ -562,10 +563,13 @@ jobs:
       inputs.run_artifact &&
       inputs.artifact_registry == 'github' &&
       always() &&
+      (needs.qodana.result == 'success' || needs.qodana.result == 'skipped') &&
+      (needs.owasp.result == 'success' || needs.owasp.result == 'skipped') &&
+      (needs.security.result == 'success' || needs.security.result == 'skipped') &&
       needs.build.result == 'success' &&
       (needs.test.result == 'success' || needs.test.result == 'skipped') &&
       (needs.architecture.result == 'success' || needs.architecture.result == 'skipped')
-    needs: [build, test, architecture]
+    needs: [build, test, architecture, qodana, owasp, security]
     uses: ./.github/workflows/java-artifact-docker-github.yml
     with:
       runner: ${{ inputs.runner }}
@@ -590,10 +594,13 @@ jobs:
       inputs.run_artifact &&
       inputs.artifact_registry == 'packages' &&
       always() &&
+      (needs.qodana.result == 'success' || needs.qodana.result == 'skipped') &&
+      (needs.owasp.result == 'success' || needs.owasp.result == 'skipped') &&
+      (needs.security.result == 'success' || needs.security.result == 'skipped') &&
       needs.build.result == 'success' &&
       (needs.test.result == 'success' || needs.test.result == 'skipped') &&
       (needs.architecture.result == 'success' || needs.architecture.result == 'skipped')
-    needs: [build, test, architecture]
+    needs: [build, test, architecture, qodana, owasp, security]
     uses: ./.github/workflows/java-artifact-dependency-github.yml
     with:
       runner: ${{ inputs.runner }}
@@ -764,10 +771,10 @@ jobs:
     if: |
       inputs.run_create_issue_on_failure &&
       always()
-    needs: [build, test, artifact-ecr, artifact-github, artifact-packages, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release, tag]
+    needs: [commit-lint, security, dependency-review, build, test, qodana, owasp, architecture, artifact-ecr, artifact-github, artifact-packages, deploy-ec2, deploy-ec2-vpn, deploy-eks, release, cleanup, tag]
     uses: ./.github/workflows/shared-create-issue-on-failure.yml
     with:
-      status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.artifact-ecr.result == 'failure' || needs.artifact-github.result == 'failure' || needs.artifact-packages.result == 'failure' || needs.deploy-ec2.result == 'failure' || needs.deploy-ec2-vpn.result == 'failure' || needs.deploy-eks.result == 'failure') && 'failure' || 'success' }}
+      status: ${{ contains(needs.*.result, 'failure') && 'failure' || 'success' }}
       environment: ${{ inputs.environment }}
       version: ${{ needs.release.outputs.version }}
       changelog: ${{ needs.release.outputs.changelog }}
