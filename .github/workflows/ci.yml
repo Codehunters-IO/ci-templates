@@ -621,6 +621,12 @@ jobs:
       - name: Run the React deploy scripts against a fake AWS CLI
         run: .github/selftest/react-deploy.test.sh
 
+      # The GitOps promotion edits a values file other people own and pushes to a
+      # repository ArgoCD deploys from: only the image keys may change, and only
+      # dev may skip review. yq ships on the runner; the test fails without it here.
+      - name: Run the GitOps promotion against fixtures and a local repository
+        run: .github/selftest/gitops-promote.test.sh
+
       # The graph and scaffold scripts lean on layout conventions nothing else
       # enforces: jobs at two spaces, `uses:` at four, a `# Copy to:` header per
       # template. Breaking one gives wrong output, not an error.
