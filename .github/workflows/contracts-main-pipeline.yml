@@ -390,6 +390,8 @@ permissions:
   contents: write
   packages: read
   issues: write
+  # shared-release opens the release PR with github.token.
+  pull-requests: write
   # For the OIDC path in the AWS workflows below; a caller's grant is the
   # ceiling for everything beneath it.
   id-token: write
