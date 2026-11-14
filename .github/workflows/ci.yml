@@ -520,6 +520,11 @@ jobs:
       - name: Run the EC2 deploy script against a fake host
         run: .github/selftest/ec2-deploy.test.sh
 
+      # The React deploys: Amplify polled a CLI command that does not exist and
+      # failed every run; S3 deleted the chunks open tabs load. Fake aws, real script.
+      - name: Run the React deploy scripts against a fake AWS CLI
+        run: .github/selftest/react-deploy.test.sh
+
       # The graph and scaffold scripts lean on layout conventions nothing else
       # enforces: jobs at two spaces, `uses:` at four, a `# Copy to:` header per
       # template. Breaking one gives wrong output, not an error.
