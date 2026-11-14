@@ -48,7 +48,8 @@ if command -v yq >/dev/null; then
     ( cd "$1" && env -i PATH="$PATH" GITHUB_OUTPUT="$tmp/out" SERVICE="$2" ENVIRONMENT="$3" \
         IMAGE_URI="$URI" IMAGE_DIGEST="$4" bash -e -c "$SET" >/dev/null 2>&1 ) && echo 0 || echo $?
   }
-  d="$tmp/set"; overlay "$d"; : > "$tmp/out"
+  # A git repository, as the checkout is: the step ends by showing `git diff`.
+  d="$tmp/set"; overlay "$d"; git init -q "$d"; : > "$tmp/out"
   rc=$(set_ "$d" orders dev "$DIGEST"); f="$d/apps/orders/overlays/dev/values.yaml"
   [ "$rc" = 0 ] \
     && [ "$(yq '.image.repository' "$f")" = '123.dkr.ecr.us-east-1.amazonaws.com/orders' ] \
