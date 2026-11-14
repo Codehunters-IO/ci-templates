@@ -459,6 +459,12 @@ jobs:
       - name: Run the image-ref rule against its cases
         run: .github/selftest/image-ref.test.sh
 
+      # deploy.sh decides whether a host keeps serving, and only ever ran on a
+      # real host. This runs both copies' script against a fake docker: health
+      # check, rollback to the previous compose, exit 42, image cleanup.
+      - name: Run the EC2 deploy script against a fake host
+        run: .github/selftest/ec2-deploy.test.sh
+
       # The graph and scaffold scripts lean on layout conventions nothing else
       # enforces: jobs at two spaces, `uses:` at four, a `# Copy to:` header per
       # template. Breaking one gives wrong output, not an error.
