@@ -581,7 +581,7 @@ template:
 | `java-artifact-docker-github`, `java-artifact-dependency-github` | `+ packages: write` | They publish to GitHub Packages |
 | `shared-release`, `shared-semver`, `shared-tag-release`, `*-delete-branch` | `contents: write` | They push a branch, a tag, or delete a ref |
 | `shared-release` | `+ pull-requests: write` | It opens the release PR |
-| `shared-create-issue-on-failure` | `+ issues: write` | It opens an issue |
+| `shared-notifications`, on its `create-issue` job only | `+ issues: write` | It opens an issue when a deploy run failed |
 | `*-main-pipeline` | union of the above | A caller's grant is the ceiling for everything beneath it |
 | `react-pr-pipeline`, `krakend-pr-pipeline`, `nginx-pr-pipeline` | `contents: read` | They call the leaves directly instead of wrapping their `*-main-pipeline` |
 | `contracts-pr-pipeline` | `contents: read`, `packages: read` | Same; its jobs pull their container from GHCR |
