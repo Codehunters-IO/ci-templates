@@ -740,6 +740,33 @@ this one.
 | `WG_PEER_ALLOWED_IPS` | Yes | Allowed IPs routed through the tunnel (e.g., `10.0.0.0/16`) |
 | `WG_PEER_ENDPOINT` | Yes | Server endpoint `host:port` (e.g., `44.209.64.95:51820`) |
 
+### GitOps (`deploy_target: gitops`)
+
+Java, NGINX and KrakenD pipelines can deploy without touching the cluster
+(argocd-devops ADR 0007). `shared-gitops-promote.yml` writes the image the
+artifact job published into
+`apps/<gitops_service>/overlays/<gitops_environment>/values.yaml` of
+`gitops_repository` (default `Codehunters-IO/argocd-devops`), setting
+`image.repository`, `image.tag` and `image.digest` and nothing else. ArgoCD
+syncs it.
+
+| Environment | What the job does | Who deploys |
+|---|---|---|
+| in `gitops_direct_environments` (default `dev`) | commits to the default branch | ArgoCD auto-sync |
+| any other (`stg`, `prod`) | pushes `promote/<service>-<env>-<digest>` and opens a PR | a person merging it; prod also syncs manually |
+
+A green job means **promoted**, not running: for stg and prod it means the PR
+is open, so `run_release` / `run_tag` treat that as the deploy. Watch ArgoCD
+for health. `gitops_environment` defaults to `environment`; set it when the
+names differ (`develop` here, `dev` there). The service must already be
+onboarded in the GitOps repository: a missing overlay or one without an
+`image:` block fails the job instead of being created.
+
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `GITOPS_APP_ID` | Yes | GitHub App installed on the GitOps repository only, with Contents and Pull requests write |
+| `GITOPS_APP_PRIVATE_KEY` | Yes | That App's private key. The job mints a token limited to those two permissions on that one repository |
+
 ### SonarQube (`code_analysis: 'sonar'`)
 
 | Secret | Description |
