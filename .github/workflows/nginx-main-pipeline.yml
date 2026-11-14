@@ -84,7 +84,7 @@ on:
         type: string
         default: 'bug,pipeline-failure'
       run_cleanup:
-        description: 'Delete merged branch after deploy'
+        description: 'Delete the merged PR branch on push (independent of build and deploy results)'
         required: false
         type: boolean
         default: false
@@ -448,12 +448,14 @@ jobs:
   # ============================================
   cleanup:
     name: Delete Branch
-    if: |
-      inputs.run_cleanup &&
-      always() &&
-      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success') &&
-      (needs.release.result == 'success' || needs.release.result == 'skipped')
-    needs: [deploy-ec2, deploy-ec2-vpn, deploy-eks, release]
+    # Not tied to build, deploy or release (fbb2671): a branch that merged is
+    # merged whatever the deploy did. Unlike java and krakend, where it always
+    # runs, run_cleanup still opts in here: this stack shipped it off by
+    # default, and turning branch deletion on in a patch release is not ours to
+    # decide for every consumer.
+    # (Non-fatal handling lives inside shared-delete-branch — continue-on-error is not allowed on a
+    # reusable-workflow `uses:` job.)
+    if: inputs.run_cleanup && github.event_name == 'push'
     uses: ./.github/workflows/shared-delete-branch.yml
     secrets: inherit
 

@@ -152,6 +152,16 @@ on:
         required: false
         type: string
         default: '256m'
+      internal_port:
+        description: 'Container internal port exposed by KrakenD'
+        required: false
+        type: string
+        default: '8080'
+      container_env_vars:
+        description: 'Additional environment variables block for docker-compose (one per line: KEY=VALUE)'
+        required: false
+        type: string
+        default: ''
       extra_volumes:
         description: 'Additional docker-compose volume mounts (one per line, including the leading "- ")'
         required: false
@@ -361,6 +371,8 @@ jobs:
       environment: ${{ inputs.environment }}
       memory_limit: ${{ inputs.memory_limit }}
       memory_reservation: ${{ inputs.memory_reservation }}
+      internal_port: ${{ inputs.internal_port }}
+      container_env_vars: ${{ inputs.container_env_vars }}
       extra_volumes: ${{ inputs.extra_volumes }}
       health_check_path: '/__health'
     secrets: inherit
@@ -385,6 +397,8 @@ jobs:
       environment: ${{ inputs.environment }}
       memory_limit: ${{ inputs.memory_limit }}
       memory_reservation: ${{ inputs.memory_reservation }}
+      internal_port: ${{ inputs.internal_port }}
+      container_env_vars: ${{ inputs.container_env_vars }}
       extra_volumes: ${{ inputs.extra_volumes }}
       health_check_path: '/__health'
     secrets: inherit

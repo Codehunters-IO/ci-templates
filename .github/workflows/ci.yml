@@ -482,6 +482,102 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
+  copies-in-sync:
+    name: Copies stay in sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # This repository duplicates on purpose. A reusable workflow cannot use a
+      # composite action or script from here by path (the checkout is the
+      # caller's), and by remote ref the action's version drifts from the
+      # workflow's. Wrapping one pipeline in another adds a nesting level and a
+      # second copy of every input. So the copies stay, and this holds them
+      # together: PR pipelines against their main pipeline, NGINX against
+      # KrakenD, branch cleanup in every stack, and the scripts repeated across
+      # the Java leaves. KrakenD had drifted without internal_port and
+      # container_env_vars, so its EC2 deploys could not set either.
+      - name: Check
+        run: |
+          python3 - <<'PY'
+          import glob, re, sys, yaml
+
+          WF = '.github/workflows'
+          load = lambda f: yaml.safe_load(open(f'{WF}/{f}.yml'))
+          bad = []
+
+          # 1. A PR pipeline repeats its main pipeline's gates with the same ids, so a
+          #    caller switches by file name. Only notify (it sees fewer jobs) and the PR
+          #    build (it always builds) may differ.
+          PR = {'contracts': 'contracts-pr-pipeline', 'react': 'react-pr-pipeline', 'nginx': 'nginx-pr-pipeline',
+                'krakend': 'krakend-pr-pipeline', 'java': 'java-pr-gates'}
+          MAY_DIFFER = {'notify': {'needs', 'with'}, 'build': {'if', 'with.upload_artifact'}}
+          for stack, pr in PR.items():
+              main, gates = load(f'{stack}-main-pipeline')['jobs'], load(pr)['jobs']
+              for job in set(main) & set(gates):
+                  a, b = main[job], gates[job]
+                  for key in sorted(set(a) | set(b)):
+                      if key == 'with':
+                          for k in sorted(set(a.get('with') or {}) | set(b.get('with') or {})):
+                              if (a.get('with') or {}).get(k) != (b.get('with') or {}).get(k) \
+                                      and not {'with', f'with.{k}'} & MAY_DIFFER.get(job, set()):
+                                  bad.append(f"::error file={WF}/{pr}.yml::{job}.with.{k} differs from {stack}-main-pipeline")
+                      elif a.get(key) != b.get(key) and key not in MAY_DIFFER.get(job, set()):
+                          bad.append(f"::error file={WF}/{pr}.yml::{job}.{key} differs from {stack}-main-pipeline")
+
+          # 2. NGINX and KrakenD ship the same image pipeline around different build and
+          #    test leaves. Everything else must match: inputs by name, jobs by content.
+          STACK_ONLY = {'nginx': {'health_path'}, 'krakend': {'audit_threshold'}}
+          OWN_JOBS = {'build', 'test', 'cleanup'}
+          def image(stack):
+              wf = load(f'{stack}-main-pipeline')
+              call = wf[True]['workflow_call']
+              jobs = {}
+              for name, job in wf['jobs'].items():
+                  if name in OWN_JOBS:
+                      continue
+                  job = dict(job)
+                  if 'with' in job:
+                      job['with'] = {k: v for k, v in job['with'].items() if k != 'health_check_path'}
+                  jobs[name] = job
+              return set(call['inputs']) - STACK_ONLY[stack], jobs
+          (ni, nj), (ki, kj) = image('nginx'), image('krakend')
+          for missing, where in ((ni - ki, 'krakend'), (ki - ni, 'nginx')):
+              for i in sorted(missing):
+                  bad.append(f"::error file={WF}/{where}-main-pipeline.yml::input {i} is missing (the other image pipeline declares it)")
+          for job in sorted(set(nj) | set(kj)):
+              if nj.get(job) != kj.get(job):
+                  bad.append(f"::error file={WF}/krakend-main-pipeline.yml::job {job} differs from nginx-main-pipeline")
+
+          # 3. Branch cleanup never waits on build or deploy (fbb2671).
+          for f in sorted(glob.glob(f'{WF}/*-main-pipeline.yml')):
+              job = yaml.safe_load(open(f))['jobs'].get('cleanup')
+              if job and (job.get('needs') or "github.event_name == 'push'" not in str(job.get('if'))):
+                  bad.append(f"::error file={f}::cleanup must run on push with no needs")
+
+          # 4. Steps copied across the Java leaves, because a reusable workflow cannot
+          #    source a script from this repository: the run bodies must stay identical.
+          COPIED = ['Pull the integration-test images', 'Report toolchain (container)']
+          for name in COPIED:
+              bodies = {}
+              for f in sorted(glob.glob(f'{WF}/java-*.yml')):
+                  for job in (yaml.safe_load(open(f))['jobs'] or {}).values():
+                      for step in job.get('steps') or []:
+                          if step.get('name') == name:
+                              bodies.setdefault(step['run'], []).append(f)
+              if len(bodies) > 1:
+                  bad.append(f"::error::step '{name}' has {len(bodies)} variants: "
+                             + ' | '.join(', '.join(fs) for fs in bodies.values()))
+
+          for line in bad:
+              print(line)
+          print(f"{len(bad)} copies out of sync")
+          sys.exit(1 if bad else 0)
+          PY
+
   selftest-scripts:
     name: Script self-tests
     runs-on: ubuntu-latest

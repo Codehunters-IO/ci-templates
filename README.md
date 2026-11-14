@@ -453,7 +453,7 @@ keeps working but gets no further fixes.
 | Workflow or input | Replacement |
 |---|---|
 | `java-library-build.yml` | `java-pr-pipeline.yml` with `test_tasks`, `extra_gradle_commands` and `docker_images` |
-| `run_cleanup` input of `java-main-pipeline.yml` and `krakend-main-pipeline.yml` | Nothing: it never had an effect there. Their cleanup job runs on every push and deletes only a verified-merged PR head. The NGINX, React and Contracts pipelines do honour it. |
+| `run_cleanup` input of `java-main-pipeline.yml` and `krakend-main-pipeline.yml` | Nothing: it never had an effect there. Their cleanup job runs on every push and deletes only a verified-merged PR head. The NGINX, React and Contracts pipelines do honour it, as an opt-in that runs on push whatever build and deploy did. |
 
 `java-library-build.yml` still runs, with a warning in every run, until v3.
 
