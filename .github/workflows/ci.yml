@@ -454,6 +454,11 @@ jobs:
       - name: Run the react test verdict against its cases
         run: .github/selftest/react-test-verdict.test.sh
 
+      # Same defect, contracts-test: the runner's exit code dropped with `|| true` and
+      # the verdict read from Mocha's wording, so a crash or a non-Mocha runner passed.
+      - name: Run the contracts test verdict against its cases
+        run: .github/selftest/contracts-test-verdict.test.sh
+
       # The digest-or-tag rule is copied into three deploy workflows. This keeps
       # the copies identical and pins what the rule does with and without a digest.
       - name: Run the image-ref rule against its cases
