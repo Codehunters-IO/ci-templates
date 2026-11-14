@@ -240,6 +240,14 @@ on:
         required: false
         type: string
         default: ''
+      health_check_path:
+        description: >-
+          Path the EC2 deploys curl after start (e.g. /actuator/health, prefixed
+          with the context path when the app sets one). Empty uses the image
+          HEALTHCHECK, else the container staying up. Unhealthy rolls back.
+        required: false
+        type: string
+        default: ''
 
       # EKS-specific options
       eks_cluster_name:
@@ -621,6 +629,7 @@ jobs:
         SPRING_PROFILES_ACTIVE=${{ inputs.spring_profiles != '' && format('{0},{1}', inputs.spring_profiles, inputs.environment) || inputs.environment }}
         SERVER_CONTEXT_PATH=/${{ github.event.repository.name }}
       extra_volumes: ${{ inputs.extra_volumes }}
+      health_check_path: ${{ inputs.health_check_path }}
     secrets: inherit
 
   # ============================================
@@ -649,6 +658,7 @@ jobs:
         SPRING_PROFILES_ACTIVE=${{ inputs.spring_profiles != '' && format('{0},{1}', inputs.spring_profiles, inputs.environment) || inputs.environment }}
         SERVER_CONTEXT_PATH=/${{ github.event.repository.name }}
       extra_volumes: ${{ inputs.extra_volumes }}
+      health_check_path: ${{ inputs.health_check_path }}
     secrets: inherit
 
   # ============================================

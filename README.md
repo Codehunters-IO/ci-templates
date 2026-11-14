@@ -662,7 +662,7 @@ Configure in **Settings → Secrets and variables → Actions**.
 
 | Secret | Description |
 |--------|-------------|
-| `AWS_ACCESS_KEY_ID` | AWS access key for ECR push and runtime (injected into the container) |
+| `AWS_ACCESS_KEY_ID` | AWS access key for ECR push. EC2 deploys send it to the host only when the host's instance profile cannot log in to ECR; it never reaches the container |
 | `AWS_SECRET_ACCESS_KEY` | AWS secret key |
 | `AWS_REGION` | AWS region (e.g. `us-east-1`) |
 | `AWS_ECR_URL` | ECR registry URL (e.g. `123456789.dkr.ecr.us-east-1.amazonaws.com`). **Must be the SAME AWS account as the access key** — the artifact job pushes to the creds' account registry and deploy pulls from this URL; a mismatch causes a cross-account `pull access denied`. |
@@ -674,7 +674,25 @@ Configure in **Settings → Secrets and variables → Actions**.
 | `AWS_EC2_HOST` | EC2 IP or hostname (private IP when using `ec2-vpn`) |
 | `AWS_EC2_USER` | SSH username (`ubuntu`, `ec2-user`, …) |
 | `AWS_EC2_SSH_KEY` | SSH private key (PEM) |
+| `AWS_EC2_HOST_KEY` | *Optional, recommended.* The host's public key, as `ssh-keyscan -t ed25519 <host>` prints it from a trusted network. Set, the deploy refuses any other key; unset, it trusts whatever answers and warns |
 | `AWS_APP_PORT` | External port exposed by the container |
+
+### How EC2 deploys protect the running service
+
+Pull first, then stop the old container, start the new one and hold it to a
+health check: `health_check_path` answering 2xx/3xx on the host, else the
+image's `HEALTHCHECK`, else the container still up and unrestarted after 20
+seconds. Within `health_check_timeout` (120 s) or the previous
+`docker-compose.yml` comes back, the old container with it, and the job fails
+as `rolled_back`. Old images are removed only after a healthy start, and the
+previous one is always kept. The KrakenD and NGINX pipelines check
+`/__health`; Java takes `health_check_path` (empty by default).
+
+There is still a gap of seconds between stop and start: one host, one port.
+
+The host logs in to ECR with its instance profile when that works, and the
+pipeline's AWS keys, which can push, then never leave the runner. Only a host
+without a usable profile still receives them, with a warning in the run.
 
 ### How EC2 deploys handle secrets
 
@@ -691,8 +709,8 @@ with default permissions long after the deploy finishes. Late 1.x moved them to
 a mode-600 `.aws.env` behind an opt-in input; v2 stops sending them at all.
 
 v2 never puts the pipeline credentials in the container. They are build-plane
-keys that can push to ECR, so they stay on the host side for the ECR login and
-are unset before `docker compose` runs: not even a `container_env_vars` line
+keys that can push to ECR; when the host's own profile cannot log in they go
+to the host for the ECR login only, and are unset before `docker compose` runs: not even a `container_env_vars` line
 that names them can pass them on. The application gets its
 own credentials one of two ways:
 
