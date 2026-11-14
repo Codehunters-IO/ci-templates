@@ -137,6 +137,26 @@ on:
         required: false
         type: string
         default: 'build'
+      s3_immutable_paths:
+        description: 'S3 deploy: prefixes of content-hashed files, cached for a year (see react-deploy-s3)'
+        required: false
+        type: string
+        default: 'static/,assets/'
+      s3_asset_retention_days:
+        description: 'S3 deploy: days an old hashed asset is kept for tabs still open on the previous build'
+        required: false
+        type: number
+        default: 7
+      wait_for_invalidation:
+        description: 'S3 deploy: wait for the CloudFront invalidation to complete'
+        required: false
+        type: boolean
+        default: true
+      amplify_deploy_timeout:
+        description: 'Amplify deploy: seconds to wait for the job to finish'
+        required: false
+        type: number
+        default: 600
       run_lint:
         description: 'Run the lint script during build'
         required: false
@@ -352,6 +372,9 @@ jobs:
       runner: ${{ inputs.runner }}
       environment: ${{ inputs.environment }}
       build_output_dir: ${{ inputs.build_output_dir }}
+      immutable_paths: ${{ inputs.s3_immutable_paths }}
+      asset_retention_days: ${{ inputs.s3_asset_retention_days }}
+      wait_for_invalidation: ${{ inputs.wait_for_invalidation }}
     secrets: inherit
 
   deploy-amplify:
@@ -370,6 +393,7 @@ jobs:
       runner: ${{ inputs.runner }}
       environment: ${{ inputs.environment }}
       build_output_dir: ${{ inputs.build_output_dir }}
+      deploy_timeout: ${{ inputs.amplify_deploy_timeout }}
     secrets: inherit
 
   # ============================================
