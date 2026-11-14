@@ -368,6 +368,7 @@ jobs:
       internal_port: ${{ inputs.internal_port }}
       container_env_vars: ${{ inputs.container_env_vars }}
       extra_volumes: ${{ inputs.extra_volumes }}
+      health_check_path: ${{ inputs.health_path }}
     secrets: inherit
 
   # ============================================
@@ -393,6 +394,7 @@ jobs:
       internal_port: ${{ inputs.internal_port }}
       container_env_vars: ${{ inputs.container_env_vars }}
       extra_volumes: ${{ inputs.extra_volumes }}
+      health_check_path: ${{ inputs.health_path }}
     secrets: inherit
 
   # ============================================

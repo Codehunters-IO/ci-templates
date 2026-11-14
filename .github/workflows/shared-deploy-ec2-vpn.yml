@@ -60,14 +60,31 @@ on:
         required: false
         type: string
         default: ''
+      health_check_path:
+        description: >-
+          HTTP path the host curls on 127.0.0.1:AWS_APP_PORT after the container
+          starts (e.g. /__health, /actuator/health); any 2xx/3xx is healthy. Empty
+          falls back to the image HEALTHCHECK, else to the container staying up,
+          unrestarted, for 20 seconds. A failed check rolls the host back to what
+          was running before and fails the job.
+        required: false
+        type: string
+        default: ''
+      health_check_timeout:
+        description: 'Seconds the new container has to become healthy before the rollback'
+        required: false
+        type: number
+        default: 120
 
     secrets:
       AWS_ECR_URL:
         required: true
+      # Sent to the host only when its instance profile cannot log in to ECR on
+      # its own. Not needed at all on a host whose profile can.
       AWS_ACCESS_KEY_ID:
-        required: true
+        required: false
       AWS_SECRET_ACCESS_KEY:
-        required: true
+        required: false
       AWS_REGION:
         required: true
       AWS_EC2_HOST:
@@ -76,6 +93,12 @@ on:
         required: true
       AWS_EC2_SSH_KEY:
         required: true
+      # The host's public key(s), as `ssh-keyscan -t ed25519 <host>` prints them
+      # from a network you trust, or bare `ssh-ed25519 AAAA...` lines. Set, the
+      # connection refuses any other key. Unset, the run trusts whatever key the
+      # host presents and warns.
+      AWS_EC2_HOST_KEY:
+        required: false
       AWS_APP_PORT:
         required: true
       WG_PRIVATE_KEY:
@@ -193,6 +216,7 @@ jobs:
           AWS_EC2_HOST: ${{ secrets.AWS_EC2_HOST }}
           AWS_EC2_USER: ${{ secrets.AWS_EC2_USER }}
           AWS_EC2_SSH_KEY: ${{ secrets.AWS_EC2_SSH_KEY }}
+          AWS_EC2_HOST_KEY: ${{ secrets.AWS_EC2_HOST_KEY }}
           AWS_ECR_URL: ${{ secrets.AWS_ECR_URL }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -208,6 +232,8 @@ jobs:
           INTERNAL_PORT: ${{ inputs.internal_port }}
           CONTAINER_ENV_VARS: ${{ inputs.container_env_vars }}
           EXTRA_VOLUMES: ${{ inputs.extra_volumes }}
+          HEALTH_CHECK_PATH: ${{ inputs.health_check_path }}
+          HEALTH_CHECK_TIMEOUT: ${{ inputs.health_check_timeout }}
         run: |
           # Computed on the runner and shipped in deploy.env: the compose file and
           # the pull live in deploy.sh, which runs on the host and sees only that file.
@@ -221,13 +247,27 @@ jobs:
           # tr strips \r to guard against Windows-style line endings.
           printf '%s\n' "$AWS_EC2_SSH_KEY" | sed 's/\\n/\n/g' | tr -d '\r' > ~/.ssh/deploy_key
           chmod 400 ~/.ssh/deploy_key
-          # '|| true': ssh-keyscan returns nonzero when the host is unreachable; under `bash -e`
-          # that would abort the step silently (stderr hidden) before the scp retry/skip logic runs.
-          # known_hosts is seeded here and then enforced: the connection below uses
-          # StrictHostKeyChecking=accept-new, which accepts a host seen for the first
-          # time but refuses a key that CHANGED. Under the old `no` a contradicting
-          # key was accepted too, which made this keyscan decorative.
-          ssh-keyscan -H $AWS_EC2_HOST >> ~/.ssh/known_hosts 2>/dev/null || true
+          # A runner starts with an empty known_hosts, so keyscan + accept-new trusts
+          # whichever key answers on every run: anyone in the path can stand in for
+          # the host and receive deploy.env. A pinned key closes that. Lines without
+          # a host in front get the host prepended; \n literals are expanded as for
+          # the SSH key above.
+          if [ -n "${AWS_EC2_HOST_KEY}" ]; then
+            printf '%s\n' "$AWS_EC2_HOST_KEY" | sed 's/\\n/\n/g' | tr -d '\r' | while IFS= read -r key; do
+              case "$key" in
+                '') ;;
+                ssh-*|ecdsa-*|sk-*) printf '%s %s\n' "$AWS_EC2_HOST" "$key" ;;
+                *) printf '%s\n' "$key" ;;
+              esac
+            done >> ~/.ssh/known_hosts
+            HOST_KEY_CHECKING=yes
+          else
+            echo "::warning::AWS_EC2_HOST_KEY is not set, so this run trusts whatever key ${AWS_EC2_HOST} presents. Pin it: run 'ssh-keyscan -t ed25519 <host>' from a trusted network and store the output as that secret."
+            # '|| true': keyscan exits nonzero on an unreachable host, and under bash -e
+            # that would end the step before the scp retry reports it.
+            ssh-keyscan -H $AWS_EC2_HOST >> ~/.ssh/known_hosts 2>/dev/null || true
+            HOST_KEY_CHECKING=accept-new
+          fi
 
           # Encode multiline env vars to preserve newlines over SSH
           CONTAINER_ENV_VARS_B64=$(echo "$CONTAINER_ENV_VARS" | base64 | tr -d '\n')
@@ -239,7 +279,7 @@ jobs:
           set -Eeo pipefail
           trap 'echo "::error::deploy.sh failed at line ${LINENO}: ${BASH_COMMAND} (exit ${?})"' ERR
 
-          DEPLOY_DIR="/opt/docker/${REPO_NAME}"
+          DEPLOY_DIR="${DEPLOY_DIR:-/opt/docker/${REPO_NAME}}"
 
           echo "=========================================="
           echo "Deploying ${REPO_NAME}"
@@ -259,7 +299,8 @@ jobs:
           # Create shared_logs volume if not exists
           docker volume inspect shared_logs >/dev/null 2>&1 || docker volume create shared_logs
 
-          # Login to ECR
+          # Login to ECR, with the keys in deploy.env when the runner sent them and
+          # the instance profile when it did not.
           echo "Logging in to ECR..."
           aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ECR_URL}
           # The keys did their job: docker pull uses the login above, not these. Unset them so
@@ -277,8 +318,12 @@ jobs:
           # those keys, so it is removed here rather than left on disk.
           rm -f .aws.env
 
-          # Create docker-compose.yml (standard name)
+          # Create docker-compose.yml (standard name). The one it replaces is what
+          # started the running container, and is the rollback target below: it
+          # restores the previous env, volumes and limits, not only the image.
           COMPOSE_FILE_NAME="docker-compose.yml"
+          rm -f docker-compose.prev.yml
+          if [ -f "${COMPOSE_FILE_NAME}" ]; then cp "${COMPOSE_FILE_NAME}" docker-compose.prev.yml; fi
           echo "Creating ${COMPOSE_FILE_NAME}..."
           {
             echo "services:"
@@ -342,9 +387,39 @@ jobs:
           printf "#!/usr/bin/env bash\nset -uo pipefail\nCOMPOSE_FILE=\"\${COMPOSE_FILE:-%s}\"\nPROJECT_NAME=\"\${PROJECT_NAME:-%s}\"\necho \"==> Stopping stack (project: \${PROJECT_NAME})\"\ndocker compose -p \"\${PROJECT_NAME}\" -f \"\${COMPOSE_FILE}\" down --timeout 30 || true\necho \"==> Done.\"\n" "${COMPOSE_FILE_NAME}" "${REPO_NAME}" > stop.sh
           chmod +x stop.sh
 
-          # Pull latest image from ECR
-          echo "Pulling latest image..."
+          # Healthy, in order of what the service offers: its HTTP health path answers
+          # 2xx/3xx; else its image HEALTHCHECK says healthy; else it is still running
+          # with no restart after a settle period. `restart: unless-stopped` would
+          # otherwise report a crash loop as running.
+          wait_healthy() {
+            local deadline=$((SECONDS + ${HEALTH_CHECK_TIMEOUT:-120})) settle=$((SECONDS + 20))
+            local state health
+            while [ "$SECONDS" -lt "$deadline" ]; do
+              state=$(docker inspect --format '{{.State.Status}}|{{.RestartCount}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}' "${REPO_NAME}" 2>/dev/null || echo 'missing|0|')
+              health=${state##*|}
+              case "${state%%|*}" in exited|dead|missing) echo "Container is ${state%%|*}"; return 1 ;; esac
+              if [ -n "${HEALTH_CHECK_PATH}" ]; then
+                curl -fsS -o /dev/null --max-time 5 "http://127.0.0.1:${APP_PORT}${HEALTH_CHECK_PATH}" && return 0
+              elif [ "$health" = healthy ]; then
+                return 0
+              elif [ "$health" = unhealthy ]; then
+                echo "Image HEALTHCHECK reports unhealthy"; return 1
+              elif [ -z "$health" ] && [ "$SECONDS" -ge "$settle" ]; then
+                [ "$state" = 'running|0|' ] && return 0
+                echo "Container did not stay up: ${state}"; return 1
+              fi
+              sleep 5
+            done
+            echo "No healthy answer within ${HEALTH_CHECK_TIMEOUT:-120}s"
+            return 1
+          }
+
+          # Pull before touching the running container: a pull that fails leaves it serving.
+          echo "Pulling ${IMAGE_REF}..."
           docker pull "${IMAGE_REF}"
+
+          # What runs now is what a failed health check goes back to.
+          PREV_IMAGE=$(docker inspect --format '{{.Config.Image}}' "${REPO_NAME}" 2>/dev/null || true)
 
           # Stop existing container if running (force-kill fallback if hung)
           if docker ps -aq -f name=${REPO_NAME} 2>/dev/null | grep -q .; then
@@ -357,37 +432,62 @@ jobs:
             fi
           fi
 
-          # Remove every image of this repo except the one about to start. By image
-          # ID, not by tag: an image pulled by digest has no tag, lists as
-          # repo:<none>, and `docker rmi repo:<none>` fails, so a tag filter would
-          # never remove anything once digest deploys start. -f because one ID can
+          # Start the new container and hold it to the health check. On failure the
+          # previous compose file comes back and the old container with it. Exit 42
+          # tells the runner this was a verdict, not a dropped connection, so it
+          # does not retry a deploy that would only roll back again.
+          echo "Starting new container..."
+          if ! ./start.sh || ! wait_healthy; then
+            echo "::error::${REPO_NAME} did not become healthy on ${IMAGE_REF}"
+            docker logs --tail=100 "${REPO_NAME}" 2>&1 || true
+            if [ -n "${PREV_IMAGE}" ] && [ -f docker-compose.prev.yml ]; then
+              echo "::warning::Rolling back to ${PREV_IMAGE}"
+              mv -f docker-compose.prev.yml "${COMPOSE_FILE_NAME}"
+              if docker compose -p "${REPO_NAME}" -f "${COMPOSE_FILE_NAME}" up -d --force-recreate && wait_healthy; then
+                echo "::warning::Rolled back: ${PREV_IMAGE} is serving again"
+              else
+                echo "::error::The rollback to ${PREV_IMAGE} is not healthy either; the host needs a person"
+              fi
+            else
+              echo "::error::Nothing ran here before this deploy, so there is nothing to roll back to"
+            fi
+            exit 42
+          fi
+
+          # Only now, with the new container healthy, remove this repo's other
+          # images. The previous one stays, so a manual rollback needs no pull. By
+          # image ID, not by tag: an image pulled by digest has no tag, lists as
+          # repo:<none>, and `docker rmi repo:<none>` fails. -f because one ID can
           # carry several refs (a tag and a digest), and rmi without it refuses.
           echo "Removing old images for ${REPO_NAME}..."
           KEEP=$(docker image inspect --format '{{.Id}}' "${IMAGE_REF}")
+          PREV_ID=$(docker image inspect --format '{{.Id}}' "${PREV_IMAGE:-none}" 2>/dev/null || echo "$KEEP")
           docker images "${AWS_ECR_URL}/${REPO_NAME}" --no-trunc --format '{{.ID}}' \
-            | sort -u | grep -vxF "$KEEP" | xargs -r docker rmi -f 2>/dev/null || true
-
-          # Start new container
-          echo "Starting new container..."
-          ./start.sh
+            | sort -u | grep -vxF -e "$KEEP" -e "$PREV_ID" | xargs -r docker rmi -f 2>/dev/null || true
 
           echo "Deployment completed successfully!"
           DEPLOY_SCRIPT
 
-          SSH_COMMON_OPTS="-i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new -o ConnectTimeout=60 -o ServerAliveInterval=15 -o ServerAliveCountMax=20"
+          SSH_COMMON_OPTS="-i ~/.ssh/deploy_key -o StrictHostKeyChecking=${HOST_KEY_CHECKING} -o ConnectTimeout=60 -o ServerAliveInterval=15 -o ServerAliveCountMax=20"
 
           # Retry helper: SSH transport can drop transiently. Retry up to 3 times.
+          # rc is taken outside an `if`: after `if cmd; then …; fi` with no branch
+          # taken, $? is 0, which is what the old helper reported for every failure.
           run_with_retry() {
             local attempt=1
             local max_attempts=3
             local delay=15
+            local rc=0
             while [ "$attempt" -le "$max_attempts" ]; do
               echo "Attempt $attempt/$max_attempts: $*"
-              if "$@"; then
-                return 0
-              fi
-              local rc=$?
+              "$@" && return 0
+              rc=$?
               echo "Attempt $attempt failed (exit $rc)"
+              # 42: deploy.sh failed the health check and rolled back. Repeating it
+              # would roll forward and back again.
+              if [ "$rc" -eq 42 ]; then
+                return 42
+              fi
               if [ "$attempt" -lt "$max_attempts" ]; then
                 echo "Retrying in ${delay}s..."
                 sleep "$delay"
@@ -395,7 +495,7 @@ jobs:
               fi
               attempt=$((attempt + 1))
             done
-            return 1
+            return "$rc"
           }
 
           # Copy script to EC2 (with retry). Unreachable host = HARD FAILURE (no silent skip):
@@ -416,16 +516,34 @@ jobs:
           # account on the box. The WireGuard tunnel authenticates the path but does
           # nothing about who can read a process list on the far end. printf %q quotes
           # each value so the file is safe to source whatever the secret contains.
+          # The pipeline's keys can push to ECR. A host whose instance profile can log
+          # in on its own never receives them; only a host without one does, with a
+          # warning, as every host did before.
+          SEND_AWS_KEYS=true
+          if ssh $SSH_COMMON_OPTS "${AWS_EC2_USER}@${AWS_EC2_HOST}" \
+              "env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN aws ecr get-login-password --region $(printf %q "$AWS_REGION") >/dev/null 2>&1"; then
+            echo "The host logs in to ECR with its instance profile; the pipeline's AWS keys stay on the runner."
+            SEND_AWS_KEYS=false
+          elif [ -n "${AWS_ACCESS_KEY_ID}" ]; then
+            echo "::warning::${AWS_EC2_HOST} cannot log in to ECR with its own instance profile, so the pipeline's AWS keys, which can push, are sent for this deploy. Attach a profile with ECR pull to stop that."
+          else
+            echo "::error::${AWS_EC2_HOST} cannot log in to ECR with its instance profile and no AWS keys were passed."
+            echo "status=failure" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
           write_remote_env() {
             {
               printf 'REPO_NAME=%q\n'               "$REPO_NAME"
               printf 'IMAGE_TAG=%q\n'               "$IMAGE_TAG"
               printf 'IMAGE_REF=%q\n'               "$IMAGE_REF"
               printf 'AWS_ECR_URL=%q\n'             "$AWS_ECR_URL"
-              # The keys stay on the host side: deploy.sh needs them for the ECR login,
-              # then unsets them before compose runs, so nothing can pass them on.
-              printf 'AWS_ACCESS_KEY_ID=%q\n'       "$AWS_ACCESS_KEY_ID"
-              printf 'AWS_SECRET_ACCESS_KEY=%q\n'   "$AWS_SECRET_ACCESS_KEY"
+              # Only for a host without a usable profile. deploy.sh needs them for the
+              # ECR login, then unsets them before compose runs.
+              if [ "$SEND_AWS_KEYS" = true ]; then
+                printf 'AWS_ACCESS_KEY_ID=%q\n'       "$AWS_ACCESS_KEY_ID"
+                printf 'AWS_SECRET_ACCESS_KEY=%q\n'   "$AWS_SECRET_ACCESS_KEY"
+              fi
               printf 'AWS_REGION=%q\n'              "$AWS_REGION"
               printf 'APP_PORT=%q\n'                "$APP_PORT"
               printf 'ENVIRONMENT=%q\n'             "$ENVIRONMENT"
@@ -435,6 +553,8 @@ jobs:
               printf 'INTERNAL_PORT=%q\n'           "$INTERNAL_PORT"
               printf 'CONTAINER_ENV_VARS_B64=%q\n'  "$CONTAINER_ENV_VARS_B64"
               printf 'EXTRA_VOLUMES_B64=%q\n'       "$EXTRA_VOLUMES_B64"
+              printf 'HEALTH_CHECK_PATH=%q\n'       "$HEALTH_CHECK_PATH"
+              printf 'HEALTH_CHECK_TIMEOUT=%q\n'    "$HEALTH_CHECK_TIMEOUT"
             } | ssh $SSH_COMMON_OPTS "${AWS_EC2_USER}@${AWS_EC2_HOST}" 'umask 077 && cat > ~/deploy.env'
           }
 
@@ -470,12 +590,21 @@ jobs:
           # Exact equality, not a pattern: a tag 1.2.3 must not match 1.2.30, and
           # '@sha256:' needs no escaping. The status check keeps what `docker ps`
           # used to imply, since inspect also answers for a stopped container.
-          if [ "$RUNNING_IMAGE" = "$IMAGE_REF" ] && [ "$RUNNING_STATUS" = "running" ]; then
-            echo "Container is running with target image."
-            echo "status=success" >> $GITHUB_OUTPUT
+          #
+          # Success needs deploy.sh to have finished, because its health check is the
+          # verdict. A container on the target image after a dropped connection proves
+          # it started, not that it passed, so that case fails as unverified.
+          if [ "$DEPLOY_RC" -eq 42 ]; then
+            echo "::error::Health check failed on ${IMAGE_REF}; the host was rolled back (see the log above)."
+            echo "status=rolled_back" >> $GITHUB_OUTPUT
+            exit 1
           elif [ "$DEPLOY_RC" -eq 0 ]; then
-            echo "Deploy script completed but verification could not confirm running container."
+            echo "Deploy script completed and the health check passed."
             echo "status=success" >> $GITHUB_OUTPUT
+          elif [ "$RUNNING_IMAGE" = "$IMAGE_REF" ] && [ "$RUNNING_STATUS" = "running" ]; then
+            echo "::error::The connection dropped before deploy.sh finished: ${IMAGE_REF} is running but its health check never reported. Check the host."
+            echo "status=unverified" >> $GITHUB_OUTPUT
+            exit 1
           else
             echo "::error::Deploy failed (rc=$DEPLOY_RC) and container is not running with target image."
             echo "status=failure" >> $GITHUB_OUTPUT
