@@ -48,6 +48,7 @@ on:
 # which on older repositories is write-all.
 permissions:
   contents: write
+  pull-requests: write
 
 concurrency:
   group: shared-release-${{ github.repository }}-${{ inputs.base_branch }}

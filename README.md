@@ -212,11 +212,12 @@ on:
   push:
     branches: [develop]
 
-permissions:
-  contents: write        # the release job creates release/vX.Y.Z and opens its PR
-  id-token: write        # OIDC; drop only if you are on static AWS keys
-  checks: write
-  pull-requests: write
+permissions:              # java-main-pipeline's union; any scope short fails the run with zero jobs
+  contents: write        # the release job creates release/vX.Y.Z
+  packages: write        # GHCR / GitHub Packages publishing
+  issues: write          # an issue on a failed run
+  pull-requests: write   # the release job opens its PR
+  id-token: write        # OIDC to AWS
 
 jobs:
   pipeline:
@@ -576,6 +577,7 @@ template:
 | `*-build`, `*-test`, `*-owasp`, `java-architecture`, `contracts-*` | `+ packages: read` | They run inside a container pulled from GHCR |
 | `java-artifact-docker-github`, `java-artifact-dependency-github` | `+ packages: write` | They publish to GitHub Packages |
 | `shared-release`, `shared-semver`, `shared-tag-release`, `*-delete-branch` | `contents: write` | They push a branch, a tag, or delete a ref |
+| `shared-release` | `+ pull-requests: write` | It opens the release PR |
 | `shared-create-issue-on-failure` | `+ issues: write` | It opens an issue |
 | `*-main-pipeline` | union of the above | A caller's grant is the ceiling for everything beneath it |
 | `react-pr-pipeline`, `krakend-pr-pipeline`, `nginx-pr-pipeline` | `contents: read` | They call the leaves directly instead of wrapping their `*-main-pipeline` |
@@ -587,6 +589,13 @@ what its caller granted, never widen it. An orchestrator that calls
 `shared-tag-release` therefore has to hold `contents: write` itself, even
 though it pushes nothing directly — and the narrow declarations on the leaves
 are what keep that grant from reaching the jobs that have no business with it.
+
+The deploy templates therefore declare exactly their pipeline's union, and CI
+(`Templates grant what their pipeline needs`) walks every template's call chain
+and fails when a scope falls short. Opening the release PR with `github.token`
+also needs the repository setting *Allow GitHub Actions to create and approve
+pull requests* (Settings → Actions → General); without it the release job gets
+a 403 whatever the workflow grants.
 
 The check is static: GitHub compares grants when the run starts, before any
 `if:` is evaluated, and a shortfall fails the run with zero jobs and no
