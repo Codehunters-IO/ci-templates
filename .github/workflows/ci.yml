@@ -362,6 +362,76 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
+  template-permissions:
+    name: Templates grant what their pipeline needs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The other direction of the check above. A caller's grant is the ceiling
+      # for everything it reaches, so a template that grants less than the
+      # pipeline it calls fails the run before any job starts. The deploy
+      # templates sat that way for every stack: main-deploy granted read to a
+      # pipeline declaring write, and none granted the issues: write every
+      # *-main-pipeline holds. Nothing here runs them, so this walks each
+      # template's call chain and compares job by job.
+      - name: Check
+        run: |
+          python3 - <<'PY'
+          import glob, os, re, sys, yaml
+
+          RANK = {'none': 0, 'read': 1, 'write': 2}
+          SCOPES = ['actions', 'attestations', 'checks', 'contents', 'deployments', 'discussions',
+                    'id-token', 'issues', 'models', 'packages', 'pages', 'pull-requests',
+                    'repository-projects', 'security-events', 'statuses']
+          REMOTE = re.compile(r'^[^/\s]+/ci-templates/(\.github/workflows/[\w.-]+\.ya?ml)@')
+
+          # Undeclared means inherited; a mapping leaves every unnamed scope at none.
+          def norm(perms, inherited):
+              if perms is None:
+                  return inherited
+              if isinstance(perms, str):
+                  level = {'read-all': 'read', 'write-all': 'write'}.get(perms, perms)
+                  return {s: level for s in SCOPES}
+              return {s: perms.get(s, 'none') for s in SCOPES}
+
+          def target(uses):
+              if uses.startswith('./'):
+                  return os.path.normpath(uses)
+              m = REMOTE.match(uses)
+              return m.group(1) if m else None
+
+          def check(path, ceiling, chain, bad):
+              doc = yaml.safe_load(open(path)) or {}
+              for name, job in (doc.get('jobs') or {}).items():
+                  need = norm(job.get('permissions'), norm(doc.get('permissions'), ceiling))
+                  for s in SCOPES:
+                      if RANK[need[s]] > RANK[ceiling[s]]:
+                          bad.setdefault((chain[0], s), f"{s}: {need[s]} on {path} '{name}', "
+                                         f"granted {ceiling[s]} via {' -> '.join(chain)}")
+                  callee = target(job.get('uses', ''))
+                  if callee:
+                      check(callee, need, chain + [os.path.basename(callee)], bad)
+
+          # One line per template and scope; the first job that needs it is enough to fix it.
+          bad = {}
+          for f in sorted(glob.glob('templates/*.yml')):
+              doc = yaml.safe_load(open(f)) or {}
+              top = norm(doc.get('permissions'), {s: 'write' for s in SCOPES})
+              for name, job in (doc.get('jobs') or {}).items():
+                  callee = target(job.get('uses', ''))
+                  if callee:
+                      check(callee, norm(job.get('permissions'), top), [f, os.path.basename(callee)], bad)
+
+          for (f, _), msg in sorted(bad.items()):
+              print(f"::error file={f}::{msg}")
+          print(f"{len(bad)} scopes granted below what the called pipeline needs")
+          sys.exit(1 if bad else 0)
+          PY
+
   selftest-scripts:
     name: Script self-tests
     runs-on: ubuntu-latest
