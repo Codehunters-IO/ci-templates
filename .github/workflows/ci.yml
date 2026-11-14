@@ -513,6 +513,11 @@ jobs:
               ('docs: describe the feature/ branch flow', 'patch'),
               ('fix: defeat the race', 'patch'),
               ('BREAKING CHANGE: input renamed', 'major'),
+              ('BREAKING-CHANGE: input renamed', 'major'),
+              ('feat!: drop the deprecated input', 'major'),
+              ('refactor(java)!: rename the job ids', 'major'),
+              ('docs: MAJOR rewrite of the README', 'patch'),
+              ('fix: note the BREAKING CHANGE in the docs', 'patch'),
           ]
           failures = 0
           for line, want in cases:

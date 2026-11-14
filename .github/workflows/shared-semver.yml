@@ -19,10 +19,14 @@ on:
         type: string
         default: 'v'
       major_pattern:
-        description: 'Regex pattern for major version bump'
+        description: >-
+          Extended regex, matched per line of the commit subjects and bodies, for a major
+          bump: a Conventional Commits `BREAKING CHANGE:` footer or a `type!:` subject. The
+          old unanchored `(MAJOR|BREAKING CHANGE)` cut a major on prose anywhere in a body,
+          and a major here strands every consumer pinned to the previous alias.
         required: false
         type: string
-        default: '(MAJOR|BREAKING CHANGE)'
+        default: '^(BREAKING[ -]CHANGE:|[a-z]+(\([^)]*\))?!:)'
       minor_pattern:
         description: >-
           Extended regex, matched per line of the commit subjects and bodies, for a minor
