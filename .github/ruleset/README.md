@@ -222,11 +222,11 @@ files.
 do not, on purpose. It is incompatible with the merge commits the release flow produces on
 `main` — `16d4a51` and `cd6b2ac` are two.
 
-**Required checks must have run at least once.** The thirteen contexts are jobs in
-`.github/workflows/ci.yml`, and they live in the hardening ruleset. Seven of them were
+**Required checks must have run at least once.** The fourteen contexts are jobs in
+`.github/workflows/ci.yml`, and they live in the hardening ruleset. Eight of them were
 added after the jobs had run on `develop`: `Every runnable job has a timeout`, `Templates
 declare concurrency` and `Script self-tests`, then `Audit workflows`, `PR pipelines stay
-read-only`, `Templates grant what their pipeline needs` and `Version bump rules agree`.
+read-only`, `Templates grant what their pipeline needs`, `Version bump rules agree` and `Gates see every job`.
 Until then they were advisory, so a pull request could merge with a job missing its
 timeout, a zizmor finding, or a deploy template its pipeline would reject at start. Applying a ruleset
 before that workflow has ever run leaves every pull request blocked on checks GitHub has
