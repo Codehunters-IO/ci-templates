@@ -69,10 +69,32 @@ on:
         type: boolean
         default: false
       deploy_target:
-        description: 'Deploy target: ec2, ec2-vpn, or eks'
+        description: 'Deploy target: ec2, ec2-vpn, eks, or gitops (promote through argocd-devops)'
         required: false
         type: string
         default: 'ec2'
+      gitops_environment:
+        description: >-
+          deploy_target gitops: overlay to promote into, apps/<service>/overlays/<this>
+          in the GitOps repository (dev, stg, prod). Empty uses environment.
+        required: false
+        type: string
+        default: ''
+      gitops_service:
+        description: 'deploy_target gitops: service directory under apps/. Empty uses the repository name'
+        required: false
+        type: string
+        default: ''
+      gitops_repository:
+        description: 'deploy_target gitops: owner/name of the GitOps repository'
+        required: false
+        type: string
+        default: 'Codehunters-IO/argocd-devops'
+      gitops_direct_environments:
+        description: 'deploy_target gitops: environments committed straight to the default branch; others get a pull request'
+        required: false
+        type: string
+        default: 'dev'
       run_create_issue_on_failure:
         description: 'Create GitHub issue on pipeline failure'
         required: false
@@ -152,6 +174,16 @@ on:
         required: false
         type: string
         default: '256m'
+      internal_port:
+        description: 'Container internal port exposed by KrakenD'
+        required: false
+        type: string
+        default: '8080'
+      container_env_vars:
+        description: 'Additional environment variables block for docker-compose (one per line: KEY=VALUE)'
+        required: false
+        type: string
+        default: ''
       extra_volumes:
         description: 'Additional docker-compose volume mounts (one per line, including the leading "- ")'
         required: false
@@ -246,6 +278,8 @@ on:
 permissions:
   contents: write
   issues: write
+  # shared-release opens the release PR with github.token.
+  pull-requests: write
   # For the OIDC path in the AWS workflows below; a caller's grant is the
   # ceiling for everything beneath it.
   id-token: write
@@ -320,9 +354,10 @@ jobs:
     if: |
       inputs.run_artifact &&
       always() &&
+      (needs.security.result == 'success' || needs.security.result == 'skipped') &&
       needs.build.result == 'success' &&
       (needs.test.result == 'success' || needs.test.result == 'skipped')
-    needs: [build, test]
+    needs: [build, test, security]
     uses: ./.github/workflows/shared-artifact-docker-ecr.yml
     with:
       aws_role_to_assume: ${{ inputs.aws_role_to_assume }}
@@ -358,7 +393,10 @@ jobs:
       environment: ${{ inputs.environment }}
       memory_limit: ${{ inputs.memory_limit }}
       memory_reservation: ${{ inputs.memory_reservation }}
+      internal_port: ${{ inputs.internal_port }}
+      container_env_vars: ${{ inputs.container_env_vars }}
       extra_volumes: ${{ inputs.extra_volumes }}
+      health_check_path: '/__health'
     secrets: inherit
 
   # ============================================
@@ -381,7 +419,35 @@ jobs:
       environment: ${{ inputs.environment }}
       memory_limit: ${{ inputs.memory_limit }}
       memory_reservation: ${{ inputs.memory_reservation }}
+      internal_port: ${{ inputs.internal_port }}
+      container_env_vars: ${{ inputs.container_env_vars }}
       extra_volumes: ${{ inputs.extra_volumes }}
+      health_check_path: '/__health'
+    secrets: inherit
+
+  # ============================================
+  # DEPLOY - GitOps (argocd-devops ADR 0007)
+  # ============================================
+  # Writes the image into the GitOps repository and lets ArgoCD sync it; the
+  # runner holds no cluster credential. Success means promoted (committed, or
+  # a pull request opened for review), not yet running.
+  deploy-gitops:
+    name: Deploy GitOps
+    if: |
+      inputs.run_deploy &&
+      inputs.deploy_target == 'gitops' &&
+      always() &&
+      needs.artifact.result == 'success'
+    needs: [artifact]
+    uses: ./.github/workflows/shared-gitops-promote.yml
+    with:
+      runner: ${{ inputs.runner }}
+      image_uri: ${{ needs.artifact.outputs.image_uri }}
+      image_digest: ${{ needs.artifact.outputs.image_digest }}
+      gitops_environment: ${{ inputs.gitops_environment || inputs.environment }}
+      gitops_service: ${{ inputs.gitops_service }}
+      gitops_repository: ${{ inputs.gitops_repository }}
+      direct_environments: ${{ inputs.gitops_direct_environments }}
     secrets: inherit
 
   # ============================================
@@ -420,8 +486,8 @@ jobs:
     if: |
       inputs.run_release &&
       always() &&
-      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success')
-    needs: [deploy-ec2, deploy-ec2-vpn, deploy-eks]
+      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success' || needs.deploy-gitops.result == 'success')
+    needs: [deploy-ec2, deploy-ec2-vpn, deploy-eks, deploy-gitops]
     uses: ./.github/workflows/shared-release.yml
     with:
       base_branch: ${{ github.ref_name }}
@@ -450,8 +516,8 @@ jobs:
     if: |
       inputs.run_tag &&
       always() &&
-      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success')
-    needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release]
+      (needs.deploy-ec2.result == 'success' || needs.deploy-ec2-vpn.result == 'success' || needs.deploy-eks.result == 'success' || needs.deploy-gitops.result == 'success')
+    needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, deploy-gitops, cleanup, release]
     uses: ./.github/workflows/shared-tag-release.yml
     secrets: inherit
 
@@ -461,7 +527,7 @@ jobs:
   notify:
     name: Notify
     if: always()
-    needs: [commit-lint, security, dependency-review, build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, release, cleanup, tag]
+    needs: [commit-lint, security, dependency-review, build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, deploy-gitops, release, cleanup, tag]
     uses: ./.github/workflows/shared-notifications.yml
     with:
       status: ${{ contains(needs.*.result, 'failure') && 'failure' || contains(needs.*.result, 'cancelled') && 'cancelled' || 'success' }}
@@ -476,10 +542,10 @@ jobs:
     if: |
       inputs.run_create_issue_on_failure &&
       always()
-    needs: [build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, cleanup, release, tag]
+    needs: [commit-lint, security, dependency-review, build, test, artifact, deploy-ec2, deploy-ec2-vpn, deploy-eks, deploy-gitops, release, cleanup, tag]
     uses: ./.github/workflows/shared-create-issue-on-failure.yml
     with:
-      status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.artifact.result == 'failure' || needs.deploy-ec2.result == 'failure' || needs.deploy-ec2-vpn.result == 'failure' || needs.deploy-eks.result == 'failure') && 'failure' || 'success' }}
+      status: ${{ contains(needs.*.result, 'failure') && 'failure' || 'success' }}
       environment: ${{ inputs.environment }}
       version: ${{ needs.release.outputs.version }}
       changelog: ${{ needs.release.outputs.changelog }}

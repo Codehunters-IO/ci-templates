@@ -1,0 +1,217 @@
+name: Shared - Promote Image through GitOps
+
+# CI never touches the cluster (argocd-devops ADR 0007). This writes the image
+# a pipeline just published into the GitOps repository and lets ArgoCD
+# reconcile: apps/<service>/overlays/<environment>/values.yaml gets
+# image.repository, image.tag and image.digest, and nothing else changes.
+#
+#   direct environments (default: dev) -> commit to the default branch
+#   every other environment            -> pull request a person merges
+#
+# Authenticates as a GitHub App installed on the GitOps repository only. The
+# job's own token stays read-only; no cluster credential exists anywhere here.
+#
+# Required secrets: GITOPS_APP_ID, GITOPS_APP_PRIVATE_KEY
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'Runner type'
+        required: false
+        type: string
+        default: 'ubuntu-latest'
+      image_uri:
+        description: 'Image as published, registry/repository:tag (an artifact job''s image_uri output)'
+        required: true
+        type: string
+      image_digest:
+        description: 'Digest of that image (sha256:…). Required: promoting a tag would let it move under the deploy'
+        required: true
+        type: string
+      gitops_environment:
+        description: 'Overlay directory to promote into: apps/<service>/overlays/<this>'
+        required: true
+        type: string
+      gitops_service:
+        description: 'Service directory under apps/. Empty uses the calling repository''s name'
+        required: false
+        type: string
+        default: ''
+      gitops_repository:
+        description: 'owner/name of the GitOps repository'
+        required: false
+        type: string
+        default: 'Codehunters-IO/argocd-devops'
+      direct_environments:
+        description: 'Comma-separated environments committed straight to the default branch; the rest get a pull request'
+        required: false
+        type: string
+        default: 'dev'
+
+    secrets:
+      GITOPS_APP_ID:
+        required: false
+      GITOPS_APP_PRIVATE_KEY:
+        required: false
+
+    outputs:
+      promoted:
+        description: 'true when values.yaml changed and was committed or proposed'
+        value: ${{ jobs.promote.outputs.promoted }}
+      pull_request_url:
+        description: 'Pull request opened for a non-direct environment'
+        value: ${{ jobs.promote.outputs.pull_request_url }}
+
+# The job token reads nothing it needs: the GitOps repository is reached with
+# the App's installation token below.
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    name: Promote to ${{ inputs.gitops_environment }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 10
+    # Two promotions of one service to one environment must not interleave:
+    # the second would be computed against a values.yaml the first replaces.
+    concurrency:
+      group: gitops-${{ inputs.gitops_repository }}-${{ inputs.gitops_service || github.event.repository.name }}-${{ inputs.gitops_environment }}
+      cancel-in-progress: false
+
+    outputs:
+      promoted: ${{ steps.commit.outputs.promoted }}
+      pull_request_url: ${{ steps.commit.outputs.pull_request_url }}
+
+    steps:
+      - name: Check the App credentials
+        env:
+          APP_ID: ${{ secrets.GITOPS_APP_ID }}
+          APP_KEY: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$APP_ID" ] || [ -z "$APP_KEY" ]; then
+            echo "::error::GITOPS_APP_ID and GITOPS_APP_PRIVATE_KEY are required: the GitHub App installed on the GitOps repository (ADR 0007)"
+            exit 1
+          fi
+
+      - name: Split the GitOps repository name
+        id: repo
+        env:
+          GITOPS_REPOSITORY: ${{ inputs.gitops_repository }}
+        run: |
+          echo "owner=${GITOPS_REPOSITORY%%/*}" >> "$GITHUB_OUTPUT"
+          echo "name=${GITOPS_REPOSITORY#*/}" >> "$GITHUB_OUTPUT"
+
+      - name: Mint a token for the GitOps repository
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510  # v3.3.0
+        with:
+          app-id: ${{ secrets.GITOPS_APP_ID }}
+          private-key: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}
+          owner: ${{ steps.repo.outputs.owner }}
+          repositories: ${{ steps.repo.outputs.name }}
+          # Only what the steps below use, whatever the installation was granted.
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Checkout the GitOps repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: ${{ inputs.gitops_repository }}
+          token: ${{ steps.app-token.outputs.token }}
+          path: gitops
+          fetch-depth: 0
+          persist-credentials: true  # the commit step pushes with the App token
+
+      # Only the three image keys change; yq keeps comments and every other key.
+      # A missing overlay or one without an image block is refused rather than
+      # created: it means a wrong service or environment name, not a first deploy.
+      - name: Set the image in the overlay
+        id: values
+        working-directory: gitops
+        env:
+          SERVICE: ${{ inputs.gitops_service || github.event.repository.name }}
+          ENVIRONMENT: ${{ inputs.gitops_environment }}
+          IMAGE_URI: ${{ inputs.image_uri }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::image_digest '$IMAGE_DIGEST' is not a sha256 digest"
+            exit 1
+          fi
+          if ! [[ "$SERVICE" =~ ^[a-z0-9][a-z0-9-]*$ && "$ENVIRONMENT" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+            echo "::error::service '$SERVICE' and environment '$ENVIRONMENT' must be lowercase directory names"
+            exit 1
+          fi
+          FILE="apps/${SERVICE}/overlays/${ENVIRONMENT}/values.yaml"
+          if [ ! -f "$FILE" ]; then
+            echo "::error::$FILE does not exist in the GitOps repository: onboard the service first"
+            exit 1
+          fi
+          if ! yq -e '.image | tag == "!!map"' "$FILE" >/dev/null 2>&1; then
+            echo "::error::$FILE has no image: block to update"
+            exit 1
+          fi
+          export REPOSITORY="${IMAGE_URI%:*}" TAG="${IMAGE_URI##*:}"
+          yq -i '.image.repository = strenv(REPOSITORY) | .image.tag = strenv(TAG) | .image.digest = strenv(IMAGE_DIGEST)' "$FILE"
+          echo "file=$FILE" >> "$GITHUB_OUTPUT"
+          echo "service=$SERVICE" >> "$GITHUB_OUTPUT"
+          echo "short=${IMAGE_DIGEST#sha256:}" | cut -c1-18 >> "$GITHUB_OUTPUT"
+          git diff -- "$FILE"
+
+      - name: Commit or propose
+        id: commit
+        working-directory: gitops
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          FILE: ${{ steps.values.outputs.file }}
+          SERVICE: ${{ steps.values.outputs.service }}
+          SHORT: ${{ steps.values.outputs.short }}
+          ENVIRONMENT: ${{ inputs.gitops_environment }}
+          IMAGE_URI: ${{ inputs.image_uri }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+          DIRECT: ${{ inputs.direct_environments }}
+          SOURCE: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- "$FILE"; then
+            echo "::notice::$SERVICE in $ENVIRONMENT already runs $IMAGE_DIGEST"
+            echo "promoted=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name "gitops-promote[bot]"
+          git config user.email "gitops-promote@users.noreply.github.com"
+          MESSAGE="chore(${SERVICE}): promote ${IMAGE_URI##*/} to ${ENVIRONMENT}
+
+          Digest: ${IMAGE_DIGEST}
+          Source: ${SOURCE}"
+          # actions/checkout leaves the default branch checked out but sets no origin/HEAD.
+          BASE=$(git rev-parse --abbrev-ref HEAD)
+
+          if [[ ",${DIRECT// /}," == *",${ENVIRONMENT},"* ]]; then
+            git commit -q -m "$MESSAGE" -- "$FILE"
+            # Another promotion may land first; rebase onto it and retry.
+            for attempt in 1 2 3; do
+              git push -q origin "HEAD:${BASE}" && break
+              [ "$attempt" -eq 3 ] && { echo "::error::push to ${BASE} rejected three times"; exit 1; }
+              git pull -q --rebase origin "$BASE"
+            done
+            echo "Committed to ${BASE}: $(git rev-parse --short HEAD)"
+            echo "promoted=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          BRANCH="promote/${SERVICE}-${ENVIRONMENT}-${SHORT}"
+          git checkout -q -b "$BRANCH"
+          git commit -q -m "$MESSAGE" -- "$FILE"
+          git push -q --force origin "$BRANCH"
+          URL=$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url // empty')
+          if [ -z "$URL" ]; then
+            URL=$(gh pr create --base "$BASE" --head "$BRANCH" \
+              --title "chore(${SERVICE}): promote ${IMAGE_URI##*/} to ${ENVIRONMENT}" \
+              --body "Promotes \`${SERVICE}\` in \`${ENVIRONMENT}\` to \`${IMAGE_URI}\` pinned at \`${IMAGE_DIGEST}\`. Built by ${SOURCE}. Merging deploys it (ADR 0007).")
+          fi
+          echo "::notice::Promotion awaits review: $URL"
+          echo "pull_request_url=$URL" >> "$GITHUB_OUTPUT"
+          echo "promoted=true" >> "$GITHUB_OUTPUT"

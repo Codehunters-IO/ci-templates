@@ -93,7 +93,7 @@ jobs:
 
       - name: Setup JDK ${{ inputs.java_version }}
         if: inputs.container_image == ''
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6.1.0
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78  # v6.2.0
         with:
           distribution: ${{ inputs.java_distribution }}
           java-version: ${{ inputs.java_version }}
@@ -106,7 +106,7 @@ jobs:
 
       - name: Setup Gradle
         if: inputs.build_tool == 'gradle'
-        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6  # v6.4.0
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c  # v6.4.1
         with:
           # Build is the cache PRODUCER: always write so the downstream test job reuses
           # compileJava outputs from the Gradle build cache instead of recompiling.

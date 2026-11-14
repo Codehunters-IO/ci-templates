@@ -212,11 +212,12 @@ on:
   push:
     branches: [develop]
 
-permissions:
-  contents: write        # the release job creates release/vX.Y.Z and opens its PR
-  id-token: write        # OIDC; drop only if you are on static AWS keys
-  checks: write
-  pull-requests: write
+permissions:              # java-main-pipeline's union; any scope short fails the run with zero jobs
+  contents: write        # the release job creates release/vX.Y.Z
+  packages: write        # GHCR / GitHub Packages publishing
+  issues: write          # an issue on a failed run
+  pull-requests: write   # the release job opens its PR
+  id-token: write        # OIDC to AWS
 
 jobs:
   pipeline:
@@ -427,11 +428,14 @@ Releases are cut automatically: every push to `main` runs `release.yml`, which
 derives the version from the commits since the last tag, creates `vX.Y.Z` plus a
 GitHub Release, and re-points the floating alias of that major.
 
-| Commit contains | Bump |
+| A commit line starts with | Bump |
 |---|---|
-| `MAJOR` or `BREAKING CHANGE` | major — `v2.0.0`, and `v1` stops moving |
-| `feat` | minor |
+| `BREAKING CHANGE:` / `BREAKING-CHANGE:` footer, or a `type!:` / `type(scope)!:` subject | major — `v2.0.0`, and `v1` stops moving |
+| `feat:` / `feat(scope):` | minor |
 | anything else | patch |
+
+The rules are anchored to the start of a line. "MAJOR" or "breaking change" in
+running prose bumps nothing; only the Conventional Commits markers do.
 
 A major bump freezes the previous alias at its last release, so consumers
 pinned to it keep working until they choose to move. That is how `v1` stopped
@@ -449,7 +453,7 @@ keeps working but gets no further fixes.
 | Workflow or input | Replacement |
 |---|---|
 | `java-library-build.yml` | `java-pr-pipeline.yml` with `test_tasks`, `extra_gradle_commands` and `docker_images` |
-| `run_cleanup` input of `java-main-pipeline.yml` and `krakend-main-pipeline.yml` | Nothing: it never had an effect there. Their cleanup job runs on every push and deletes only a verified-merged PR head. The NGINX, React and Contracts pipelines do honour it. |
+| `run_cleanup` input of `java-main-pipeline.yml` and `krakend-main-pipeline.yml` | Nothing: it never had an effect there. Their cleanup job runs on every push and deletes only a verified-merged PR head. The NGINX, React and Contracts pipelines do honour it, as an opt-in that runs on push whatever build and deploy did. |
 
 `java-library-build.yml` still runs, with a warning in every run, until v3.
 
@@ -576,6 +580,7 @@ template:
 | `*-build`, `*-test`, `*-owasp`, `java-architecture`, `contracts-*` | `+ packages: read` | They run inside a container pulled from GHCR |
 | `java-artifact-docker-github`, `java-artifact-dependency-github` | `+ packages: write` | They publish to GitHub Packages |
 | `shared-release`, `shared-semver`, `shared-tag-release`, `*-delete-branch` | `contents: write` | They push a branch, a tag, or delete a ref |
+| `shared-release` | `+ pull-requests: write` | It opens the release PR |
 | `shared-create-issue-on-failure` | `+ issues: write` | It opens an issue |
 | `*-main-pipeline` | union of the above | A caller's grant is the ceiling for everything beneath it |
 | `react-pr-pipeline`, `krakend-pr-pipeline`, `nginx-pr-pipeline` | `contents: read` | They call the leaves directly instead of wrapping their `*-main-pipeline` |
@@ -587,6 +592,13 @@ what its caller granted, never widen it. An orchestrator that calls
 `shared-tag-release` therefore has to hold `contents: write` itself, even
 though it pushes nothing directly — and the narrow declarations on the leaves
 are what keep that grant from reaching the jobs that have no business with it.
+
+The deploy templates therefore declare exactly their pipeline's union, and CI
+(`Templates grant what their pipeline needs`) walks every template's call chain
+and fails when a scope falls short. Opening the release PR with `github.token`
+also needs the repository setting *Allow GitHub Actions to create and approve
+pull requests* (Settings → Actions → General); without it the release job gets
+a 403 whatever the workflow grants.
 
 The check is static: GitHub compares grants when the run starts, before any
 `if:` is evaluated, and a shortfall fails the run with zero jobs and no
@@ -650,7 +662,7 @@ Configure in **Settings → Secrets and variables → Actions**.
 
 | Secret | Description |
 |--------|-------------|
-| `AWS_ACCESS_KEY_ID` | AWS access key for ECR push and runtime (injected into the container) |
+| `AWS_ACCESS_KEY_ID` | AWS access key for ECR push. EC2 deploys send it to the host only when the host's instance profile cannot log in to ECR; it never reaches the container |
 | `AWS_SECRET_ACCESS_KEY` | AWS secret key |
 | `AWS_REGION` | AWS region (e.g. `us-east-1`) |
 | `AWS_ECR_URL` | ECR registry URL (e.g. `123456789.dkr.ecr.us-east-1.amazonaws.com`). **Must be the SAME AWS account as the access key** — the artifact job pushes to the creds' account registry and deploy pulls from this URL; a mismatch causes a cross-account `pull access denied`. |
@@ -662,7 +674,25 @@ Configure in **Settings → Secrets and variables → Actions**.
 | `AWS_EC2_HOST` | EC2 IP or hostname (private IP when using `ec2-vpn`) |
 | `AWS_EC2_USER` | SSH username (`ubuntu`, `ec2-user`, …) |
 | `AWS_EC2_SSH_KEY` | SSH private key (PEM) |
+| `AWS_EC2_HOST_KEY` | *Optional, recommended.* The host's public key, as `ssh-keyscan -t ed25519 <host>` prints it from a trusted network. Set, the deploy refuses any other key; unset, it trusts whatever answers and warns |
 | `AWS_APP_PORT` | External port exposed by the container |
+
+### How EC2 deploys protect the running service
+
+Pull first, then stop the old container, start the new one and hold it to a
+health check: `health_check_path` answering 2xx/3xx on the host, else the
+image's `HEALTHCHECK`, else the container still up and unrestarted after 20
+seconds. Within `health_check_timeout` (120 s) or the previous
+`docker-compose.yml` comes back, the old container with it, and the job fails
+as `rolled_back`. Old images are removed only after a healthy start, and the
+previous one is always kept. The KrakenD and NGINX pipelines check
+`/__health`; Java takes `health_check_path` (empty by default).
+
+There is still a gap of seconds between stop and start: one host, one port.
+
+The host logs in to ECR with its instance profile when that works, and the
+pipeline's AWS keys, which can push, then never leave the runner. Only a host
+without a usable profile still receives them, with a warning in the run.
 
 ### How EC2 deploys handle secrets
 
@@ -679,8 +709,8 @@ with default permissions long after the deploy finishes. Late 1.x moved them to
 a mode-600 `.aws.env` behind an opt-in input; v2 stops sending them at all.
 
 v2 never puts the pipeline credentials in the container. They are build-plane
-keys that can push to ECR, so they stay on the host side for the ECR login and
-are unset before `docker compose` runs: not even a `container_env_vars` line
+keys that can push to ECR; when the host's own profile cannot log in they go
+to the host for the ECR login only, and are unset before `docker compose` runs: not even a `container_env_vars` line
 that names them can pass them on. The application gets its
 own credentials one of two ways:
 
@@ -709,6 +739,33 @@ this one.
 | `WG_PEER_PUBLIC_KEY` | Yes | WireGuard server public key |
 | `WG_PEER_ALLOWED_IPS` | Yes | Allowed IPs routed through the tunnel (e.g., `10.0.0.0/16`) |
 | `WG_PEER_ENDPOINT` | Yes | Server endpoint `host:port` (e.g., `44.209.64.95:51820`) |
+
+### GitOps (`deploy_target: gitops`)
+
+Java, NGINX and KrakenD pipelines can deploy without touching the cluster
+(argocd-devops ADR 0007). `shared-gitops-promote.yml` writes the image the
+artifact job published into
+`apps/<gitops_service>/overlays/<gitops_environment>/values.yaml` of
+`gitops_repository` (default `Codehunters-IO/argocd-devops`), setting
+`image.repository`, `image.tag` and `image.digest` and nothing else. ArgoCD
+syncs it.
+
+| Environment | What the job does | Who deploys |
+|---|---|---|
+| in `gitops_direct_environments` (default `dev`) | commits to the default branch | ArgoCD auto-sync |
+| any other (`stg`, `prod`) | pushes `promote/<service>-<env>-<digest>` and opens a PR | a person merging it; prod also syncs manually |
+
+A green job means **promoted**, not running: for stg and prod it means the PR
+is open, so `run_release` / `run_tag` treat that as the deploy. Watch ArgoCD
+for health. `gitops_environment` defaults to `environment`; set it when the
+names differ (`develop` here, `dev` there). The service must already be
+onboarded in the GitOps repository: a missing overlay or one without an
+`image:` block fails the job instead of being created.
+
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `GITOPS_APP_ID` | Yes | GitHub App installed on the GitOps repository only, with Contents and Pull requests write |
+| `GITOPS_APP_PRIVATE_KEY` | Yes | That App's private key. The job mints a token limited to those two permissions on that one repository |
 
 ### SonarQube (`code_analysis: 'sonar'`)
 

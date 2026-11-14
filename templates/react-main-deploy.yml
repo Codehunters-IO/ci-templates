@@ -5,11 +5,13 @@
 # Runs: build + deploy (PRODUCTION environment)
 #
 # For S3 deployment:
-#   Required secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, AWS_S3_BUCKET
+#   Required secrets: AWS_REGION, AWS_S3_BUCKET
 #   Optional secrets: AWS_CLOUDFRONT_DISTRIBUTION_ID
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY only without aws_role_to_assume (OIDC, preferred)
 #
 # For Amplify deployment:
-#   Required secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, AWS_AMPLIFY_APP_ID, AWS_AMPLIFY_BRANCH
+#   Required secrets: AWS_REGION, AWS_AMPLIFY_APP_ID, AWS_AMPLIFY_BRANCH
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY only without aws_role_to_assume (OIDC, preferred)
 #
 # Note: Tests should have passed in release branch, only build and deploy here
 
@@ -26,8 +28,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+# Must match react-main-pipeline's permissions block. GitHub checks the grant
+# statically against every job the pipeline can reach, including ones this
+# caller switches off, and a single scope short fails the run with zero jobs.
 permissions:
-  contents: write   # required by run_tag to push vX.Y.Z tag and create GitHub Release
+  contents: write
+  issues: write
+  pull-requests: write
   id-token: write
 
 jobs:

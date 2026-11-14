@@ -17,9 +17,9 @@ jobs:
     # The mention gate is what a person types. The association gate is who they
     # are: OWNER, MEMBER or COLLABORATOR on this repository. Every trigger here
     # -- opening an issue, commenting on one, reviewing a pull request -- is
-    # available to any GitHub account, and this job runs with contents,
-    # pull-requests and issues write plus id-token. Without the second gate the
-    # only thing standing between an arbitrary account and a write-scoped token
+    # available to any GitHub account, and this job runs with pull-requests and
+    # issues write. Without the second gate the only thing standing between an
+    # arbitrary account and a write-scoped token
     # is whatever the action decides to check on its own. That is the action's
     # policy, not ours, and it can change under us; this is ours.
     #
@@ -42,11 +42,16 @@ jobs:
     # Long agent runs are expected; this caps a hung one rather than holding the
     # runner for GitHub's six-hour default.
     timeout-minutes: 30
+    # Read on contents: this repository's tags are what every consumer runs, and
+    # an agent that reads issue and PR text written by others must not be able
+    # to push a branch or move a tag. It reviews and comments; changes go
+    # through a person. No id-token either: with it the action trades OIDC for
+    # its own app token, whose scopes are set by the app install, not here.
+    # github_token below keeps this block the whole of what it can do.
     permissions:
-      contents: write
+      contents: read
       pull-requests: write
       issues: write
-      id-token: write
       actions: read
     steps:
       - name: Checkout repository
@@ -57,7 +62,8 @@ jobs:
 
       - name: Run Claude Code
         id: claude
-        uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13  # v1.0.262
+        uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed  # v1.0.271
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
           claude_args: "--model claude-opus-5"

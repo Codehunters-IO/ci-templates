@@ -6,7 +6,7 @@
 #
 # Required secrets:
 #   AWS:
-#   - AWS_ACCESS_KEY_ID: AWS access key
+#   - AWS_ACCESS_KEY_ID: AWS access key (not needed with aws_role_to_assume)
 #   - AWS_SECRET_ACCESS_KEY: AWS secret key
 #   - AWS_REGION: AWS region (e.g., us-east-1)
 #   - AWS_S3_BUCKET: S3 bucket name for hosting
@@ -29,11 +29,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+# Must match react-main-pipeline's permissions block. GitHub checks the grant
+# statically against every job the pipeline can reach, including ones this
+# caller switches off, and a single scope short fails the run with zero jobs.
 permissions:
   contents: write
-  id-token: write
-  checks: write
+  issues: write
   pull-requests: write
+  id-token: write
 
 jobs:
   pipeline:

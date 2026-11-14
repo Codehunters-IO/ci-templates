@@ -362,6 +362,222 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
+  template-permissions:
+    name: Templates grant what their pipeline needs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The other direction of the check above. A caller's grant is the ceiling
+      # for everything it reaches, so a template that grants less than the
+      # pipeline it calls fails the run before any job starts. The deploy
+      # templates sat that way for every stack: main-deploy granted read to a
+      # pipeline declaring write, and none granted the issues: write every
+      # *-main-pipeline holds. Nothing here runs them, so this walks each
+      # template's call chain and compares job by job.
+      - name: Check
+        run: |
+          python3 - <<'PY'
+          import glob, os, re, sys, yaml
+
+          RANK = {'none': 0, 'read': 1, 'write': 2}
+          SCOPES = ['actions', 'attestations', 'checks', 'contents', 'deployments', 'discussions',
+                    'id-token', 'issues', 'models', 'packages', 'pages', 'pull-requests',
+                    'repository-projects', 'security-events', 'statuses']
+          REMOTE = re.compile(r'^[^/\s]+/ci-templates/(\.github/workflows/[\w.-]+\.ya?ml)@')
+
+          # Undeclared means inherited; a mapping leaves every unnamed scope at none.
+          def norm(perms, inherited):
+              if perms is None:
+                  return inherited
+              if isinstance(perms, str):
+                  level = {'read-all': 'read', 'write-all': 'write'}.get(perms, perms)
+                  return {s: level for s in SCOPES}
+              return {s: perms.get(s, 'none') for s in SCOPES}
+
+          def target(uses):
+              if uses.startswith('./'):
+                  return os.path.normpath(uses)
+              m = REMOTE.match(uses)
+              return m.group(1) if m else None
+
+          def check(path, ceiling, chain, bad):
+              doc = yaml.safe_load(open(path)) or {}
+              for name, job in (doc.get('jobs') or {}).items():
+                  need = norm(job.get('permissions'), norm(doc.get('permissions'), ceiling))
+                  for s in SCOPES:
+                      if RANK[need[s]] > RANK[ceiling[s]]:
+                          bad.setdefault((chain[0], s), f"{s}: {need[s]} on {path} '{name}', "
+                                         f"granted {ceiling[s]} via {' -> '.join(chain)}")
+                  callee = target(job.get('uses', ''))
+                  if callee:
+                      check(callee, need, chain + [os.path.basename(callee)], bad)
+
+          # One line per template and scope; the first job that needs it is enough to fix it.
+          bad = {}
+          for f in sorted(glob.glob('templates/*.yml')):
+              doc = yaml.safe_load(open(f)) or {}
+              top = norm(doc.get('permissions'), {s: 'write' for s in SCOPES})
+              for name, job in (doc.get('jobs') or {}).items():
+                  callee = target(job.get('uses', ''))
+                  if callee:
+                      check(callee, norm(job.get('permissions'), top), [f, os.path.basename(callee)], bad)
+
+          for (f, _), msg in sorted(bad.items()):
+              print(f"::error file={f}::{msg}")
+          print(f"{len(bad)} scopes granted below what the called pipeline needs")
+          sys.exit(1 if bad else 0)
+          PY
+
+  pipeline-gates:
+    name: Gates see every job
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Two ways an orchestrator reported green on a red run. notify and
+      # create-issue listed jobs by hand, so a job added later (contracts' sdk,
+      # e2e, analysis; Java's qodana and owasp) could fail without either of them
+      # seeing it. And nothing that publishes or deploys waited on the secret
+      # scan, so an image went out with a leaked key already reported.
+      - name: Check
+        run: |
+          python3 - <<'PY'
+          import glob, os, re, sys, yaml
+
+          def as_list(needs):
+              return [needs] if isinstance(needs, str) else list(needs or [])
+
+          bad = []
+          for f in sorted(glob.glob('.github/workflows/*-main-pipeline.yml')):
+              jobs = yaml.safe_load(open(f))['jobs']
+              others = set(jobs) - {'notify', 'create-issue'}
+              for g in ('notify', 'create-issue'):
+                  if g in jobs:
+                      missing = sorted(others - set(as_list(jobs[g].get('needs'))))
+                      if missing:
+                          bad.append(f"::error file={f}::{g} does not wait for: {', '.join(missing)}")
+              status = str((jobs.get('create-issue') or {}).get('with', {}).get('status', ''))
+              if 'create-issue' in jobs and "contains(needs.*.result, 'failure')" not in status:
+                  bad.append(f"::error file={f}::create-issue status must come from contains(needs.*.result, 'failure')")
+
+              if 'security' not in jobs:
+                  continue
+              def reaches(job, seen=()):
+                  direct = as_list(jobs[job].get('needs'))
+                  return 'security' in direct or any(reaches(n, seen + (job,)) for n in direct if n not in seen)
+              for name, job in jobs.items():
+                  if re.search(r'(artifact|deploy)', os.path.basename(job.get('uses', ''))) and not reaches(name):
+                      bad.append(f"::error file={f}::{name} publishes or deploys without waiting for security")
+
+          for line in bad:
+              print(line)
+          print(f"{len(bad)} gate wiring problems")
+          sys.exit(1 if bad else 0)
+          PY
+
+  copies-in-sync:
+    name: Copies stay in sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # This repository duplicates on purpose. A reusable workflow cannot use a
+      # composite action or script from here by path (the checkout is the
+      # caller's), and by remote ref the action's version drifts from the
+      # workflow's. Wrapping one pipeline in another adds a nesting level and a
+      # second copy of every input. So the copies stay, and this holds them
+      # together: PR pipelines against their main pipeline, NGINX against
+      # KrakenD, branch cleanup in every stack, and the scripts repeated across
+      # the Java leaves. KrakenD had drifted without internal_port and
+      # container_env_vars, so its EC2 deploys could not set either.
+      - name: Check
+        run: |
+          python3 - <<'PY'
+          import glob, re, sys, yaml
+
+          WF = '.github/workflows'
+          load = lambda f: yaml.safe_load(open(f'{WF}/{f}.yml'))
+          bad = []
+
+          # 1. A PR pipeline repeats its main pipeline's gates with the same ids, so a
+          #    caller switches by file name. Only notify (it sees fewer jobs) and the PR
+          #    build (it always builds) may differ.
+          PR = {'contracts': 'contracts-pr-pipeline', 'react': 'react-pr-pipeline', 'nginx': 'nginx-pr-pipeline',
+                'krakend': 'krakend-pr-pipeline', 'java': 'java-pr-gates'}
+          MAY_DIFFER = {'notify': {'needs', 'with'}, 'build': {'if', 'with.upload_artifact'}}
+          for stack, pr in PR.items():
+              main, gates = load(f'{stack}-main-pipeline')['jobs'], load(pr)['jobs']
+              for job in set(main) & set(gates):
+                  a, b = main[job], gates[job]
+                  for key in sorted(set(a) | set(b)):
+                      if key == 'with':
+                          for k in sorted(set(a.get('with') or {}) | set(b.get('with') or {})):
+                              if (a.get('with') or {}).get(k) != (b.get('with') or {}).get(k) \
+                                      and not {'with', f'with.{k}'} & MAY_DIFFER.get(job, set()):
+                                  bad.append(f"::error file={WF}/{pr}.yml::{job}.with.{k} differs from {stack}-main-pipeline")
+                      elif a.get(key) != b.get(key) and key not in MAY_DIFFER.get(job, set()):
+                          bad.append(f"::error file={WF}/{pr}.yml::{job}.{key} differs from {stack}-main-pipeline")
+
+          # 2. NGINX and KrakenD ship the same image pipeline around different build and
+          #    test leaves. Everything else must match: inputs by name, jobs by content.
+          STACK_ONLY = {'nginx': {'health_path'}, 'krakend': {'audit_threshold'}}
+          OWN_JOBS = {'build', 'test', 'cleanup'}
+          def image(stack):
+              wf = load(f'{stack}-main-pipeline')
+              call = wf[True]['workflow_call']
+              jobs = {}
+              for name, job in wf['jobs'].items():
+                  if name in OWN_JOBS:
+                      continue
+                  job = dict(job)
+                  if 'with' in job:
+                      job['with'] = {k: v for k, v in job['with'].items() if k != 'health_check_path'}
+                  jobs[name] = job
+              return set(call['inputs']) - STACK_ONLY[stack], jobs
+          (ni, nj), (ki, kj) = image('nginx'), image('krakend')
+          for missing, where in ((ni - ki, 'krakend'), (ki - ni, 'nginx')):
+              for i in sorted(missing):
+                  bad.append(f"::error file={WF}/{where}-main-pipeline.yml::input {i} is missing (the other image pipeline declares it)")
+          for job in sorted(set(nj) | set(kj)):
+              if nj.get(job) != kj.get(job):
+                  bad.append(f"::error file={WF}/krakend-main-pipeline.yml::job {job} differs from nginx-main-pipeline")
+
+          # 3. Branch cleanup never waits on build or deploy (fbb2671).
+          for f in sorted(glob.glob(f'{WF}/*-main-pipeline.yml')):
+              job = yaml.safe_load(open(f))['jobs'].get('cleanup')
+              if job and (job.get('needs') or "github.event_name == 'push'" not in str(job.get('if'))):
+                  bad.append(f"::error file={f}::cleanup must run on push with no needs")
+
+          # 4. Steps copied across the Java leaves, because a reusable workflow cannot
+          #    source a script from this repository: the run bodies must stay identical.
+          COPIED = ['Pull the integration-test images', 'Report toolchain (container)']
+          for name in COPIED:
+              bodies = {}
+              for f in sorted(glob.glob(f'{WF}/java-*.yml')):
+                  for job in (yaml.safe_load(open(f))['jobs'] or {}).values():
+                      for step in job.get('steps') or []:
+                          if step.get('name') == name:
+                              bodies.setdefault(step['run'], []).append(f)
+              if len(bodies) > 1:
+                  bad.append(f"::error::step '{name}' has {len(bodies)} variants: "
+                             + ' | '.join(', '.join(fs) for fs in bodies.values()))
+
+          for line in bad:
+              print(line)
+          print(f"{len(bad)} copies out of sync")
+          sys.exit(1 if bad else 0)
+          PY
+
   selftest-scripts:
     name: Script self-tests
     runs-on: ubuntu-latest
@@ -384,10 +600,32 @@ jobs:
       - name: Run the react test verdict against its cases
         run: .github/selftest/react-test-verdict.test.sh
 
+      # Same defect, contracts-test: the runner's exit code dropped with `|| true` and
+      # the verdict read from Mocha's wording, so a crash or a non-Mocha runner passed.
+      - name: Run the contracts test verdict against its cases
+        run: .github/selftest/contracts-test-verdict.test.sh
+
       # The digest-or-tag rule is copied into three deploy workflows. This keeps
       # the copies identical and pins what the rule does with and without a digest.
       - name: Run the image-ref rule against its cases
         run: .github/selftest/image-ref.test.sh
+
+      # deploy.sh decides whether a host keeps serving, and only ever ran on a
+      # real host. This runs both copies' script against a fake docker: health
+      # check, rollback to the previous compose, exit 42, image cleanup.
+      - name: Run the EC2 deploy script against a fake host
+        run: .github/selftest/ec2-deploy.test.sh
+
+      # The React deploys: Amplify polled a CLI command that does not exist and
+      # failed every run; S3 deleted the chunks open tabs load. Fake aws, real script.
+      - name: Run the React deploy scripts against a fake AWS CLI
+        run: .github/selftest/react-deploy.test.sh
+
+      # The GitOps promotion edits a values file other people own and pushes to a
+      # repository ArgoCD deploys from: only the image keys may change, and only
+      # dev may skip review. yq ships on the runner; the test fails without it here.
+      - name: Run the GitOps promotion against fixtures and a local repository
+        run: .github/selftest/gitops-promote.test.sh
 
       # The graph and scaffold scripts lean on layout conventions nothing else
       # enforces: jobs at two spaces, `uses:` at four, a `# Copy to:` header per
@@ -443,6 +681,11 @@ jobs:
               ('docs: describe the feature/ branch flow', 'patch'),
               ('fix: defeat the race', 'patch'),
               ('BREAKING CHANGE: input renamed', 'major'),
+              ('BREAKING-CHANGE: input renamed', 'major'),
+              ('feat!: drop the deprecated input', 'major'),
+              ('refactor(java)!: rename the job ids', 'major'),
+              ('docs: MAJOR rewrite of the README', 'patch'),
+              ('fix: note the BREAKING CHANGE in the docs', 'patch'),
           ]
           failures = 0
           for line, want in cases:

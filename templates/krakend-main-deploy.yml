@@ -22,8 +22,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+# Must match krakend-main-pipeline's permissions block. GitHub checks the grant
+# statically against every job the pipeline can reach, including ones this
+# caller switches off, and a single scope short fails the run with zero jobs.
 permissions:
-  contents: read
+  contents: write
+  issues: write
+  pull-requests: write
   id-token: write
 
 jobs:

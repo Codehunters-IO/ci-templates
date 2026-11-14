@@ -18,6 +18,11 @@ on:
         required: false
         type: string
         default: 'build'
+      deploy_timeout:
+        description: 'Seconds to wait for the Amplify job to finish before failing'
+        required: false
+        type: number
+        default: 600
 
       aws_role_to_assume:
         description: >-
@@ -30,10 +35,11 @@ on:
         default: ''
 
     secrets:
+      # Not read when aws_role_to_assume is set.
       AWS_ACCESS_KEY_ID:
-        required: true
+        required: false
       AWS_SECRET_ACCESS_KEY:
-        required: true
+        required: false
       AWS_REGION:
         required: true
       AWS_AMPLIFY_APP_ID:
@@ -97,7 +103,9 @@ jobs:
         env:
           AMPLIFY_APP_ID: ${{ secrets.AWS_AMPLIFY_APP_ID }}
           AMPLIFY_BRANCH: ${{ secrets.AWS_AMPLIFY_BRANCH }}
+          AMPLIFY_TIMEOUT: ${{ inputs.deploy_timeout }}
         run: |
+          set -o pipefail
           echo "Deploying to Amplify app: $AMPLIFY_APP_ID (branch: $AMPLIFY_BRANCH)"
 
           # Create zip of build output
@@ -116,8 +124,10 @@ jobs:
 
           echo "Upload URL received, uploading build artifacts..."
 
-          # Upload build artifacts
-          curl --request PUT \
+          # --fail: a 403 on an expired presigned URL is an HTTP answer, so
+          # without it curl exits 0 and the deployment below starts with no zip.
+          curl --fail --show-error --silent --retry 3 --retry-all-errors \
+            --request PUT \
             --upload-file build-output.zip \
             "$UPLOAD_URL"
 
@@ -129,20 +139,30 @@ jobs:
 
           echo "Deployment started with job ID: $JOB_ID"
 
-          # Wait for deployment to complete
-          echo "Waiting for deployment to complete..."
-          aws amplify wait job-completed \
-            --app-id "$AMPLIFY_APP_ID" \
-            --branch-name "$AMPLIFY_BRANCH" \
-            --job-id "$JOB_ID" || true
-
-          # Check deployment status
-          JOB_STATUS=$(aws amplify get-job \
-            --app-id "$AMPLIFY_APP_ID" \
-            --branch-name "$AMPLIFY_BRANCH" \
-            --job-id "$JOB_ID" \
-            --query 'job.summary.status' \
-            --output text)
+          # The AWS CLI has no `amplify wait`: the old `aws amplify wait
+          # job-completed || true` failed instantly, the error was swallowed, and
+          # the status below was read while the job was still PENDING, which
+          # failed every deploy. Poll get-job until it settles or time runs out.
+          POLL_SECONDS="${AMPLIFY_POLL_SECONDS:-10}"
+          DEADLINE=$((SECONDS + AMPLIFY_TIMEOUT))
+          while :; do
+            JOB_STATUS=$(aws amplify get-job \
+              --app-id "$AMPLIFY_APP_ID" \
+              --branch-name "$AMPLIFY_BRANCH" \
+              --job-id "$JOB_ID" \
+              --query 'job.summary.status' \
+              --output text)
+            case "$JOB_STATUS" in
+              SUCCEED|FAILED|CANCELLED) break ;;
+            esac
+            if [ "$SECONDS" -ge "$DEADLINE" ]; then
+              echo "::error::Amplify job $JOB_ID still $JOB_STATUS after ${AMPLIFY_TIMEOUT}s"
+              echo "status=timeout" >> $GITHUB_OUTPUT
+              exit 1
+            fi
+            echo "Job $JOB_ID: $JOB_STATUS"
+            sleep "$POLL_SECONDS"
+          done
 
           if [ "$JOB_STATUS" = "SUCCEED" ]; then
             echo "status=success" >> $GITHUB_OUTPUT

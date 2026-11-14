@@ -107,7 +107,7 @@ on:
         type: string
         default: 'bug,pipeline-failure'
       run_cleanup:
-        description: 'Delete merged branch after deploy'
+        description: 'Delete the merged PR branch on push (independent of build and deploy results)'
         required: false
         type: boolean
         default: false
@@ -137,6 +137,26 @@ on:
         required: false
         type: string
         default: 'build'
+      s3_immutable_paths:
+        description: 'S3 deploy: prefixes of content-hashed files, cached for a year (see react-deploy-s3)'
+        required: false
+        type: string
+        default: 'static/,assets/'
+      s3_asset_retention_days:
+        description: 'S3 deploy: days an old hashed asset is kept for tabs still open on the previous build'
+        required: false
+        type: number
+        default: 7
+      wait_for_invalidation:
+        description: 'S3 deploy: wait for the CloudFront invalidation to complete'
+        required: false
+        type: boolean
+        default: true
+      amplify_deploy_timeout:
+        description: 'Amplify deploy: seconds to wait for the job to finish'
+        required: false
+        type: number
+        default: 600
       run_lint:
         description: 'Run the lint script during build'
         required: false
@@ -248,6 +268,8 @@ on:
 permissions:
   contents: write
   issues: write
+  # shared-release opens the release PR with github.token.
+  pull-requests: write
   # For the OIDC path in the AWS workflows below; a caller's grant is the
   # ceiling for everything beneath it.
   id-token: write
@@ -340,15 +362,19 @@ jobs:
       inputs.run_deploy &&
       inputs.deploy_target == 's3' &&
       always() &&
+      (needs.security.result == 'success' || needs.security.result == 'skipped') &&
       needs.build.result == 'success' &&
       (needs.test.result == 'success' || needs.test.result == 'skipped')
-    needs: [build, test]
+    needs: [build, test, security]
     uses: ./.github/workflows/react-deploy-s3.yml
     with:
       aws_role_to_assume: ${{ inputs.aws_role_to_assume }}
       runner: ${{ inputs.runner }}
       environment: ${{ inputs.environment }}
       build_output_dir: ${{ inputs.build_output_dir }}
+      immutable_paths: ${{ inputs.s3_immutable_paths }}
+      asset_retention_days: ${{ inputs.s3_asset_retention_days }}
+      wait_for_invalidation: ${{ inputs.wait_for_invalidation }}
     secrets: inherit
 
   deploy-amplify:
@@ -357,15 +383,17 @@ jobs:
       inputs.run_deploy &&
       inputs.deploy_target == 'amplify' &&
       always() &&
+      (needs.security.result == 'success' || needs.security.result == 'skipped') &&
       needs.build.result == 'success' &&
       (needs.test.result == 'success' || needs.test.result == 'skipped')
-    needs: [build, test]
+    needs: [build, test, security]
     uses: ./.github/workflows/react-deploy-amplify.yml
     with:
       aws_role_to_assume: ${{ inputs.aws_role_to_assume }}
       runner: ${{ inputs.runner }}
       environment: ${{ inputs.environment }}
       build_output_dir: ${{ inputs.build_output_dir }}
+      deploy_timeout: ${{ inputs.amplify_deploy_timeout }}
     secrets: inherit
 
   # ============================================
@@ -390,12 +418,14 @@ jobs:
   # ============================================
   cleanup:
     name: Delete Branch
-    if: |
-      inputs.run_cleanup &&
-      always() &&
-      (needs.deploy-s3.result == 'success' || needs.deploy-amplify.result == 'success') &&
-      (needs.release.result == 'success' || needs.release.result == 'skipped')
-    needs: [deploy-s3, deploy-amplify, release]
+    # Not tied to build, deploy or release (fbb2671): a branch that merged is
+    # merged whatever the deploy did. Unlike java and krakend, where it always
+    # runs, run_cleanup still opts in here: this stack shipped it off by
+    # default, and turning branch deletion on in a patch release is not ours to
+    # decide for every consumer.
+    # (Non-fatal handling lives inside shared-delete-branch — continue-on-error is not allowed on a
+    # reusable-workflow `uses:` job.)
+    if: inputs.run_cleanup && github.event_name == 'push'
     uses: ./.github/workflows/shared-delete-branch.yml
     secrets: inherit
 
@@ -433,10 +463,10 @@ jobs:
     if: |
       inputs.run_create_issue_on_failure &&
       always()
-    needs: [build, test, deploy-s3, deploy-amplify, cleanup, release, tag]
+    needs: [commit-lint, security, dependency-review, build, test, deploy-s3, deploy-amplify, release, cleanup, tag]
     uses: ./.github/workflows/shared-create-issue-on-failure.yml
     with:
-      status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.deploy-s3.result == 'failure' || needs.deploy-amplify.result == 'failure') && 'failure' || 'success' }}
+      status: ${{ contains(needs.*.result, 'failure') && 'failure' || 'success' }}
       environment: ${{ inputs.environment }}
       version: ${{ needs.release.outputs.version }}
       changelog: ${{ needs.release.outputs.changelog }}
