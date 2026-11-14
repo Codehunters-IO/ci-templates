@@ -342,9 +342,10 @@ jobs:
       inputs.run_deploy &&
       inputs.deploy_target == 's3' &&
       always() &&
+      (needs.security.result == 'success' || needs.security.result == 'skipped') &&
       needs.build.result == 'success' &&
       (needs.test.result == 'success' || needs.test.result == 'skipped')
-    needs: [build, test]
+    needs: [build, test, security]
     uses: ./.github/workflows/react-deploy-s3.yml
     with:
       aws_role_to_assume: ${{ inputs.aws_role_to_assume }}
@@ -359,9 +360,10 @@ jobs:
       inputs.run_deploy &&
       inputs.deploy_target == 'amplify' &&
       always() &&
+      (needs.security.result == 'success' || needs.security.result == 'skipped') &&
       needs.build.result == 'success' &&
       (needs.test.result == 'success' || needs.test.result == 'skipped')
-    needs: [build, test]
+    needs: [build, test, security]
     uses: ./.github/workflows/react-deploy-amplify.yml
     with:
       aws_role_to_assume: ${{ inputs.aws_role_to_assume }}
@@ -435,10 +437,10 @@ jobs:
     if: |
       inputs.run_create_issue_on_failure &&
       always()
-    needs: [build, test, deploy-s3, deploy-amplify, cleanup, release, tag]
+    needs: [commit-lint, security, dependency-review, build, test, deploy-s3, deploy-amplify, release, cleanup, tag]
     uses: ./.github/workflows/shared-create-issue-on-failure.yml
     with:
-      status: ${{ (needs.build.result == 'failure' || needs.test.result == 'failure' || needs.deploy-s3.result == 'failure' || needs.deploy-amplify.result == 'failure') && 'failure' || 'success' }}
+      status: ${{ contains(needs.*.result, 'failure') && 'failure' || 'success' }}
       environment: ${{ inputs.environment }}
       version: ${{ needs.release.outputs.version }}
       changelog: ${{ needs.release.outputs.changelog }}

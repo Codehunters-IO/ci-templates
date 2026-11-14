@@ -432,6 +432,56 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
+  pipeline-gates:
+    name: Gates see every job
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Two ways an orchestrator reported green on a red run. notify and
+      # create-issue listed jobs by hand, so a job added later (contracts' sdk,
+      # e2e, analysis; Java's qodana and owasp) could fail without either of them
+      # seeing it. And nothing that publishes or deploys waited on the secret
+      # scan, so an image went out with a leaked key already reported.
+      - name: Check
+        run: |
+          python3 - <<'PY'
+          import glob, os, re, sys, yaml
+
+          def as_list(needs):
+              return [needs] if isinstance(needs, str) else list(needs or [])
+
+          bad = []
+          for f in sorted(glob.glob('.github/workflows/*-main-pipeline.yml')):
+              jobs = yaml.safe_load(open(f))['jobs']
+              others = set(jobs) - {'notify', 'create-issue'}
+              for g in ('notify', 'create-issue'):
+                  if g in jobs:
+                      missing = sorted(others - set(as_list(jobs[g].get('needs'))))
+                      if missing:
+                          bad.append(f"::error file={f}::{g} does not wait for: {', '.join(missing)}")
+              status = str((jobs.get('create-issue') or {}).get('with', {}).get('status', ''))
+              if 'create-issue' in jobs and "contains(needs.*.result, 'failure')" not in status:
+                  bad.append(f"::error file={f}::create-issue status must come from contains(needs.*.result, 'failure')")
+
+              if 'security' not in jobs:
+                  continue
+              def reaches(job, seen=()):
+                  direct = as_list(jobs[job].get('needs'))
+                  return 'security' in direct or any(reaches(n, seen + (job,)) for n in direct if n not in seen)
+              for name, job in jobs.items():
+                  if re.search(r'(artifact|deploy)', os.path.basename(job.get('uses', ''))) and not reaches(name):
+                      bad.append(f"::error file={f}::{name} publishes or deploys without waiting for security")
+
+          for line in bad:
+              print(line)
+          print(f"{len(bad)} gate wiring problems")
+          sys.exit(1 if bad else 0)
+          PY
+
   selftest-scripts:
     name: Script self-tests
     runs-on: ubuntu-latest
