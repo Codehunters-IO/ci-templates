@@ -664,21 +664,8 @@ jobs:
     with:
       status: ${{ contains(needs.*.result, 'failure') && 'failure' || contains(needs.*.result, 'cancelled') && 'cancelled' || 'success' }}
       environment: ${{ inputs.environment }}
-    secrets: inherit
-
-  # ============================================
-  # CREATE ISSUE - On failure (runs last, always)
-  # ============================================
-  create-issue:
-    name: Create Issue
-    if: |
-      inputs.run_create_issue_on_failure &&
-      always()
-    needs: [commit-lint, security, dependency-review, build, test, sdk, e2e, analysis, artifact, deploy-ec2, deploy-ec2-vpn, release, cleanup, tag]
-    uses: ./.github/workflows/shared-create-issue-on-failure.yml
-    with:
-      status: ${{ contains(needs.*.result, 'failure') && 'failure' || 'success' }}
-      environment: ${{ inputs.environment }}
+      create_issue: ${{ inputs.run_create_issue_on_failure }}
       version: ${{ needs.release.outputs.version }}
       changelog: ${{ needs.release.outputs.changelog }}
       labels: ${{ inputs.issue_labels }}
+    secrets: inherit

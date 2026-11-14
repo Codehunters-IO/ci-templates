@@ -640,6 +640,13 @@ jobs:
       - name: Check every on-by-default switch is reachable from the caller
         run: .github/selftest/reachable-switches.test.sh
 
+      # A pipeline over GitHub's 20-reusable-workflow ceiling ends in
+      # `startup_failure` with no jobs, no annotation and nothing in any API.
+      # v2.9.0 took java-main-pipeline from 20 to 21 and killed every java
+      # trunk; v2 had to be moved back by hand. This counts the tree instead.
+      - name: Count each pipeline's reusable-workflow tree against the ceiling
+        run: .github/selftest/reusable-workflow-ceiling.test.sh
+
   version-bump-rules:
     name: Version bump rules agree
     runs-on: ubuntu-latest
